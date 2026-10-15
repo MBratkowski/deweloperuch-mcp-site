@@ -59,8 +59,8 @@
 <div class="mock-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>github.com · deweloperuch-mcp · Releases</em></div>
 <div class="mock-body">
 <p class="mock-label">Assets</p>
-<p class="mock-row is-hot"><span>deweloperuch-mcp-0.1.1.mcpb</span><span class="mock-cursor">⬇</span></p>
-<p class="mock-row"><span>deweloperuch_mcp-0.1.1-py3-none-any.whl</span></p>
+<p class="mock-row is-hot"><span>deweloperuch-mcp-0.1.2.mcpb</span><span class="mock-cursor">⬇</span></p>
+<p class="mock-row"><span>deweloperuch_mcp-0.1.2-py3-none-any.whl</span></p>
 <p class="mock-row"><span>Source code (zip)</span></p>
 </div>
 </div>
@@ -240,6 +240,8 @@
 <h3>Agent AI w terminalu: skill</h3>
 <p>Skill to gotowa instrukcja dla agenta kodującego (np. Claude Code, Codex, Cursor): podpowiada mu, których komend <code>deweloperuch</code> użyć i jak czytać wyniki. Instalacja wymaga Node.js:</p>
 <div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">npx skills add MBratkowski/deweloperuch-mcp</span></code><button type="button" class="copy" data-command="npx skills add MBratkowski/deweloperuch-mcp" data-umami-event="docs-copy-npx-skills-add-mbratkowski-deweloperuch-mcp" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<p>Bez Node.js skill zainstaluje samo CLI. Domyślnie trafia do Claude Code (<code>~/.claude/skills/deweloperuch-cli</code>); dla innych agentów dodaj np. <code>--agent cursor</code> albo <code>--agent codex</code>:</p>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">uvx --from deweloperuch-mcp deweloperuch skill install</span></code><button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch skill install" data-umami-event="docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-skill-ins" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
 <h3>Samo CLI</h3>
 <p>Komendę <code>deweloperuch</code> możesz uruchomić bez instalowania albo zainstalować na stałe:</p>
 <div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">uvx --from deweloperuch-mcp deweloperuch --help</span></code><button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch --help" data-umami-event="docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-help" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
@@ -324,7 +326,7 @@
 
 <section id="prywatnosc">
 <h2>Prywatność</h2>
-<p>Serwer działa na Twoim komputerze i łączy się wyłącznie z deweloperuch.pl, i to tylko po dane do odczytu. Nie zbiera danych o Tobie i niczego nie wysyła autorom projektu.</p>
+<p>Serwer działa na Twoim komputerze i łączy się wyłącznie z deweloperuch.pl, i to tylko po dane do odczytu. Przedstawia się serwisowi uczciwie, jako <code>deweloperuch-mcp/&lt;wersja&gt;</code> z linkiem do repozytorium. Nie zbiera danych o Tobie i niczego nie wysyła autorom projektu.</p>
 <p>Twoje pytania trafiają do dostawcy Twojego asystenta AI na jego zasadach. Do deweloperuch.pl serwer wysyła tylko parametry potrzebne do pobrania danych (np. miasto, metraż, budżet).</p>
 <p>Ta strona liczy wejścia i kliknięcia narzędziem Umami: bez cookies i bez zapisywania danych, które pozwalałyby Cię rozpoznać.</p>
 <p>Pełna dokumentacja techniczna (po angielsku) jest <a href="https://github.com/MBratkowski/deweloperuch-mcp#readme">w repozytorium na GitHubie</a>.</p>

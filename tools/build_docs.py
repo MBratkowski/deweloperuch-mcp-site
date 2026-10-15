@@ -111,8 +111,8 @@ STEPS = f"""
 <div class="mock-bar">{DOTS}<em>github.com · deweloperuch-mcp · Releases</em></div>
 <div class="mock-body">
 <p class="mock-label">Assets</p>
-<p class="mock-row is-hot"><span>deweloperuch-mcp-0.1.1.mcpb</span><span class="mock-cursor">⬇</span></p>
-<p class="mock-row"><span>deweloperuch_mcp-0.1.1-py3-none-any.whl</span></p>
+<p class="mock-row is-hot"><span>deweloperuch-mcp-0.1.2.mcpb</span><span class="mock-cursor">⬇</span></p>
+<p class="mock-row"><span>deweloperuch_mcp-0.1.2-py3-none-any.whl</span></p>
 <p class="mock-row"><span>Source code (zip)</span></p>
 </div>
 </div>
@@ -347,6 +347,8 @@ PAGE = f"""<!doctype html>
 <h3>Agent AI w terminalu: skill</h3>
 <p>Skill to gotowa instrukcja dla agenta kodującego (np. Claude Code, Codex, Cursor): podpowiada mu, których komend <code>deweloperuch</code> użyć i jak czytać wyniki. Instalacja wymaga Node.js:</p>
 {term("npx skills add MBratkowski/deweloperuch-mcp")}
+<p>Bez Node.js skill zainstaluje samo CLI. Domyślnie trafia do Claude Code (<code>~/.claude/skills/deweloperuch-cli</code>); dla innych agentów dodaj np. <code>--agent cursor</code> albo <code>--agent codex</code>:</p>
+{term("uvx --from deweloperuch-mcp deweloperuch skill install")}
 <h3>Samo CLI</h3>
 <p>Komendę <code>deweloperuch</code> możesz uruchomić bez instalowania albo zainstalować na stałe:</p>
 {term("uvx --from deweloperuch-mcp deweloperuch --help")}
@@ -431,7 +433,7 @@ PAGE = f"""<!doctype html>
 
 <section id="prywatnosc">
 <h2>Prywatność</h2>
-<p>Serwer działa na Twoim komputerze i łączy się wyłącznie z deweloperuch.pl, i to tylko po dane do odczytu. Nie zbiera danych o Tobie i niczego nie wysyła autorom projektu.</p>
+<p>Serwer działa na Twoim komputerze i łączy się wyłącznie z deweloperuch.pl, i to tylko po dane do odczytu. Przedstawia się serwisowi uczciwie, jako <code>deweloperuch-mcp/&lt;wersja&gt;</code> z linkiem do repozytorium. Nie zbiera danych o Tobie i niczego nie wysyła autorom projektu.</p>
 <p>Twoje pytania trafiają do dostawcy Twojego asystenta AI na jego zasadach. Do deweloperuch.pl serwer wysyła tylko parametry potrzebne do pobrania danych (np. miasto, metraż, budżet).</p>
 <p>Ta strona liczy wejścia i kliknięcia narzędziem Umami: bez cookies i bez zapisywania danych, które pozwalałyby Cię rozpoznać.</p>
 <p>Pełna dokumentacja techniczna (po angielsku) jest <a href="{REPO}#readme">w repozytorium na GitHubie</a>.</p>
