@@ -16,7 +16,7 @@ Conversions, in order: installation (Claude Desktop extension, `uvx`, skill), a 
 | L1 | SaaS-style page, free product; the pricing slot becomes a single "0 zł, na zawsze" plan card | user, 2026-10-15 |
 | L2 | Audience: everyone (home buyers, market professionals, people building with AI); a "Dla kogo" section with three personas | user |
 | L3 | Polish copy only | user |
-| L4 | Separate repository `~/Projects/web/apps/deweloperuch-mcp-site`, published with GitHub Pages | user |
+| L4 | Separate repository `MBratkowski/deweloperuch-mcp-site`, published with GitHub Pages | user |
 | L5 | Design work happens in Claude Design | user |
 | L6 | Visual direction "Noc nad miastem" (v3): deweloperuch.pl palette and Poppins, a modern macOS-like software look, layout inspired by openchamber.dev | user picked v3 after rejecting v1 and v2 |
 | L7 | Copy speaks about "AI" generically, not "Claude"; Claude Desktop and Claude Code are named only where installation facts require it | user |
