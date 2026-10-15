@@ -1,0 +1,129 @@
+name: Sync
+
+# Daily: when the latest deweloperuch-mcp on PyPI is not the one in data/server/version.json,
+# writes data/server/ from it, rebuilds the pages, runs the tests and opens (or updates) a pull
+# request. It never merges. A pull request opened with GITHUB_TOKEN starts no other workflow,
+# so the tests run here and their outcome is in the pull request.
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    name: Compare the pinned version with PyPI
+    runs-on: ubuntu-24.04
+    outputs:
+      pinned: ${{ steps.versions.outputs.pinned }}
+      latest: ${{ steps.versions.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: versions
+        run: |
+          pinned=$(jq -r .version data/server/version.json)
+          latest=$(curl -fsS --retry 3 https://pypi.org/pypi/deweloperuch-mcp/json | jq -r .info.version)
+          echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          echo "Pinned: deweloperuch-mcp $pinned. Latest on PyPI: $latest." >> "$GITHUB_STEP_SUMMARY"
+
+  sync:
+    name: Sync with deweloperuch-mcp ${{ needs.release.outputs.latest }}
+    needs: release
+    if: needs.release.outputs.latest != needs.release.outputs.pinned
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      PINNED: ${{ needs.release.outputs.pinned }}
+      LATEST: ${{ needs.release.outputs.latest }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --locked
+
+      # `uvx deweloperuch-mcp==$LATEST`; listing tools sends nothing to deweloperuch.pl.
+      - name: Write data/server/
+        run: uv run python -m tools.sync_server "$LATEST"
+
+      - name: Build the pages
+        id: build
+        continue-on-error: true
+        run: uv run python -m tools.build_docs 2>&1 | tee "$RUNNER_TEMP/build.log"
+
+      - name: Tests
+        id: tests
+        if: steps.build.outcome == 'success'
+        continue-on-error: true
+        run: |
+          uv run playwright install --with-deps chromium
+          uv run pytest 2>&1 | tee "$RUNNER_TEMP/pytest.log"
+
+      - name: Write the pull request body
+        env:
+          BUILD: ${{ steps.build.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+        run: |
+          {
+            echo "deweloperuch-mcp $LATEST is the latest release on PyPI; the pages show $PINNED."
+            echo
+            echo "\`tools/sync_server.py\` wrote \`data/server/\` from $LATEST (it only lists the tools and prompts; nothing is sent to deweloperuch.pl) for \`tools/build_docs.py\`, which builds \`docs/index.html\` and the generated blocks of \`index.html\` from it."
+            echo
+            echo "- Build: $BUILD"
+            echo "- Tests (\`uv run pytest\`): $TESTS"
+            echo
+            if [ "$BUILD" != success ]; then
+              echo "The build stopped: the release does not fit the hand-written parts of \`tools/build_docs.py\` (the tool groups with their Dane lines, the CLI table). Edit them as the log says, run the build and push to this branch."
+              echo
+              echo '<details><summary>Build log</summary>'
+              echo
+              echo '```'
+              tail -n 40 "$RUNNER_TEMP/build.log"
+              echo '```'
+              echo
+              echo '</details>'
+            elif [ "$TESTS" != success ]; then
+              echo '<details><summary>Test log (last lines)</summary>'
+              echo
+              echo '```'
+              tail -n 60 "$RUNNER_TEMP/pytest.log"
+              echo '```'
+              echo
+              echo '</details>'
+            fi
+            echo
+            echo "The Check workflow does not start for this pull request; close and reopen it to run Check (HTML validation, links, Lighthouse)."
+          } > "$RUNNER_TEMP/body.md"
+
+      - uses: peter-evans/create-pull-request@v8.1.1
+        with:
+          branch: sync/deweloperuch-mcp
+          delete-branch: true
+          add-paths: |
+            data/server
+            index.html
+            docs/index.html
+          commit-message: Update the pages to deweloperuch-mcp ${{ env.LATEST }}
+          title: Update the pages to deweloperuch-mcp ${{ env.LATEST }}
+          body-path: ${{ runner.temp }}/body.md
+          draft: ${{ steps.build.outcome != 'success' || steps.tests.outcome != 'success' }}
+
+      - name: Fail when the build or the tests failed
+        if: steps.build.outcome != 'success' || steps.tests.outcome != 'success'
+        env:
+          BUILD: ${{ steps.build.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+        run: |
+          echo "::error::deweloperuch-mcp $LATEST: build $BUILD, tests $TESTS; see the pull request."
+          exit 1

@@ -26,14 +26,30 @@ jobs:
       - run: uv run playwright install --with-deps chromium
       - run: uv run pytest
 
+  generated:
+    name: Generated files match the pinned release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --locked
+      # `uvx deweloperuch-mcp==<data/server/version.json>`; listing tools sends nothing to deweloperuch.pl.
+      - run: uv run python -m tools.sync_server --pinned
+      - run: uv run python -m tools.build_docs
+      - name: Nothing changed
+        run: |
+          git diff --exit-code
+          if [ -n "$(git status --porcelain)" ]; then git status --short; exit 1; fi
+
   facts:
-    name: Facts against the released package
+    name: Facts against the latest release
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
       - run: uv sync --locked
       # PyPI and `uvx deweloperuch-mcp==<latest>`; listing tools sends nothing to deweloperuch.pl.
+      # A release newer than data/server/version.json fails here until its sync is merged.
       - run: uv run python -m tools.check_facts
 
   html:

@@ -1,33 +1,185 @@
-"""Build docs/index.html: hand-written Polish guide + tool and prompt reference generated
-from the server's MCP snapshots (data/server/*.json, copied from the deweloperuch-mcp repo:
-tests/snapshots/mcp_tools.json and mcp_prompts.json). Re-run after copying newer snapshots:
+"""Build docs/index.html and the server-dependent parts of index.html from data/server/.
+
+data/server/ holds the pinned deweloperuch-mcp release as an MCP client lists it, written by
+tools/sync_server.py: version.json, mcp_tools.json (with the server's name and instructions)
+and mcp_prompts.json. Everything on the pages that depends on the release is rendered here:
+the version and the release's file names, the counts of tools and prompts, the tool groups,
+the tool and prompt reference. docs/index.html is generated whole; index.html carries the
+generated parts between ``<!-- name:start -->`` and ``<!-- name:end -->`` markers. Re-run
+after a sync:
 
     python3 tools/build_docs.py
+
+The grouping of the tools (GROUPS, with their lines in the landing's Dane section) and the
+CLI table (CLI_ROWS) are written by hand: a release with a tool that no group holds, or
+without a tool a group names, stops the build with the tool's name.
 """
 
 import html
 import json
 import re
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TOOLS = json.loads((ROOT / "data/server/mcp_tools.json").read_text())["tools"]
-PROMPTS = json.loads((ROOT / "data/server/mcp_prompts.json").read_text())["prompts"]
+SERVER_DIR = "data/server"
+PACKAGE = "deweloperuch-mcp"
 REPO = "https://github.com/MBratkowski/deweloperuch-mcp"
 RELEASES = REPO + "/releases/latest"
 e = html.escape
 
-GROUPS = [
-    ("offers", "Ceny ofertowe", "#A78BFA", "Cenniki deweloperów na rynku pierwotnym i ich zmiany.",
-     ["search_offers", "get_offer", "search_investments", "get_investment", "get_market_statistics"]),
-    ("rcn", "Ceny transakcyjne (RCN)", "#FACC15", "Za ile mieszkania naprawdę się sprzedały, z Rejestru Cen Nieruchomości.",
-     ["get_transaction_statistics", "rank_locations", "get_building", "estimate_property_value"]),
-    ("official", "Statystyki GUS i NBP", "#38BDF8", "Oficjalne dane: ceny, mieszkania oddane, wynagrodzenia, bezrobocie.",
-     ["get_government_statistics"]),
-    ("helpers", "Narzędzia pomocnicze", "#34D399", "Zamieniają nazwy miejsc i deweloperów na identyfikatory i dają profil dewelopera.",
-     ["search_locations", "search_developers", "get_developer"]),
-]
-assert sorted(n for g in GROUPS for n in g[4]) == sorted(t["name"] for t in TOOLS), "group the new tool"
+
+class BuildError(Exception):
+    """The release does not fit what the build knows by hand; the message says what to edit."""
+
+
+@dataclass(frozen=True)
+class Release:
+    """A deweloperuch-mcp release as an MCP client lists it."""
+
+    version: str
+    tools: tuple[dict, ...]
+    prompts: tuple[dict, ...]
+    name: str = ""
+    instructions: str = ""
+
+    @property
+    def tool_names(self) -> frozenset[str]:
+        return frozenset(tool["name"] for tool in self.tools)
+
+    @property
+    def prompt_titles(self) -> frozenset[str]:
+        return frozenset(prompt.get("title") or prompt["name"] for prompt in self.prompts)
+
+
+def pinned_version(root: Path = ROOT) -> str:
+    return json.loads((root / SERVER_DIR / "version.json").read_text(encoding="utf-8"))["version"]
+
+
+def load_release(root: Path = ROOT) -> Release:
+    """The pinned release as ``root``/data/server/ holds it."""
+    directory = root / SERVER_DIR
+    tools = json.loads((directory / "mcp_tools.json").read_text(encoding="utf-8"))
+    prompts = json.loads((directory / "mcp_prompts.json").read_text(encoding="utf-8"))
+    return Release(
+        version=pinned_version(root),
+        tools=tuple(tools["tools"]),
+        prompts=tuple(prompts["prompts"]),
+        name=tools["server"]["name"],
+        instructions=tools["server"]["instructions"],
+    )
+
+
+@dataclass(frozen=True)
+class Group:
+    """Tools that give one kind of data: a heading with cards in the docs, a line in the
+    landing's demo sidebar and rows in the landing's Dane section."""
+
+    key: str
+    label: str  # the docs heading
+    short_label: str  # the line in the landing's demo sidebar
+    color: str
+    tint: str  # the tool names in the Dane section
+    blurb: str  # under the docs heading
+    rows: tuple[tuple[tuple[str, ...], str], ...]  # Dane rows: tool names and what they give
+
+    @property
+    def tools(self) -> tuple[str, ...]:
+        """The group's tools in docs order."""
+        return tuple(name for names, _ in self.rows for name in names)
+
+
+GROUPS = (
+    Group("offers", "Ceny ofertowe", "Ceny ofertowe", "#A78BFA", "#C4B5FD", "Cenniki deweloperów na rynku pierwotnym i ich zmiany.", (
+        (("search_offers",), "Oferty w mieście albo w całej Polsce, z filtrami ceny, metrażu, ceny za m², dzielnicy i obniżki."),
+        (("get_offer",), "Jedna oferta z pełną historią ceny i flagami: najniższa cena z 30 i 90 dni, podejrzana obniżka."),
+        (("search_investments", "get_investment"), "Inwestycje w mieście albo po nazwie, a w nich deweloper i lista ofert."),
+        (("get_market_statistics",), "Rynek ofert jednego miasta: liczby, rozkłady cen i metraży, najwięksi deweloperzy."),
+    )),
+    Group("rcn", "Ceny transakcyjne (RCN)", "Transakcje RCN", "#FACC15", "#FDE68A", "Za ile mieszkania naprawdę się sprzedały, z Rejestru Cen Nieruchomości.", (
+        (("get_transaction_statistics",), "Ceny transakcyjne miasta miesiąc po miesiącu albo kwartałami."),
+        (("rank_locations",), "Ranking miejscowości albo powiatów według transakcji i ceny za m²."),
+        (("get_building",), "Budynek z rejestru z lokalami i transakcjami, opcjonalnie z trendem okolicy."),
+        (("estimate_property_value",), "Przybliżona wartość mieszkania w danym miejscu z pobliskich transakcji."),
+    )),
+    Group("official", "Statystyki GUS i NBP", "GUS i NBP", "#38BDF8", "#7DD3FC", "Oficjalne dane: ceny, mieszkania oddane, wynagrodzenia, bezrobocie.", (
+        (("get_government_statistics",), "Oficjalne szeregi czasowe dla Polski, grup największych miast albo miasta na prawach powiatu: ceny mieszkań, mieszkania oddane, wynagrodzenia i bezrobocie."),
+    )),
+    Group("helpers", "Narzędzia pomocnicze", "Pomocnicze", "#34D399", "#6EE7B7", "Zamieniają nazwy miejsc i deweloperów na identyfikatory i dają profil dewelopera.", (
+        (("search_locations", "search_developers", "get_developer"), "Narzędzia pomocnicze: zamieniają nazwę miasta albo dewelopera na identyfikator i dają profil dewelopera."),
+    )),
+)
+# The landing's Dane section: one list per kind of price; the helpers share the last one.
+DANE_LISTS = (("dane-offers", ("offers",)), ("dane-rcn", ("rcn",)), ("dane-official", ("official", "helpers")))
+# The prompt the landing's demo sidebar highlights: the demo is a search.
+DEMO_PROMPT = "znajdz_mieszkanie"
+
+
+def check_release(release: Release) -> None:
+    """Stop the build when the release has a tool or prompt the hand-written parts do not know."""
+    grouped = [name for group in GROUPS for name in group.tools]
+    unknown = sorted(release.tool_names - set(grouped))
+    gone = sorted(set(grouped) - release.tool_names)
+    twice = sorted({name for name in grouped if grouped.count(name) > 1})
+    problems = []
+    if unknown:
+        problems.append(
+            f"{PACKAGE} {release.version} has tools that no group in tools/build_docs.py GROUPS holds: {', '.join(unknown)}. "
+            "Add each to a row of a group (the row's text is its line in the landing's Dane section) and its command to CLI_ROWS."
+        )
+    if gone:
+        problems.append(
+            f"tools/build_docs.py GROUPS names tools that {PACKAGE} {release.version} does not have: {', '.join(gone)}. "
+            "Remove them from their rows and their commands from CLI_ROWS."
+        )
+    if twice:
+        problems.append(f"tools/build_docs.py GROUPS names tools more than once: {', '.join(twice)}.")
+    if DEMO_PROMPT not in {prompt["name"] for prompt in release.prompts}:
+        problems.append(
+            f"the landing's demo highlights the prompt {DEMO_PROMPT}, which {PACKAGE} {release.version} does not have: "
+            "set DEMO_PROMPT in tools/build_docs.py."
+        )
+    if problems:
+        raise BuildError("\n".join(problems))
+
+
+# Counts in Polish copy.
+
+NUMBER_WORDS = (
+    "zero", "jeden", "dwa", "trzy", "cztery", "pięć", "sześć", "siedem", "osiem", "dziewięć", "dziesięć",
+    "jedenaście", "dwanaście", "trzynaście", "czternaście", "piętnaście", "szesnaście",
+)
+
+
+def plural(count: int, one: str, few: str, many: str) -> str:
+    """The Polish form for ``count``: 1 narzędzie, 2–4 narzędzia, 5 narzędzi, 22 narzędzia."""
+    if count == 1:
+        return one
+    if count % 10 in (2, 3, 4) and count % 100 not in (12, 13, 14):
+        return few
+    return many
+
+
+def _count(count: int, fact: str) -> str:
+    return f'<span data-fact="{fact}">{count}</span>' if fact else str(count)
+
+
+def tools_phrase(count: int, fact: bool = False) -> str:
+    """'13 narzędzi'; with ``fact``, the number is marked for tools/check_facts.py."""
+    return f"{_count(count, 'tool-count' if fact else '')} {plural(count, 'narzędzie', 'narzędzia', 'narzędzi')}"
+
+
+def prompts_phrase(count: int, fact: bool = False) -> str:
+    """'4 gotowe prompty'; with ``fact``, the number is marked for tools/check_facts.py."""
+    return f"{_count(count, 'prompt-count' if fact else '')} {plural(count, 'gotowy prompt', 'gotowe prompty', 'gotowych promptów')}"
+
+
+def prompts_sentence_start(count: int) -> str:
+    """'Cztery gotowe prompty prowadzą': the number as a word and the verb agreeing with it."""
+    word = NUMBER_WORDS[count].capitalize() if 0 < count < len(NUMBER_WORDS) else str(count)
+    return f"{word} {plural(count, 'gotowy prompt prowadzi', 'gotowe prompty prowadzą', 'gotowych promptów prowadzi')}"
+
 
 COPY_ICON = ('<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
              'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect>'
@@ -73,21 +225,21 @@ def tool_card(tool: dict, color: str) -> str:
     )
 
 
-def tools_section() -> str:
-    by_name = {t["name"]: t for t in TOOLS}
+def tools_section(release: Release) -> str:
+    by_name = {t["name"]: t for t in release.tools}
     parts = []
-    for key, label, color, blurb, names in GROUPS:
-        cards = "".join(tool_card(by_name[n], color) for n in names)
+    for group in GROUPS:
+        cards = "".join(tool_card(by_name[n], group.color) for n in group.tools)
         parts.append(
-            f'<div class="group" data-group="{key}"><h3><span class="dot" style="background: {color}" aria-hidden="true"></span>'
-            f"{e(label)} <small>{len(names)}</small></h3><p>{e(blurb)}</p>{cards}</div>"
+            f'<div class="group" data-group="{group.key}"><h3><span class="dot" style="background: {group.color}" aria-hidden="true"></span>'
+            f"{e(group.label)} <small>{len(group.tools)}</small></h3><p>{e(group.blurb)}</p>{cards}</div>"
         )
     return "".join(parts)
 
 
-def prompts_section() -> str:
+def prompts_section(release: Release) -> str:
     cards = []
-    for p in PROMPTS:
+    for p in release.prompts:
         rows = "".join(
             f'<tr><td><code>{e(a["name"])}</code>{" <span class=\"req\">wymagany</span>" if a.get("required") else ""}</td>'
             f"<td>{e(a.get('description', ''))}</td></tr>"
@@ -103,7 +255,10 @@ def prompts_section() -> str:
 
 DOTS = '<span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span>'
 
-STEPS = f"""
+
+def steps(release: Release) -> str:
+    version = e(release.version)
+    return f"""
 <ol class="steps">
 <li class="step">
 <div class="step-art" aria-hidden="true">
@@ -111,8 +266,8 @@ STEPS = f"""
 <div class="mock-bar">{DOTS}<em>github.com · deweloperuch-mcp · Releases</em></div>
 <div class="mock-body">
 <p class="mock-label">Assets</p>
-<p class="mock-row is-hot"><span>deweloperuch-mcp-0.1.2.mcpb</span><span class="mock-cursor">⬇</span></p>
-<p class="mock-row"><span>deweloperuch_mcp-0.1.2-py3-none-any.whl</span></p>
+<p class="mock-row is-hot"><span>deweloperuch-mcp-{version}.mcpb</span><span class="mock-cursor">⬇</span></p>
+<p class="mock-row"><span>deweloperuch_mcp-{version}-py3-none-any.whl</span></p>
 <p class="mock-row"><span>Source code (zip)</span></p>
 </div>
 </div>
@@ -133,7 +288,7 @@ STEPS = f"""
 <div class="mock-bar">{DOTS}<em>Claude</em></div>
 <div class="mock-body">
 <p class="mock-title">Zainstalować rozszerzenie?</p>
-<p class="mock-text">deweloperuch-mcp · 13 narzędzi</p>
+<p class="mock-text">deweloperuch-mcp · {tools_phrase(len(release.tools))}</p>
 <p class="mock-actions"><span class="mock-btn-ghost">Cancel</span><span class="mock-btn">Install</span></p>
 </div>
 </div>
@@ -183,6 +338,7 @@ STEPS = f"""
 <p class="caption">Ilustracje są poglądowe: wygląd okien w Twojej wersji aplikacji może się nieco różnić.</p>
 """
 
+
 CLI_ROWS = [
     ("locations search QUERY", "Szuka miast, dzielnic i ulic; podaje identyfikator miasta (slug) do dalszych komend."),
     ("offers search CITY", "Oferty mieszkań w mieście albo w całej Polsce (polska) z filtrami ceny, metrażu, ceny za m², dzielnicy i obniżki."),
@@ -230,7 +386,12 @@ AGENT_SECTION = f"""
 
 CONFIG_JSON ='{\n  "mcpServers": {\n    "deweloperuch": {\n      "command": "uvx",\n      "args": ["deweloperuch-mcp"]\n    }\n  }\n}'
 
-PAGE = f"""<!doctype html>
+
+def render_docs(release: Release) -> str:
+    """docs/index.html for ``release``."""
+    check_release(release)
+    return f"""<!doctype html>
+<!-- Generated by tools/build_docs.py from data/server/: edit the script, not this file. -->
 <html lang="pl">
 <head>
 <meta charset="utf-8">
@@ -283,7 +444,7 @@ PAGE = f"""<!doctype html>
 <section id="krok-po-kroku" class="wrap docs-steps" aria-labelledby="krok-po-kroku-title">
 <h2 id="krok-po-kroku-title">Instalacja krok po kroku</h2>
 <p class="section-lead">Dla Claude Desktop na macOS. Linux działa tak samo; Windows nie jest jeszcze obsługiwany.</p>
-{STEPS}
+{steps(release)}
 </section>
 {AGENT_SECTION.replace("{term}", term(AGENT_PROMPT, label="Prompt dla agenta AI", prompt=False, event="docs-copy-agent-prompt"))}
 
@@ -310,7 +471,7 @@ PAGE = f"""<!doctype html>
 <section id="jak-to-dziala">
 <h2>Jak to działa</h2>
 <p>Twój asystent AI uruchamia na Twoim komputerze mały program: serwer MCP. Gdy pytasz o mieszkania, asystent prosi ten program o dane, program pobiera je z deweloperuch.pl i oddaje asystentowi, a asystent układa odpowiedź, zwykle w tabeli z linkami do źródeł.</p>
-<p><strong>MCP</strong> (Model Context Protocol) to otwarty standard, dzięki któremu asystenci AI mogą korzystać z zewnętrznych narzędzi i danych. deweloperuch-mcp daje im 13 narzędzi, które tylko czytają dane: niczego w serwisie nie tworzą ani nie zmieniają.</p>
+<p><strong>MCP</strong> (Model Context Protocol) to otwarty standard, dzięki któremu asystenci AI mogą korzystać z zewnętrznych narzędzi i danych. deweloperuch-mcp daje im {tools_phrase(len(release.tools))}, które tylko czytają dane: niczego w serwisie nie tworzą ani nie zmieniają.</p>
 <p>Nie zakładasz konta i nie potrzebujesz żadnego klucza. Projekt jest darmowy i otwarty (licencja MIT). To nieoficjalny projekt społeczności, który działa za zgodą autorów deweloperuch.pl.</p>
 </section>
 
@@ -382,13 +543,13 @@ PAGE = f"""<!doctype html>
 <section id="prompty">
 <h2>Gotowe prompty</h2>
 <p>Prompty to gotowe polecenia, które wybierasz w aplikacji zamiast pisać pytanie od zera. Każdy prowadzi asystenta przez właściwe narzędzia w dobrej kolejności. Same niczego nie pobierają.</p>
-{prompts_section()}
+{prompts_section(release)}
 </section>
 
 <section id="narzedzia">
 <h2>Narzędzia</h2>
 <p>Z narzędzi korzysta asystent, nie Ty: wystarczy, że zadasz pytanie. Ta lista przyda się, gdy chcesz wiedzieć, o co można zapytać. Opisy pochodzą prosto z serwera.</p>
-{tools_section()}
+{tools_section(release)}
 </section>
 
 <section id="cli">
@@ -453,9 +614,10 @@ PAGE = f"""<!doctype html>
 </html>
 """
 
-# The landing page carries the same prompt between markers in its installation section.
-LANDING_START, LANDING_END = "<!-- agent-prompt:start -->", "<!-- agent-prompt:end -->"
-LANDING_BLOCK = f"""{LANDING_START}
+
+# The landing page: the generated parts between <!-- name:start --> and <!-- name:end -->.
+
+AGENT_BLOCK = f"""
 <div class="agent-card agent-card--landing">
 <div class="agent-copy">
 <p class="eyebrow">Na skróty</p>
@@ -464,26 +626,97 @@ LANDING_BLOCK = f"""{LANDING_START}
 </div>
 {term(AGENT_PROMPT, label="Prompt dla agenta AI", prompt=False, event="copy-agent-prompt")}
 </div>
-{LANDING_END}"""
+"""
+
+SIDEBAR_PROMPT = '<p style="margin: 0; padding: 7px 10px; border-radius: 7px; color: #D3CDE2" data-prompt="{title}">{title}</p>'
+SIDEBAR_PROMPT_ACTIVE = '<p style="margin: 0; padding: 7px 10px; border-radius: 7px; background: rgba(167,139,250,0.14); color: #DDD6FE; font-weight: 600" data-prompt="{title}">{title}</p>'
+SIDEBAR_GROUP = (
+    '<p style="margin: 0; display: flex; align-items: center; gap: 8px; padding: 5px 10px; color: #D3CDE2">'
+    '<span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: {color}"></span><span style="flex: 1">{label}</span>'
+    "<span style=\"font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #A7A1B8\" data-fact=\"group-count\" data-group=\"{key}\">{count}</span></p>"
+)
+DANE_ROW = (
+    "<div><dt style=\"font-family: 'JetBrains Mono', monospace; font-size: 14px; color: {tint}\">{names}</dt>"
+    '<dd style="margin: 4px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">{text}</dd></div>'
+)
 
 
-def sync_landing(index: str) -> str:
-    """``index`` with its agent-prompt block replaced by (or, the first time, given) ``LANDING_BLOCK``."""
-    if LANDING_START in index:
-        head, rest = index.split(LANDING_START, 1)
-        return head + LANDING_BLOCK + rest.split(LANDING_END, 1)[1]
-    start = index.index('<section id="instalacja"')
-    end = index.index("</section>", start)
-    return index[:end] + LANDING_BLOCK + "\n" + index[end:]
+def _lines(lines: list[str]) -> str:
+    """A block of whole lines: the markers stay on lines of their own."""
+    return "\n" + "\n".join(lines) + "\n"
 
 
-def main() -> None:
-    (ROOT / "docs").mkdir(exist_ok=True)
-    (ROOT / "docs/index.html").write_text(PAGE)
-    print("docs/index.html", len(PAGE))
-    (ROOT / "index.html").write_text(sync_landing((ROOT / "index.html").read_text()))
-    print("index.html agent prompt synced")
+def landing_blocks(release: Release) -> dict[str, str]:
+    """The generated parts of index.html for ``release``, by marker name."""
+    check_release(release)
+    groups = {group.key: group for group in GROUPS}
+    tools, prompts = len(release.tools), len(release.prompts)
+    blocks = {
+        "hero-version": f'<span data-fact="version">v{e(release.version)}</span>',
+        "demo-tool-count": tools_phrase(tools, fact=True),
+        "demo-prompts": _lines([
+            (SIDEBAR_PROMPT_ACTIVE if p["name"] == DEMO_PROMPT else SIDEBAR_PROMPT).format(title=e(p.get("title") or p["name"]))
+            for p in release.prompts
+        ]),
+        "demo-tool-groups": _lines([
+            SIDEBAR_GROUP.format(color=g.color, label=e(g.short_label), key=g.key, count=len(g.tools)) for g in GROUPS
+        ]),
+        "personas-prompt-count": prompts_sentence_start(prompts),
+        "install-counts": f"{tools_phrase(tools)} i {prompts_phrase(prompts)}",
+        "plan-counts": f"{tools_phrase(tools, fact=True)} i {prompts_phrase(prompts, fact=True)}",
+        "agent-prompt": AGENT_BLOCK,
+    }
+    for name, keys in DANE_LISTS:
+        blocks[name] = _lines([
+            DANE_ROW.format(tint=groups[key].tint, names=e(" · ".join(names)), text=e(text))
+            for key in keys
+            for names, text in groups[key].rows
+        ])
+    return blocks
+
+
+def fill_blocks(page: str, blocks: dict[str, str]) -> str:
+    """``page`` with the text between every ``<!-- name:start -->`` and ``<!-- name:end -->`` of a
+    name in ``blocks`` replaced by ``blocks[name]``. Each name must be on the page."""
+    found = set()
+
+    def fill(match: re.Match) -> str:
+        name = match.group(1)
+        found.add(name)
+        return f"<!-- {name}:start -->{blocks[name]}<!-- {name}:end -->"
+
+    names = "|".join(re.escape(name) for name in blocks)
+    page = re.sub(rf"<!-- ({names}):start -->.*?<!-- \1:end -->", fill, page, flags=re.DOTALL)
+    if missing := sorted(blocks.keys() - found):
+        raise BuildError(f"index.html lacks the <!-- name:start --> and <!-- name:end --> markers of: {', '.join(missing)}")
+    return page
+
+
+def render_landing(index: str, release: Release) -> str:
+    """``index`` (index.html) with its generated parts for ``release``."""
+    return fill_blocks(index, landing_blocks(release))
+
+
+def build(root: Path = ROOT) -> Release:
+    """Write ``root``/docs/index.html and the generated parts of ``root``/index.html from ``root``/data/server/."""
+    release = load_release(root)
+    docs = render_docs(release)
+    index = render_landing((root / "index.html").read_text(encoding="utf-8"), release)
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs/index.html").write_text(docs, encoding="utf-8")
+    (root / "index.html").write_text(index, encoding="utf-8")
+    return release
+
+
+def main(root: Path = ROOT) -> int:
+    try:
+        release = build(root)
+    except BuildError as error:
+        print(f"tools/build_docs.py stopped:\n{error}", file=sys.stderr)
+        return 1
+    print(f"docs/index.html and index.html built from {PACKAGE} {release.version} ({len(release.tools)} tools, {len(release.prompts)} prompts)")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
