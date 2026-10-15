@@ -57,33 +57,12 @@ jobs:
   lighthouse:
     name: Lighthouse (mobile)
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      pages: read
-    env:
-      # main, the weekly run and manual runs on main measure the live site; other branches
-      # and pull requests measure their own files, served locally, before they go live.
-      LIVE: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
-      SITE: https://mbratkowski.github.io/deweloperuch-mcp-site/
+    # Measures this commit's own files served locally. The live site is measured by
+    # pages.yml right after each deployment.
     steps:
       - uses: actions/checkout@v7
 
-      - name: Wait until GitHub Pages serves this commit
-        if: env.LIVE == 'true' && github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for _ in $(seq 60); do
-            status=$(gh api "repos/$GITHUB_REPOSITORY/pages/builds" --jq ".[] | select(.commit == \"$GITHUB_SHA\") | .status" | head -n 1)
-            if [ "$status" = built ]; then exit 0; fi
-            if [ "$status" = errored ]; then echo "::error::The GitHub Pages build of $GITHUB_SHA failed"; exit 1; fi
-            sleep 10
-          done
-          echo "::error::GitHub Pages did not publish $GITHUB_SHA within 10 minutes"
-          exit 1
-
       - name: Stage the published files
-        if: env.LIVE != 'true'
         run: |
           mkdir -p _site/docs
           cp -R index.html css js assets favicon.png apple-touch-icon.png _site/
@@ -91,12 +70,7 @@ jobs:
 
       - name: Lighthouse
         run: |
-          if [ "$LIVE" = true ]; then
-            target=(--url="$SITE" --url="${SITE}docs/")
-          else
-            target=(--staticDistDir=./_site --url=http://localhost/ --url=http://localhost/docs/)
-          fi
-          npx --yes @lhci/cli@0.15.1 collect --config=./lighthouserc.json "${target[@]}"
+          npx --yes @lhci/cli@0.15.1 collect --config=./lighthouserc.json --staticDistDir=./_site --url=http://localhost/ --url=http://localhost/docs/
           npx --yes @lhci/cli@0.15.1 assert --config=./lighthouserc.json
 
       - uses: actions/upload-artifact@v7

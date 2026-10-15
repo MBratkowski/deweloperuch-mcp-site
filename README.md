@@ -31,11 +31,11 @@ uv run pytest
 - `python3 tools/build_docs.py`: rebuilds `docs/index.html` and the landing page's agent prompt from `data/server/*.json` (the server's `tests/snapshots/`).
 - `uv run python -m tools.render_images`: renders `favicon.png`, `apple-touch-icon.png` and `assets/og.png`.
 
-CI (`.github/workflows/check.yml`, on every push, pull request and weekly) runs the tests, the fact check, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). On main and in the weekly run Lighthouse measures the live site; on other branches and in pull requests it measures their own files served locally.
+CI (`.github/workflows/check.yml`, on every push, pull request and weekly) runs the tests, the fact check, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). Lighthouse measures each commit's own files served locally; `pages.yml` measures the live site after every deployment.
 
 ## Publishing
 
-GitHub Pages serves the `main` branch root.
+`.github/workflows/pages.yml` deploys on every push to `main`. It publishes only the site files (`index.html`, `docs/index.html`, `css/`, `js/`, `assets/`, the icons), not the specs, tools or tests, and then runs Lighthouse against the live pages.
 
 ## Licence
 

@@ -6,5 +6,5 @@ The landing page of deweloperuch-mcp. Spec: `docs/superpowers/specs/2026-10-15-l
 - Copy says "AI", not "Claude"; Claude Desktop and Claude Code appear only in the installation section and the FAQ.
 - No invented numbers, testimonials or user counts; demo numbers come from `data/demo.json` and carry their capture date.
 - deweloperuch.pl is reached only through the deweloperuch-mcp package (CLI or server) and its shared limiter: as few requests as the task needs, by hand, never from tests or CI, never crawling. On STOP (CLI exit code 3) stop and report.
-- The page makes no third-party request (GoatCounter is the only planned exception).
+- The pages make no third-party request except the Umami analytics script and its beacon (cloud.umami.is, gateway.umami.is).
 - Commit only on the user's instruction.
