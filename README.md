@@ -5,7 +5,7 @@ The landing page of [deweloperuch-mcp](https://github.com/MBratkowski/deweloperu
 - One static page: `index.html`, `css/site.css`, `js/site.js`. No build step, no framework, no third-party requests.
 - Design: the approved Claude Design artboard, exported to `docs/design/noc.dc.html`. Spec and plan: `docs/superpowers/`.
 - Fonts: Poppins and JetBrains Mono from Fontsource 5.3.0, self-hosted in `assets/fonts/` under the SIL Open Font License (`OFL-*.txt`).
-- Demo data: `data/demo.json`, captured on 2026-10-15 with the package CLI (`deweloperuch offers search wroclaw --area-min 40 --area-max 60 --sort biggest_drop --json`), one request through the package's shared limiter.
+- Demo data: `data/demo.json`, captured on 2026-10-16 with the package CLI (`deweloperuch offers search wroclaw --area-min 40 --area-max 55 --sort biggest_drop --json`), one request through the package's shared limiter; see [Demo data](#demo-data).
 
 ## Run locally
 
@@ -28,6 +28,19 @@ python3 tools/build_docs.py
 - `tools/build_docs.py` writes `docs/index.html` whole and the blocks of `index.html` between `<!-- name:start -->` and `<!-- name:end -->` markers; do not edit those by hand. The tool groups (with their lines in the landing's Dane section) and the CLI table are written by hand in the script: a release with a new or removed tool stops the build with the tool's name.
 - `.github/workflows/sync.yml` runs both daily when the latest release on PyPI is not the pinned one, runs the tests and opens or updates a pull request from `sync/deweloperuch-mcp` with their outcome. It never merges. It needs "Allow GitHub Actions to create and approve pull requests" in the repository's Actions settings.
 
+## Demo data
+
+The demo window on the landing page is rendered from `data/demo.json`, one real `search_offers` result with its capture date:
+
+```bash
+uv run python -m tools.capture_demo wroclaw --city-locative "we Wrocławiu" \
+  --question "Pokaż mieszkania 40–55 m² we Wrocławiu z największą obniżką ceny." --area-min 40 --area-max 55
+python3 -m tools.update_demo
+```
+
+- `tools/capture_demo.py` sends one request to deweloperuch.pl through the pinned release's CLI and its shared limiter (`uvx --from deweloperuch-mcp==<pinned> deweloperuch offers search … --sort biggest_drop --json`). Run it by hand only, never in tests or CI, and never in a loop. It writes nothing when the CLI fails, when an offer shown lacks an area, a price or a drop from the first price, or when the top 3 offers come from fewer than two developers (pick another query); on STOP (exit code 3) stop and report. The question and the city in the locative are written by hand and must say what the filters do.
+- `tools/update_demo.py` writes the blocks of `index.html` between `<!-- demo-title:start -->`, `<!-- demo-chat:start -->`, `<!-- demo-call:start -->` and their end markers; do not edit those by hand. CI renders the committed `data/demo.json` and fails on any difference.
+
 ## Checks
 
 The checks use [uv](https://docs.astral.sh/uv/) (Python ≥ 3.12):
@@ -39,11 +52,12 @@ uv run pytest
 ```
 
 - `tests/test_check_facts.py`, `tests/test_build_docs.py`, `tests/test_sync_server.py`: the fact check, the build and the sync against the saved server listing, offline.
+- `tests/test_capture_demo.py`, `tests/test_update_demo.py`: the capture with the CLI replaced by a fake, and the demo window against `data/demo.json`, offline.
 - `tests/e2e/`: both pages in headless Chromium against a local server, offline (the analytics script is stubbed): copy buttons, the demo, no horizontal overflow at 320 and 375 px, focus rings, requests, cookies, links.
 - `uv run python -m tools.check_facts`: the pages against the latest deweloperuch-mcp on PyPI. It starts that release with `uvx` and only lists its tools and prompts, which sends nothing to deweloperuch.pl. A release other than the pinned one fails it first, with the sync commands. `LANDING_NETWORK=1 uv run pytest` runs the same check as a test and also syncs the pinned release into a temporary folder to compare it with `data/server/`.
 - `uv run python -m tools.render_images`: renders `favicon.png`, `apple-touch-icon.png` and `assets/og.png`.
 
-CI (`.github/workflows/check.yml`, on every push, pull request and weekly) runs the tests, a guard that syncs the pinned release, builds the pages and fails on any difference from the commit, the fact check against the latest release, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). Lighthouse measures each commit's own files served locally; `pages.yml` measures the live site after every deployment.
+CI (`.github/workflows/check.yml`, on every push, pull request and weekly) runs the tests, a guard that syncs the pinned release, builds the pages, renders the demo and fails on any difference from the commit, the fact check against the latest release, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). Lighthouse measures each commit's own files served locally; `pages.yml` measures the live site after every deployment.
 
 ## Publishing
 

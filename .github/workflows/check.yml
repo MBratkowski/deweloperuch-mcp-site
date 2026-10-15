@@ -27,7 +27,7 @@ jobs:
       - run: uv run pytest
 
   generated:
-    name: Generated files match the pinned release
+    name: Generated files match the pinned release and the demo data
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -36,6 +36,8 @@ jobs:
       # `uvx deweloperuch-mcp==<data/server/version.json>`; listing tools sends nothing to deweloperuch.pl.
       - run: uv run python -m tools.sync_server --pinned
       - run: uv run python -m tools.build_docs
+      # Renders the committed data/demo.json; it never captures (tools/capture_demo.py runs only by hand).
+      - run: uv run python -m tools.update_demo
       - name: Nothing changed
         run: |
           git diff --exit-code
