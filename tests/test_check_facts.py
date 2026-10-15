@@ -17,10 +17,6 @@ from tools.check_facts import (
     compare_pinned,
     compare_snapshots,
     compare_written,
-    format_area,
-    format_change,
-    format_date,
-    format_pln,
     groups,
     read_page_facts,
     read_release,
@@ -207,15 +203,6 @@ def test_compare_snapshots_reports_changed_instructions(tools_json: dict, prompt
     assert any("server instructions differ" in m for m in compare_snapshots(tools_json, prompts_json, changed))
 
 
-def test_polish_formatting() -> None:
-    assert format_pln(475200.0) == "475 200 zł"
-    assert format_pln(11429.6) == "11 430 zł"
-    assert format_area(55.66) == "55,66 m²"
-    assert format_area(57.7) == "57,70 m²"
-    assert format_change(-27.59) == "−27,6%"
-    assert format_date("2026-10-15") == "15.10.2026"
-
-
 def test_demo_matches_its_data(index_html: str) -> None:
     assert check_demo(index_html, json.loads(read("data/demo.json"))) == []
 
@@ -224,11 +211,11 @@ def test_demo_matches_its_data(index_html: str) -> None:
     "change, expected",
     [
         (lambda d: d["rows"][0].update(price=475300.0), "table row 1"),
-        (lambda d: d["rows"].pop(), "the table has 5 rows, data/demo.json has 4"),
-        (lambda d: d.update(captured_at="2026-10-16"), "capture date 16.10.2026"),
+        (lambda d: d["rows"].pop(), "the table has"),
+        (lambda d: d.update(captured_at="2020-01-31"), "capture date 31.01.2020"),
         (lambda d: d.update(question="Inne pytanie."), "the question"),
         (lambda d: d["inspector_args"].update(area_max=70), "the arguments"),
-        (lambda d: d["result"].update(total=2588), "result total"),
+        (lambda d: d["result"].update(total=d["result"]["total"] + 1), "result total"),
         (lambda d: d["result"].update(list_url="https://example.invalid/x"), "list_url"),
         (lambda d: d.update(city_locative="w Krakowie"), "window title"),
     ],

@@ -26,13 +26,13 @@ import re
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 from tools import build_docs
 from tools.build_docs import Release
+from tools.update_demo import format_area, format_change, format_date, format_pln, group_thousands
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = build_docs.PACKAGE
@@ -348,28 +348,6 @@ def check_docs_build(docs_html: str, index_html: str, saved: Release) -> list[st
 
 
 # The demo block against data/demo.json.
-
-NBSP = " "
-
-
-def group_thousands(value: int) -> str:
-    return f"{value:,}".replace(",", NBSP)
-
-
-def format_pln(value: float) -> str:
-    return f"{group_thousands(round(value))}{NBSP}zł"
-
-
-def format_area(value: float) -> str:
-    return f"{value:.2f}".replace(".", ",") + f"{NBSP}m²"
-
-
-def format_change(value: float) -> str:
-    return f"{value:.1f}".replace(".", ",").replace("-", "−") + "%"
-
-
-def format_date(value: str) -> str:
-    return date.fromisoformat(value).strftime("%d.%m.%Y")
 
 
 def check_demo(index_html: str, demo: dict) -> list[str]:
