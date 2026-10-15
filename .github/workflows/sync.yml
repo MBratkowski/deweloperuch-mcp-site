@@ -38,7 +38,8 @@ jobs:
           echo "Pinned: deweloperuch-mcp $pinned. Latest on PyPI: $latest." >> "$GITHUB_STEP_SUMMARY"
 
   sync:
-    name: Sync with deweloperuch-mcp ${{ needs.release.outputs.latest }}
+    # A static name: Actions shows the name of a skipped job unevaluated.
+    name: Sync with the latest deweloperuch-mcp
     needs: release
     if: needs.release.outputs.latest != needs.release.outputs.pinned
     runs-on: ubuntu-24.04
