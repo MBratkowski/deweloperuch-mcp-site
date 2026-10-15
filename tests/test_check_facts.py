@@ -9,18 +9,19 @@ import pytest
 
 from tools import build_docs, check_facts
 from tools.check_facts import (
-    GROUPS,
     Release,
     check_all,
     check_demo,
     check_docs_build,
     compare,
+    compare_pinned,
     compare_snapshots,
     compare_written,
     format_area,
     format_change,
     format_date,
     format_pln,
+    groups,
     read_page_facts,
     read_release,
     read_written_facts,
@@ -62,10 +63,9 @@ def prompts_json() -> dict:
 
 
 @pytest.fixture
-def release(index_html: str, tools_json: dict, prompts_json: dict) -> Release:
-    """The saved listing (data/server/*.json) as the release the page shows."""
-    version = read_page_facts(index_html).versions[0]
-    return Release(version=version, tools=tuple(tools_json["tools"]), prompts=tuple(prompts_json["prompts"]))
+def release() -> Release:
+    """The saved listing (data/server/*.json) as the release the pages show."""
+    return build_docs.load_release()
 
 
 def with_tools(release: Release, *, add: tuple[str, ...] = (), remove: tuple[str, ...] = ()) -> Release:
@@ -84,8 +84,20 @@ def test_pages_match_the_saved_listing(release: Release) -> None:
 
 
 def test_groups_cover_tools_exactly() -> None:
-    assert frozenset().union(*GROUPS.values()) == ALL_TOOLS
-    assert sum(len(names) for names in GROUPS.values()) == len(ALL_TOOLS)
+    assert frozenset().union(*groups().values()) == ALL_TOOLS
+    assert sum(len(names) for names in groups().values()) == len(ALL_TOOLS)
+
+
+def test_compare_pinned_names_the_commands(release: Release) -> None:
+    assert compare_pinned("0.1.2", release) == []
+    [message] = compare_pinned("0.1.2", dataclasses.replace(release, version="0.1.3"))
+    assert "pins deweloperuch-mcp 0.1.2, but the release is 0.1.3" in message
+    assert "tools.sync_server 0.1.3" in message and "tools/build_docs.py" in message
+
+
+def test_check_all_puts_a_new_release_first(release: Release) -> None:
+    messages = check_all(dataclasses.replace(release, version="0.1.3"))
+    assert messages[0].startswith("data/server/version.json pins")
 
 
 def test_page_facts_are_read_from_the_markers(index_html: str) -> None:
@@ -173,13 +185,26 @@ def test_compare_snapshots_ignores_fields_the_docs_do_not_show(tools_json: dict,
     assert compare_snapshots(tools_json, prompts_json, dataclasses.replace(release, tools=tools)) == []
 
 
-def test_docs_build_detects_stale_output(index_html: str) -> None:
+def test_docs_build_detects_stale_output(index_html: str, release: Release) -> None:
     docs_html = read("docs/index.html")
-    assert check_docs_build(docs_html, index_html) == []
-    assert check_docs_build(docs_html.replace("13 narzędzi", "12 narzędzi", 1), index_html)
-    stale = index_html.replace(build_docs.LANDING_BLOCK, build_docs.LANDING_BLOCK.replace("Na skróty", "Skrót"))
+    assert check_docs_build(docs_html, index_html, release) == []
+    assert check_docs_build(docs_html.replace("13 narzędzi", "12 narzędzi", 1), index_html, release)
+    stale = index_html.replace(build_docs.AGENT_BLOCK, build_docs.AGENT_BLOCK.replace("Na skróty", "Skrót"))
     assert stale != index_html
-    assert any("agent-prompt block" in m for m in check_docs_build(docs_html, stale))
+    assert any("generated blocks" in m for m in check_docs_build(docs_html, stale, release))
+    hand_edited = index_html.replace(">v0.1.2<", ">v0.1.3<")
+    assert hand_edited != index_html
+    assert any("generated blocks" in m for m in check_docs_build(docs_html, hand_edited, release))
+
+
+def test_docs_build_reports_what_stops_the_build(index_html: str, release: Release) -> None:
+    messages = check_docs_build(read("docs/index.html"), index_html, with_tools(release, add=("search_parcels",)))
+    assert any("tools/build_docs.py stops" in m and "search_parcels" in m for m in messages)
+
+
+def test_compare_snapshots_reports_changed_instructions(tools_json: dict, prompts_json: dict, release: Release) -> None:
+    changed = dataclasses.replace(release, instructions=release.instructions + " Nowe zdanie.")
+    assert any("server instructions differ" in m for m in compare_snapshots(tools_json, prompts_json, changed))
 
 
 def test_polish_formatting() -> None:

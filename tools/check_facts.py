@@ -7,12 +7,14 @@ Reads the latest version from PyPI, starts that release over stdio
 Listing calls no tool, so nothing reaches deweloperuch.pl: the server's session only
 constructs its HTTP client (checked in the server code of 0.1.1). Then it compares:
 
+- the version pinned in data/server/version.json with the release, so a new release
+  fails with the commands that take the pages to it;
 - the facts marked in index.html (``data-fact``, ``data-group``, ``data-prompt``), the
   tool names in the Dane section and the persona prompts with the release;
 - counts and versions written in the copy of both pages ("13 narzędzi",
-  "deweloperuch-mcp-0.1.1.mcpb") with the release;
-- data/server/*.json, the source of the docs page, with the release;
-- docs/index.html and the agent-prompt block of index.html with tools/build_docs.py output;
+  "deweloperuch-mcp-0.1.2.mcpb") with the release;
+- data/server/*.json, the source of the generated parts, with the release;
+- docs/index.html and the generated blocks of index.html with tools/build_docs.py output;
 - the demo block of index.html with data/demo.json.
 
 Exit code 0 when everything matches; otherwise 1, with one line per mismatch.
@@ -30,36 +32,27 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from tools import build_docs
+from tools.build_docs import Release
 
 ROOT = Path(__file__).resolve().parent.parent
-PACKAGE = "deweloperuch-mcp"
+PACKAGE = build_docs.PACKAGE
 PYPI_URL = f"https://pypi.org/pypi/{PACKAGE}/json"
 
-GROUPS: dict[str, frozenset[str]] = {key: frozenset(names) for key, *_, names in build_docs.GROUPS}
-# The rows of the Dane section, in page order: the third row also lists the helpers.
-DANE_ROWS: tuple[tuple[str, ...], ...] = (("offers",), ("rcn",), ("official", "helpers"))
+
+def groups() -> dict[str, frozenset[str]]:
+    """The tool groups of tools/build_docs.py by key."""
+    return {group.key: frozenset(group.tools) for group in build_docs.GROUPS}
+
+
+def dane_rows() -> tuple[tuple[str, ...], ...]:
+    """The groups of each list of the Dane section, in page order."""
+    return tuple(keys for _, keys in build_docs.DANE_LISTS)
+
 
 # What the docs page shows of a tool or a prompt; other listing fields may come and go
 # with MCP SDK versions without changing the page.
 TOOL_FIELDS = ("name", "title", "description", "inputSchema")
 PROMPT_FIELDS = ("name", "title", "description", "arguments")
-
-
-@dataclass(frozen=True)
-class Release:
-    """A released deweloperuch-mcp as an MCP client lists it."""
-
-    version: str
-    tools: tuple[dict, ...]
-    prompts: tuple[dict, ...]
-
-    @property
-    def tool_names(self) -> frozenset[str]:
-        return frozenset(tool["name"] for tool in self.tools)
-
-    @property
-    def prompt_titles(self) -> frozenset[str]:
-        return frozenset(prompt.get("title") or prompt["name"] for prompt in self.prompts)
 
 
 # A small DOM: html.parser events folded into a tree, enough to read the marked facts.
@@ -237,6 +230,7 @@ def compare(page: PageFacts, release: Release) -> list[str]:
     """One English line per mismatch between the landing page's marked facts and ``release``."""
     where, version = "index.html", f"{PACKAGE} {release.version}"
     tools, titles = release.tool_names, release.prompt_titles
+    tool_groups, lists = groups(), dane_rows()
     problems = []
 
     if not page.versions:
@@ -255,16 +249,16 @@ def compare(page: PageFacts, release: Release) -> list[str]:
         if count != len(titles):
             problems.append(f"{where}: prompt-count {count}, {version} has {len(titles)} prompts")
 
-    ungrouped = tools - frozenset().union(*GROUPS.values())
+    ungrouped = tools - frozenset().union(*tool_groups.values())
     if ungrouped:
         problems.append(f"{version} has tools in no group of tools/build_docs.py GROUPS: {_names(ungrouped)}")
-    for group, members in GROUPS.items():
+    for group, members in tool_groups.items():
         expected = len(members & tools)
         if group not in page.group_counts:
             problems.append(f'{where}: no data-fact="group-count" for group {group}')
         elif page.group_counts[group] != expected:
             problems.append(f"{where}: group-count {group} is {page.group_counts[group]}, {version} has {expected}")
-    for group in page.group_counts.keys() - GROUPS.keys():
+    for group in page.group_counts.keys() - tool_groups.keys():
         problems.append(f"{where}: group-count for an unknown group {group!r}")
 
     listed = frozenset().union(*page.dane_rows)
@@ -272,13 +266,13 @@ def compare(page: PageFacts, release: Release) -> list[str]:
         problems.append(f"{where}: the Dane section misses tools of {version}: {_names(tools - listed)}")
     if listed - tools:
         problems.append(f"{where}: the Dane section lists tools {version} does not have: {_names(listed - tools)}")
-    if len(page.dane_rows) != len(DANE_ROWS):
-        problems.append(f"{where}: the Dane section has {len(page.dane_rows)} rows, expected {len(DANE_ROWS)}")
+    if len(page.dane_rows) != len(lists):
+        problems.append(f"{where}: the Dane section has {len(page.dane_rows)} rows, expected {len(lists)}")
     else:
-        for row, groups in zip(page.dane_rows, DANE_ROWS):
-            expected = frozenset().union(*(GROUPS[g] for g in groups)) & tools
+        for row, keys in zip(page.dane_rows, lists):
+            expected = frozenset().union(*(tool_groups[key] for key in keys)) & tools
             for name in sorted(row & tools - expected):
-                problems.append(f"{where}: the Dane row for {' + '.join(groups)} lists {name}, which belongs elsewhere")
+                problems.append(f"{where}: the Dane row for {' + '.join(keys)} lists {name}, which belongs elsewhere")
 
     shown = frozenset(page.prompt_titles)
     if titles - shown:
@@ -313,26 +307,43 @@ def compare_listing(kind: str, saved: list[dict], released: tuple[dict, ...], fi
     return problems
 
 
+SYNC_COMMANDS = "run uv run python -m tools.sync_server {version}, then python3 tools/build_docs.py"
+
+
 def compare_snapshots(tools_json: dict, prompts_json: dict, release: Release) -> list[str]:
     problems = compare_listing("tool", tools_json["tools"], release.tools, TOOL_FIELDS, release.version)
     problems += compare_listing("prompt", prompts_json["prompts"], release.prompts, PROMPT_FIELDS, release.version)
+    if release.instructions and tools_json.get("server", {}).get("instructions") != release.instructions:
+        problems.append(f"data/server/mcp_tools.json: the server instructions differ from {PACKAGE} {release.version}")
     if problems:
-        problems.append(
-            f"  copy tests/snapshots/mcp_*.json of the server's v{release.version} tag to data/server/, "
-            "then run python3 tools/build_docs.py"
-        )
+        problems.append(f"  {SYNC_COMMANDS.format(version=release.version)}")
     return problems
+
+
+def compare_pinned(pinned: str, release: Release) -> list[str]:
+    """The version data/server/version.json pins, the source of every generated part, against ``release``."""
+    if pinned == release.version:
+        return []
+    return [
+        f"data/server/version.json pins {PACKAGE} {pinned}, but the release is {release.version}: "
+        f"{SYNC_COMMANDS.format(version=release.version)} (or merge the pull request of the Sync workflow)"
+    ]
 
 
 # Generated parts against tools/build_docs.py.
 
 
-def check_docs_build(docs_html: str, index_html: str) -> list[str]:
+def check_docs_build(docs_html: str, index_html: str, saved: Release) -> list[str]:
+    """Both pages against what tools/build_docs.py builds from ``saved`` (data/server/)."""
+    try:
+        docs, index = build_docs.render_docs(saved), build_docs.render_landing(index_html, saved)
+    except build_docs.BuildError as error:
+        return [f"tools/build_docs.py stops: {line}" for line in str(error).splitlines()]
     problems = []
-    if docs_html != build_docs.PAGE:
+    if docs_html != docs:
         problems.append("docs/index.html differs from tools/build_docs.py output; run python3 tools/build_docs.py")
-    if index_html != build_docs.sync_landing(index_html):
-        problems.append("index.html: the agent-prompt block differs from tools/build_docs.py; run python3 tools/build_docs.py")
+    if index_html != index:
+        problems.append("index.html: the generated blocks differ from tools/build_docs.py output; run python3 tools/build_docs.py")
     return problems
 
 
@@ -451,7 +462,8 @@ async def read_release(version: str | None = None) -> Release:
             prompts += listed.prompts
             if not (cursor := listed.next_cursor):
                 break
-        served = client.server_info.version if client.server_info else None
+        info, instructions = client.server_info, client.instructions
+    served = info.version if info else None
     if served != version:
         raise RuntimeError(f"uvx {PACKAGE}=={version} reports version {served}")
     dump = {"mode": "json", "by_alias": True, "exclude_none": True}
@@ -459,6 +471,8 @@ async def read_release(version: str | None = None) -> Release:
         version=version,
         tools=tuple(tool.model_dump(**dump) for tool in tools),
         prompts=tuple(prompt.model_dump(**dump) for prompt in prompts),
+        name=info.name if info else "",
+        instructions=instructions or "",
     )
 
 
@@ -467,11 +481,13 @@ def check_all(release: Release, root: Path = ROOT) -> list[str]:
         return (root / path).read_text(encoding="utf-8")
 
     index_html, docs_html = read("index.html"), read("docs/index.html")
-    problems = compare(read_page_facts(index_html), release)
+    saved = build_docs.load_release(root)
+    problems = compare_pinned(saved.version, release)
+    problems += compare(read_page_facts(index_html), release)
     problems += compare_written("index.html", read_written_facts(index_html), release)
     problems += compare_written("docs/index.html", read_written_facts(docs_html), release)
     problems += compare_snapshots(json.loads(read("data/server/mcp_tools.json")), json.loads(read("data/server/mcp_prompts.json")), release)
-    problems += check_docs_build(docs_html, index_html)
+    problems += check_docs_build(docs_html, index_html, saved)
     problems += check_demo(index_html, json.loads(read("data/demo.json")))
     return problems
 
