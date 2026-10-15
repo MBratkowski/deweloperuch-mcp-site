@@ -1,0 +1,108 @@
+name: Check
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Mondays: a new deweloperuch-mcp release turns this red until the pages follow it.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (pytest, Playwright)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --locked
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run pytest
+
+  facts:
+    name: Facts against the released package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --locked
+      # PyPI and `uvx deweloperuch-mcp==<latest>`; listing tools sends nothing to deweloperuch.pl.
+      - run: uv run python -m tools.check_facts
+
+  html:
+    name: HTML validation (Nu)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      # Java and Node.js come with the runner.
+      - run: npx --yes --package vnu-jar@26.9.27 vnu --errors-only index.html docs/index.html
+
+  links:
+    name: Link check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config lychee.toml --no-progress index.html docs/index.html README.md
+          fail: true
+
+  lighthouse:
+    name: Lighthouse (mobile)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: read
+    env:
+      # main, the weekly run and manual runs on main measure the live site; other branches
+      # and pull requests measure their own files, served locally, before they go live.
+      LIVE: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+      SITE: https://mbratkowski.github.io/deweloperuch-mcp-site/
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Wait until GitHub Pages serves this commit
+        if: env.LIVE == 'true' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for _ in $(seq 60); do
+            status=$(gh api "repos/$GITHUB_REPOSITORY/pages/builds" --jq ".[] | select(.commit == \"$GITHUB_SHA\") | .status" | head -n 1)
+            if [ "$status" = built ]; then exit 0; fi
+            if [ "$status" = errored ]; then echo "::error::The GitHub Pages build of $GITHUB_SHA failed"; exit 1; fi
+            sleep 10
+          done
+          echo "::error::GitHub Pages did not publish $GITHUB_SHA within 10 minutes"
+          exit 1
+
+      - name: Stage the published files
+        if: env.LIVE != 'true'
+        run: |
+          mkdir -p _site/docs
+          cp -R index.html css js assets favicon.png apple-touch-icon.png _site/
+          cp docs/index.html _site/docs/
+
+      - name: Lighthouse
+        run: |
+          if [ "$LIVE" = true ]; then
+            target=(--url="$SITE" --url="${SITE}docs/")
+          else
+            target=(--staticDistDir=./_site --url=http://localhost/ --url=http://localhost/docs/)
+          fi
+          npx --yes @lhci/cli@0.15.1 collect --config=./lighthouserc.json "${target[@]}"
+          npx --yes @lhci/cli@0.15.1 assert --config=./lighthouserc.json
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: lighthouse
+          path: .lighthouseci/
+          include-hidden-files: true
+          if-no-files-found: ignore

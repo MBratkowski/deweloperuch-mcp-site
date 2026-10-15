@@ -1,0 +1,236 @@
+import asyncio
+import copy
+from concurrent.futures import ThreadPoolExecutor
+import dataclasses
+import json
+from pathlib import Path
+
+import pytest
+
+from tools import build_docs, check_facts
+from tools.check_facts import (
+    GROUPS,
+    Release,
+    check_all,
+    check_demo,
+    check_docs_build,
+    compare,
+    compare_snapshots,
+    compare_written,
+    format_area,
+    format_change,
+    format_date,
+    format_pln,
+    read_page_facts,
+    read_release,
+    read_written_facts,
+)
+
+ROOT = Path(__file__).resolve().parent.parent
+ALL_TOOLS = frozenset({
+    "search_locations", "search_offers", "get_offer", "search_investments", "get_investment",
+    "search_developers", "get_developer", "get_market_statistics", "get_transaction_statistics",
+    "rank_locations", "get_building", "estimate_property_value", "get_government_statistics",
+})
+PROMPT_TITLES = frozenset({"Znajdź mieszkanie", "Oceń ofertę", "Prześwietl dewelopera", "Porównaj miasta"})
+
+
+def read(path: str) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def in_thread(function):
+    """Run ``function`` in a worker thread: the sync Playwright fixtures keep an event loop
+    running in the main thread, where ``asyncio.run`` refuses to start."""
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(function).result()
+
+
+@pytest.fixture(scope="module")
+def index_html() -> str:
+    return read("index.html")
+
+
+@pytest.fixture(scope="module")
+def tools_json() -> dict:
+    return json.loads(read("data/server/mcp_tools.json"))
+
+
+@pytest.fixture(scope="module")
+def prompts_json() -> dict:
+    return json.loads(read("data/server/mcp_prompts.json"))
+
+
+@pytest.fixture
+def release(index_html: str, tools_json: dict, prompts_json: dict) -> Release:
+    """The saved listing (data/server/*.json) as the release the page shows."""
+    version = read_page_facts(index_html).versions[0]
+    return Release(version=version, tools=tuple(tools_json["tools"]), prompts=tuple(prompts_json["prompts"]))
+
+
+def with_tools(release: Release, *, add: tuple[str, ...] = (), remove: tuple[str, ...] = ()) -> Release:
+    tools = tuple(t for t in release.tools if t["name"] not in remove)
+    tools += tuple({"name": name, "description": "", "inputSchema": {"type": "object"}} for name in add)
+    return dataclasses.replace(release, tools=tools)
+
+
+def test_saved_listing_is_the_known_one(release: Release) -> None:
+    assert release.tool_names == ALL_TOOLS
+    assert release.prompt_titles == PROMPT_TITLES
+
+
+def test_pages_match_the_saved_listing(release: Release) -> None:
+    assert check_all(release) == []
+
+
+def test_groups_cover_tools_exactly() -> None:
+    assert frozenset().union(*GROUPS.values()) == ALL_TOOLS
+    assert sum(len(names) for names in GROUPS.values()) == len(ALL_TOOLS)
+
+
+def test_page_facts_are_read_from_the_markers(index_html: str) -> None:
+    page = read_page_facts(index_html)
+    assert page.tool_counts and set(page.tool_counts) == {13}
+    assert page.prompt_counts == (4,)
+    assert page.group_counts == {"offers": 5, "rcn": 4, "official": 1, "helpers": 3}
+    assert frozenset(page.prompt_titles) == PROMPT_TITLES
+    assert frozenset().union(*page.dane_rows) == ALL_TOOLS
+
+
+def test_compare_reports_version(index_html: str, release: Release) -> None:
+    messages = compare(read_page_facts(index_html), dataclasses.replace(release, version="0.9.9"))
+    assert any("0.9.9" in m for m in messages)
+
+
+def test_compare_names_new_tool(index_html: str, release: Release) -> None:
+    messages = compare(read_page_facts(index_html), with_tools(release, add=("search_parcels",)))
+    assert any("search_parcels" in m and "no group" in m for m in messages)
+    assert any("search_parcels" in m and "Dane section misses" in m for m in messages)
+    assert any("tool-count 13" in m and "14 tools" in m for m in messages)
+
+
+def test_compare_names_removed_tool(index_html: str, release: Release) -> None:
+    messages = compare(read_page_facts(index_html), with_tools(release, remove=("get_building",)))
+    assert any("get_building" in m and "does not have" in m for m in messages)
+    assert any("group-count rcn is 4" in m for m in messages)
+
+
+def test_compare_names_renamed_prompt(index_html: str, release: Release) -> None:
+    prompts = tuple({**p, "title": "Oceń cenę"} if p.get("title") == "Oceń ofertę" else p for p in release.prompts)
+    messages = compare(read_page_facts(index_html), dataclasses.replace(release, prompts=prompts))
+    assert any("Oceń ofertę" in m and "does not have" in m for m in messages)
+    assert any("Oceń cenę" in m and "misses" in m for m in messages)
+    assert any("persona card" in m and "Oceń ofertę" in m for m in messages)
+
+
+def test_compare_names_a_tool_in_the_wrong_dane_row(index_html: str, release: Release) -> None:
+    swapped = index_html.replace(">get_offer<", ">@@<").replace(">get_building<", ">get_offer<").replace(">@@<", ">get_building<")
+    messages = compare(read_page_facts(swapped), release)
+    assert any("offers lists get_building" in m for m in messages)
+    assert any("rcn lists get_offer" in m for m in messages)
+
+
+def test_compare_reports_missing_markers(release: Release) -> None:
+    messages = compare(read_page_facts("<html><body></body></html>"), release)
+    assert any('no data-fact="version"' in m for m in messages)
+    assert any('no data-fact="tool-count"' in m for m in messages)
+    assert any('group-count" for group helpers' in m for m in messages)
+
+
+def test_written_counts_and_versions(release: Release) -> None:
+    html = (
+        "<p>Dostajesz 14 narzędzi i Pięć gotowych promptów.</p>"
+        "<p>Pobierz deweloperuch-mcp-0.1.0.mcpb albo uvx deweloperuch-mcp==0.1.0.</p>"
+        "<p>Parametry (13), krok 4, cztery kroki.</p>"
+    )
+    written = read_written_facts(html)
+    assert written.tool_counts == (("14 narzędzi", 14),)
+    assert written.prompt_counts == (("Pięć gotowych promptów", 5),)
+    assert [v for _, v in written.versions] == ["0.1.0", "0.1.0"]
+    messages = compare_written("page", written, release)
+    assert len(messages) == 4
+    assert any("'14 narzędzi'" in m and "13 tools" in m for m in messages)
+
+
+def test_written_facts_ignore_scripts(release: Release) -> None:
+    written = read_written_facts("<script>const s = '99 narzędzi';</script><p>13 narzędzi</p>")
+    assert compare_written("page", written, release) == []
+
+
+def test_compare_snapshots_names_changed_and_new_entries(tools_json: dict, prompts_json: dict, release: Release) -> None:
+    tools = copy.deepcopy(list(release.tools))
+    tools[0]["description"] += " Zmiana."
+    prompts = tuple(p for p in release.prompts if p["name"] != "porownaj_miasta")
+    changed = with_tools(dataclasses.replace(release, tools=tuple(tools), prompts=prompts), add=("search_parcels",))
+    messages = compare_snapshots(tools_json, prompts_json, changed)
+    assert any(f"tool {tools[0]['name']} differs" in m and "description" in m for m in messages)
+    assert any("misses the tool search_parcels" in m for m in messages)
+    assert any("prompt porownaj_miasta" in m and "does not have" in m for m in messages)
+
+
+def test_compare_snapshots_ignores_fields_the_docs_do_not_show(tools_json: dict, prompts_json: dict, release: Release) -> None:
+    tools = tuple({**t, "annotations": {"readOnlyHint": False}, "_meta": {"x": 1}} for t in release.tools)
+    assert compare_snapshots(tools_json, prompts_json, dataclasses.replace(release, tools=tools)) == []
+
+
+def test_docs_build_detects_stale_output(index_html: str) -> None:
+    docs_html = read("docs/index.html")
+    assert check_docs_build(docs_html, index_html) == []
+    assert check_docs_build(docs_html.replace("13 narzędzi", "12 narzędzi", 1), index_html)
+    stale = index_html.replace(build_docs.LANDING_BLOCK, build_docs.LANDING_BLOCK.replace("Na skróty", "Skrót"))
+    assert stale != index_html
+    assert any("agent-prompt block" in m for m in check_docs_build(docs_html, stale))
+
+
+def test_polish_formatting() -> None:
+    assert format_pln(475200.0) == "475 200 zł"
+    assert format_pln(11429.6) == "11 430 zł"
+    assert format_area(55.66) == "55,66 m²"
+    assert format_area(57.7) == "57,70 m²"
+    assert format_change(-27.59) == "−27,6%"
+    assert format_date("2026-10-15") == "15.10.2026"
+
+
+def test_demo_matches_its_data(index_html: str) -> None:
+    assert check_demo(index_html, json.loads(read("data/demo.json"))) == []
+
+
+@pytest.mark.parametrize(
+    "change, expected",
+    [
+        (lambda d: d["rows"][0].update(price=475300.0), "table row 1"),
+        (lambda d: d["rows"].pop(), "the table has 5 rows, data/demo.json has 4"),
+        (lambda d: d.update(captured_at="2026-10-16"), "capture date 16.10.2026"),
+        (lambda d: d.update(question="Inne pytanie."), "the question"),
+        (lambda d: d["inspector_args"].update(area_max=70), "the arguments"),
+        (lambda d: d["result"].update(total=2588), "result total"),
+        (lambda d: d["result"].update(list_url="https://example.invalid/x"), "list_url"),
+        (lambda d: d.update(city_locative="w Krakowie"), "window title"),
+    ],
+)
+def test_demo_reports_each_difference(index_html: str, change, expected: str) -> None:
+    demo = json.loads(read("data/demo.json"))
+    change(demo)
+    messages = check_demo(index_html, demo)
+    assert any(expected in m for m in messages), messages
+
+
+def test_main_exit_codes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], release: Release) -> None:
+    async def fake_release() -> Release:
+        return release
+
+    monkeypatch.setattr(check_facts, "read_release", fake_release)
+    assert in_thread(check_facts.main) == 0
+    assert "OK" in capsys.readouterr().out
+
+    async def newer_release() -> Release:
+        return dataclasses.replace(release, version="9.9.9")
+
+    monkeypatch.setattr(check_facts, "read_release", newer_release)
+    assert in_thread(check_facts.main) == 1
+    assert "9.9.9" in capsys.readouterr().out
+
+
+@pytest.mark.network
+def test_live_release_matches_the_pages() -> None:
+    assert check_all(in_thread(lambda: asyncio.run(read_release()))) == []

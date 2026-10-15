@@ -1,0 +1,15 @@
+# Link check of the published pages and the README (.github/workflows/check.yml).
+
+exclude = [
+  # deweloperuch.pl is never requested from CI (service etiquette, CLAUDE.md).
+  '^https?://([a-z0-9-]+\.)*deweloperuch\.pl',
+  # The site's own URLs (canonical, Open Graph) exist only after a deploy; the test
+  # suite checks the internal links offline.
+  '^https://mbratkowski\.github\.io/deweloperuch-mcp-site',
+]
+# The README's "run locally" URL.
+exclude_loopback = true
+
+max_retries = 3
+# GitHub answers bursts with 429 even to authenticated requests; a rate limit is not a dead link.
+accept = ["200..=299", "429"]

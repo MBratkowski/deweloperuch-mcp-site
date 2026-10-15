@@ -15,6 +15,24 @@ python3 -m http.server 8000
 
 Then open http://127.0.0.1:8000/.
 
+## Checks
+
+The checks use [uv](https://docs.astral.sh/uv/) (Python ≥ 3.12):
+
+```bash
+uv sync
+uv run playwright install chromium
+uv run pytest
+```
+
+- `tests/test_check_facts.py`: the fact check against the saved server listing, offline.
+- `tests/e2e/`: both pages in headless Chromium against a local server, offline (the analytics script is stubbed): copy buttons, the demo, no horizontal overflow at 320 and 375 px, focus rings, requests, cookies, links.
+- `uv run python -m tools.check_facts`: the pages against the latest deweloperuch-mcp on PyPI. It starts that release with `uvx` and only lists its tools and prompts, which sends nothing to deweloperuch.pl. `LANDING_NETWORK=1 uv run pytest` runs the same check as a test.
+- `python3 tools/build_docs.py`: rebuilds `docs/index.html` and the landing page's agent prompt from `data/server/*.json` (the server's `tests/snapshots/`).
+- `uv run python -m tools.render_images`: renders `favicon.png`, `apple-touch-icon.png` and `assets/og.png`.
+
+CI (`.github/workflows/check.yml`, on every push, pull request and weekly) runs the tests, the fact check, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). On main and in the weekly run Lighthouse measures the live site; on other branches and in pull requests it measures their own files served locally.
+
 ## Publishing
 
 GitHub Pages serves the `main` branch root.

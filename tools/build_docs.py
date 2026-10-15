@@ -94,7 +94,7 @@ def prompts_section() -> str:
             for a in p.get("arguments", [])
         )
         cards.append(
-            f'<article class="tool"><div class="tool-head"><h4>{e(p["title"])}</h4><code>{e(p["name"])}</code></div>'
+            f'<article class="tool"><div class="tool-head"><h3>{e(p["title"])}</h3><code>{e(p["name"])}</code></div>'
             f'<p>{e(p["description"])}</p><div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table><thead><tr><th scope="col">Pole</th>'
             f'<th scope="col">Co wpisać</th></tr></thead><tbody>{rows}</tbody></table></div></article>'
         )
@@ -453,13 +453,9 @@ PAGE = f"""<!doctype html>
 </html>
 """
 
-(ROOT / "docs").mkdir(exist_ok=True)
-(ROOT / "docs/index.html").write_text(PAGE)
-print("docs/index.html", len(PAGE))
-
 # The landing page carries the same prompt between markers in its installation section.
 LANDING_START, LANDING_END = "<!-- agent-prompt:start -->", "<!-- agent-prompt:end -->"
-landing_block = f"""{LANDING_START}
+LANDING_BLOCK = f"""{LANDING_START}
 <div class="agent-card agent-card--landing">
 <div class="agent-copy">
 <p class="eyebrow">Na skróty</p>
@@ -469,13 +465,25 @@ landing_block = f"""{LANDING_START}
 {term(AGENT_PROMPT, label="Prompt dla agenta AI", prompt=False, event="copy-agent-prompt")}
 </div>
 {LANDING_END}"""
-index = (ROOT / "index.html").read_text()
-if LANDING_START in index:
-    head, rest = index.split(LANDING_START, 1)
-    index = head + landing_block + rest.split(LANDING_END, 1)[1]
-else:
+
+
+def sync_landing(index: str) -> str:
+    """``index`` with its agent-prompt block replaced by (or, the first time, given) ``LANDING_BLOCK``."""
+    if LANDING_START in index:
+        head, rest = index.split(LANDING_START, 1)
+        return head + LANDING_BLOCK + rest.split(LANDING_END, 1)[1]
     start = index.index('<section id="instalacja"')
     end = index.index("</section>", start)
-    index = index[:end] + landing_block + "\n" + index[end:]
-(ROOT / "index.html").write_text(index)
-print("index.html agent prompt synced")
+    return index[:end] + LANDING_BLOCK + "\n" + index[end:]
+
+
+def main() -> None:
+    (ROOT / "docs").mkdir(exist_ok=True)
+    (ROOT / "docs/index.html").write_text(PAGE)
+    print("docs/index.html", len(PAGE))
+    (ROOT / "index.html").write_text(sync_landing((ROOT / "index.html").read_text()))
+    print("index.html agent prompt synced")
+
+
+if __name__ == "__main__":
+    main()

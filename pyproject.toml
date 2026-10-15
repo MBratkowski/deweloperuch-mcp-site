@@ -1,0 +1,23 @@
+[project]
+name = "deweloperuch-mcp-site"
+version = "0"
+description = "Landing page of deweloperuch-mcp: checks and tools (the site itself has no build step)"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "mcp>=2.3",
+    "pillow>=11",
+    "pytest>=8",
+    "pytest-playwright>=0.7",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra"
+markers = ["network: needs PyPI and uvx; runs only with LANDING_NETWORK=1"]
