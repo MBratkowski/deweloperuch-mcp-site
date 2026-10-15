@@ -1,0 +1,101 @@
+/* deweloperuch-mcp landing page. Layout styles live inline in index.html (ported from the
+   approved artboard docs/design/noc.dc.html); this file holds tokens, fonts, states,
+   motion and the small-screen overrides. */
+
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 600; font-display: swap; src: url("../assets/fonts/poppins-latin-ext-600-normal.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 600; font-display: swap; src: url("../assets/fonts/poppins-latin-600-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 700; font-display: swap; src: url("../assets/fonts/poppins-latin-ext-700-normal.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "Poppins"; font-style: normal; font-weight: 700; font-display: swap; src: url("../assets/fonts/poppins-latin-700-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/jetbrains-mono-latin-ext-400-normal.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("../assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("../assets/fonts/jetbrains-mono-latin-ext-500-normal.woff2") format("woff2"); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("../assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+:root {
+  --bg: #0C0A14;
+  --surface: #120E1C;
+  --surface-sunken: #0F0B18;
+  --bubble: #2A2140;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #F1EEF7;
+  --text-2: #D3CDE2;
+  --muted: #A7A1B8;
+  --comment: #8E879F;
+  --accent: #34D399;
+  --accent-text: #6EE7B7;
+  --offers: #A78BFA;
+  --offers-text: #C4B5FD;
+  --rcn: #FACC15;
+  --rcn-text: #FDE68A;
+  --official: #38BDF8;
+  --official-text: #7DD3FC;
+  color-scheme: dark;
+}
+
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.page { background: var(--bg); color: var(--text); overflow-x: clip; }
+a { color: var(--text); }
+a:hover { color: var(--accent-text); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+.skip-link {
+  position: absolute; left: 16px; top: -80px; z-index: 10;
+  padding: 10px 14px; border-radius: 8px;
+  background: var(--accent); color: #052E21; font-weight: 600; text-decoration: none;
+}
+.skip-link:focus { top: 16px; }
+
+/* FAQ */
+summary::-webkit-details-marker { display: none; }
+details summary > span[aria-hidden] { transition: transform 0.2s ease; }
+details[open] summary > span[aria-hidden] { transform: rotate(45deg); }
+
+/* Copy buttons (inline display styles would otherwise beat the hidden attribute) */
+button.copy[hidden] { display: none !important; }
+button.copy:hover { background: rgba(255, 255, 255, 0.12) !important; }
+button.copy.is-copied { color: var(--accent-text) !important; }
+
+/* Hero art motion */
+.stars circle:nth-child(3n) { animation: twinkle 4s ease-in-out infinite; }
+.stars circle:nth-child(6n) { animation-delay: -1.3s; }
+.stars circle:nth-child(9n) { animation-delay: -2.6s; }
+.beacon { animation: beacon 2.4s ease-in-out infinite; }
+@keyframes twinkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+@keyframes beacon { 0%, 55%, 100% { opacity: 1; } 75% { opacity: 0.12; } }
+
+/* Demo animation states (js/site.js); without JS the HTML shows the final state. */
+#demo [data-step] { transition: opacity 0.35s ease, transform 0.35s ease; }
+#demo[data-demo="ready"] [data-step],
+#demo[data-demo="playing"] [data-step]:not([data-shown]) { opacity: 0; transform: translateY(4px); }
+#demo .chip-dot.is-busy { animation: pulse 0.9s ease-in-out infinite; }
+#demo .composer-text.is-typing { color: var(--text) !important; }
+#demo .composer-text.is-typing::after { content: "▍"; color: var(--accent); animation: caret 1s steps(1) infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+@keyframes caret { 50% { opacity: 0; } }
+
+/* Version pill: one line of text, wrapping as text on narrow screens. */
+.hero-copy > a:first-child { display: inline-block !important; text-align: center; line-height: 1.5; padding: 6px 14px !important; }
+
+/* Small screens: the artboard is drawn at 1440 px. */
+@media (max-width: 720px) {
+  .hero h1 { font-size: 40px !important; }
+  main h2 { font-size: 32px !important; }
+  .final-cta h2 { font-size: 36px !important; }
+  main > section:not(.hero) { padding-top: 96px !important; }
+  .final-cta { padding-bottom: 96px !important; }
+  #zasady > div { padding: 28px !important; }
+  .window-badge { display: none !important; }
+  .plan { padding: 24px !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

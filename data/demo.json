@@ -1,0 +1,65 @@
+{
+  "captured_at": "2026-10-15",
+  "city_locative": "we Wrocławiu",
+  "question": "Pokaż mieszkania 40–60 m² we Wrocławiu z największą obniżką ceny.",
+  "tool": "search_offers",
+  "inspector_args": {
+    "city": "wroclaw",
+    "area_min": 40,
+    "area_max": 60,
+    "sort": "biggest_drop"
+  },
+  "result": {
+    "total": 2587,
+    "returned": 10,
+    "truncated": true,
+    "list_url": "https://deweloperuch.pl/ceny-ofertowe/wroclaw/mieszkania?filterSize=40-60&sortBy=start_amount_difference_percent&sortOrder=asc&page=1&perPage=10"
+  },
+  "rows": [
+    {
+      "name": "5A-30",
+      "investment_name": "Jodłowicka 5",
+      "developer_name": "Wrobud Sp. z o.o.",
+      "area_m2": 55.66,
+      "price": 475200.0,
+      "price_per_m2": 8537.55,
+      "price_change_since_start_pct": -27.59
+    },
+    {
+      "name": "5B-28",
+      "investment_name": "Jodłowicka 5",
+      "developer_name": "Wrobud Sp. z o.o.",
+      "area_m2": 55.41,
+      "price": 475200.0,
+      "price_per_m2": 8576.07,
+      "price_change_since_start_pct": -26.64
+    },
+    {
+      "name": "5A-9",
+      "investment_name": "Jodłowicka 5",
+      "developer_name": "Wrobud Sp. z o.o.",
+      "area_m2": 55.66,
+      "price": 475200.0,
+      "price_per_m2": 8537.55,
+      "price_change_since_start_pct": -21.6
+    },
+    {
+      "name": "A3/13",
+      "investment_name": "Nowa Awangarda",
+      "developer_name": "5th Avenue Holding S.A.",
+      "area_m2": 57.71,
+      "price": 819482.0,
+      "price_per_m2": 14200.0,
+      "price_change_since_start_pct": -18.05
+    },
+    {
+      "name": "A1/13",
+      "investment_name": "Nowa Awangarda",
+      "developer_name": "5th Avenue Holding S.A.",
+      "area_m2": 57.71,
+      "price": 813711.0,
+      "price_per_m2": 14100.0,
+      "price_change_since_start_pct": -16.97
+    }
+  ]
+}
