@@ -23,7 +23,7 @@ Conversions, in order: installation (Claude Desktop extension, `uvx`, skill), a 
 | L8 | Official project icon (hard-hat mascot with "MCP+CLI") used with the consent of the deweloperuch.pl authors | user |
 | L9 | Every shell command on the page has a copy button | user |
 | L10 | Animated demo built from real tool results, captured once and dated | user |
-| L11 | Cookieless analytics (GoatCounter), no consent banner | user |
+| L11 | Cookieless analytics, no consent banner: Umami Cloud (the user's existing account, GitHub sign-in) instead of GoatCounter; events via `data-umami-event` | user, 2026-10-15 |
 | L12 | Plain static HTML, CSS and vanilla JS, no build step; consistency with the package is enforced by a CI check | user |
 | L13 | The official icon is excluded from the MIT licence: "all rights reserved, used with permission", stated in `LICENSE` and the README | user, spec review |
 | L14 | Persona examples use neutral wording, no real developer names | user, spec review |

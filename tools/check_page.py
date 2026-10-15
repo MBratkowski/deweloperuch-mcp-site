@@ -56,7 +56,7 @@ with sync_playwright() as p:
         if visible != command:
             problems.append(f"visible {visible!r} != {command!r}")
     page.screenshot(path=shots / "desktop-full.png", full_page=True)
-    external = {h for h in hosts if h not in ("127.0.0.1", "localhost", None)}
+    external = {h for h in hosts if h not in ("127.0.0.1", "localhost", None, "cloud.umami.is")}
     if external:
         problems.append(f"external requests: {external}")
     if ctx.cookies():
@@ -122,7 +122,7 @@ with sync_playwright() as p:
             problems.append(f"docs anchor {href} missing")
     if page.locator(".tool").count() != 13 + 4:
         problems.append(f"docs tool+prompt cards: {page.locator('.tool').count()}")
-    external = {h for h in hosts if h not in ("127.0.0.1", "localhost", None)}
+    external = {h for h in hosts if h not in ("127.0.0.1", "localhost", None, "cloud.umami.is")}
     if external:
         problems.append(f"docs external requests: {external}")
     if errors:

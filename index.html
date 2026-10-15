@@ -20,6 +20,7 @@
 <link rel="preload" href="assets/fonts/poppins-latin-ext-700-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/site.css">
 <script src="js/site.js" defer></script>
+<script defer src="https://cloud.umami.is/script.js" data-website-id="cdcef87a-abd4-4be6-970c-bef26c1152b6" data-domains="mbratkowski.github.io"></script>
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "deweloperuch-mcp", "description": "Serwer MCP z danymi o rynku mieszkań w Polsce: ceny ofertowe deweloperów, ceny transakcyjne z RCN, statystyki GUS i NBP.", "applicationCategory": "DeveloperApplication", "operatingSystem": "macOS, Linux", "license": "https://opensource.org/licenses/MIT", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "PLN"}, "url": "https://mbratkowski.github.io/deweloperuch-mcp-site/", "sameAs": ["https://github.com/MBratkowski/deweloperuch-mcp", "https://pypi.org/project/deweloperuch-mcp/"]}
 </script>
@@ -84,11 +85,11 @@
 <a href="docs/" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">Dokumentacja</a>
 </nav>
 <nav aria-label="Pobieranie i kod" style="display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px; border-radius: 999px; background: rgba(18,12,32,0.55); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255,255,255,0.10)">
-<a href="https://github.com/MBratkowski/deweloperuch-mcp" style="display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; text-decoration: none; font-size: 14px">
+<a data-umami-event="nav-github" href="https://github.com/MBratkowski/deweloperuch-mcp" style="display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; text-decoration: none; font-size: 14px">
 <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"></path></svg>
 GitHub
 </a>
-<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 999px; background: rgba(255,255,255,0.10); text-decoration: none; font-size: 14px; font-weight: 600">Pobierz</a>
+<a data-umami-event="nav-download" href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 999px; background: rgba(255,255,255,0.10); text-decoration: none; font-size: 14px; font-weight: 600">Pobierz</a>
 </nav>
 </header>
 <main id="main">
@@ -103,11 +104,11 @@ GitHub
 <h1 style="margin: 0; font-family: 'Poppins', sans-serif; font-size: 68px; line-height: 1.04; font-weight: 700; letter-spacing: -0.03em; text-shadow: 0 2px 30px rgba(12,10,20,0.5)">Każdy ruch rynku mieszkań.<br><span style="color: #34D399">W rozmowie z AI.</span></h1>
 <p style="margin: 0; max-width: 620px; font-size: 18px; line-height: 1.6; color: #D3CDE2">Serwer MCP, który daje Twojemu asystentowi AI ceny ofertowe deweloperów z historią zmian, ceny transakcyjne z rejestru RCN oraz statystyki GUS i NBP. Za darmo i open source.</p>
 <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 8px">
-<a href="#instalacja" data-goatcounter-click="cta-install" style="display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 28px; border-radius: 999px; background: var(--accent); color: #052E21; text-decoration: none; font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 10px 40px rgba(16,185,129,0.45)">Zainstaluj za darmo</a>
+<a href="#instalacja" data-umami-event="cta-install" style="display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 28px; border-radius: 999px; background: var(--accent); color: #052E21; text-decoration: none; font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 10px 40px rgba(16,185,129,0.45)">Zainstaluj za darmo</a>
 <div class="cmd-pill" style="display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 10px; padding: 4px 4px 4px 18px; border-radius: 999px; background: rgba(12,10,20,0.55); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.12); font-family: 'JetBrains Mono', monospace; font-size: 13px">
 <span style="color: #D3CDE2">albo w terminalu:</span>
 <code style="color: #F1EEF7"><span class="cmd-text">uvx deweloperuch-mcp</span></code>
-<button type="button" class="copy" data-command="uvx deweloperuch-mcp" data-goatcounter-click="copy-hero" hidden style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: 999px; border: 0; background: rgba(255,255,255,0.08); color: #D3CDE2; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer">
+<button type="button" class="copy" data-command="uvx deweloperuch-mcp" data-umami-event="copy-hero" hidden style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: 999px; border: 0; background: rgba(255,255,255,0.08); color: #D3CDE2; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer">
 <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
 <span aria-live="polite">Kopiuj</span>
 </button>
@@ -293,7 +294,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <li>Kliknij go dwa razy albo przeciągnij do Ustawień, w zakładkę Rozszerzenia.</li>
 <li>Dostajesz 13 narzędzi i 4 gotowe prompty.</li>
 </ul>
-<a href="docs/#krok-po-kroku" style="margin-top: auto; display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; color: #6EE7B7; text-decoration: none">Instrukcja krok po kroku, z obrazkami →</a>
+<a data-umami-event="card-guide" href="docs/#krok-po-kroku" style="margin-top: auto; display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; color: #6EE7B7; text-decoration: none">Instrukcja krok po kroku, z obrazkami →</a>
 </div>
 
 <div style="flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 28px; border-radius: 16px; background: #120E1C; border: 1px solid rgba(255,255,255,0.08)">
@@ -307,7 +308,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <div style="display: flex; flex-direction: column; padding: 10px 8px 12px 14px; font-family: 'JetBrains Mono', monospace; font-size: 13px; line-height: 1.6">
 <div style="display: flex; align-items: center; gap: 10px">
 <code style="flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; color: #F1EEF7"><span style="color: #34D399" aria-hidden="true">$</span> <span class="cmd-text">claude mcp add deweloperuch -- uvx deweloperuch-mcp</span></code>
-<button type="button" class="copy" data-command="claude mcp add deweloperuch -- uvx deweloperuch-mcp" data-goatcounter-click="copy-claude" hidden style="flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #D3CDE2; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer">
+<button type="button" class="copy" data-command="claude mcp add deweloperuch -- uvx deweloperuch-mcp" data-umami-event="copy-claude" hidden style="flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #D3CDE2; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer">
 <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
 <span aria-live="polite">Kopiuj</span>
 </button>
@@ -330,7 +331,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <p style="margin: 0; color: #8E879F"># skill dla agenta kodującego</p>
 <div style="display: flex; align-items: center; gap: 10px">
 <code style="flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; color: #F1EEF7"><span style="color: #34D399" aria-hidden="true">$</span> <span class="cmd-text">npx skills add MBratkowski/deweloperuch-mcp</span></code>
-<button type="button" class="copy" data-command="npx skills add MBratkowski/deweloperuch-mcp" data-goatcounter-click="copy-skill" hidden style="flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #D3CDE2; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer">
+<button type="button" class="copy" data-command="npx skills add MBratkowski/deweloperuch-mcp" data-umami-event="copy-skill" hidden style="flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #D3CDE2; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer">
 <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
 <span aria-live="polite">Kopiuj</span>
 </button>
@@ -338,7 +339,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <p style="margin: 8px 0 0; color: #8E879F"># albo samo CLI</p>
 <div style="display: flex; align-items: center; gap: 10px">
 <code style="flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; color: #F1EEF7"><span style="color: #34D399" aria-hidden="true">$</span> <span class="cmd-text">uvx --from deweloperuch-mcp deweloperuch --help</span></code>
-<button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch --help" data-goatcounter-click="copy-cli" hidden style="flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #D3CDE2; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer">
+<button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch --help" data-umami-event="copy-cli" hidden style="flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 44px; min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: #D3CDE2; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer">
 <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
 <span aria-live="polite">Kopiuj</span>
 </button>
@@ -377,7 +378,7 @@ search_offers · <span class="chip-state">gotowe</span>
    - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
    Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
 5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
-6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start." hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start." data-umami-event="copy-agent-prompt" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
 </div>
 <!-- agent-prompt:end -->
 </section>
@@ -448,8 +449,8 @@ search_offers · <span class="chip-state">gotowe</span>
 <li style="display: flex; align-items: center; gap: 10px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg>Działa lokalnie, na Twoim komputerze</li>
 <li style="display: flex; align-items: center; gap: 10px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg>Otwarty kod na GitHubie</li>
 </ul>
-<a href="docs/#krok-po-kroku" style="display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 999px; background: var(--accent); color: #052E21; text-decoration: none; font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 10px 40px rgba(16,185,129,0.35)">Zainstaluj za darmo</a>
-<a href="https://github.com/MBratkowski/deweloperuch-mcp" style="display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.16); text-decoration: none; font-weight: 600; font-size: 16px">Zobacz kod na GitHubie</a>
+<a data-umami-event="cta-guide" href="docs/#krok-po-kroku" style="display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 999px; background: var(--accent); color: #052E21; text-decoration: none; font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 10px 40px rgba(16,185,129,0.35)">Zainstaluj za darmo</a>
+<a data-umami-event="plan-github" href="https://github.com/MBratkowski/deweloperuch-mcp" style="display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.16); text-decoration: none; font-weight: 600; font-size: 16px">Zobacz kod na GitHubie</a>
 </div>
 </section>
 
@@ -460,7 +461,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <div style="max-width: 1240px; margin: 0 auto; padding: 48px 24px; box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 40px 64px">
 <div style="flex: 2 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 14px">
 <p style="margin: 0; display: flex; align-items: center; gap: 10px"><img src="assets/icon/icon-light.png" alt="" style="width: 26px; height: 30px"><span style="font-family: 'Poppins', sans-serif; font-weight: 600">deweloperuch-mcp</span></p>
-<p style="margin: 0; max-width: 460px; font-size: 13px; line-height: 1.6; color: #A7A1B8">Nieoficjalny projekt społeczności, niepowiązany z deweloperuch.pl, GUS ani NBP; działa za zgodą autorów deweloperuch.pl. Dane bez gwarancji poprawności; to nie jest porada inwestycyjna. Licencja MIT.</p>
+<p style="margin: 0; max-width: 460px; font-size: 13px; line-height: 1.6; color: #A7A1B8">Nieoficjalny projekt społeczności, niepowiązany z deweloperuch.pl, GUS ani NBP; działa za zgodą autorów deweloperuch.pl. Dane bez gwarancji poprawności; to nie jest porada inwestycyjna. Licencja MIT. Liczymy wejścia i kliknięcia bez cookies (Umami).</p>
 </div>
 <nav aria-label="Produkt" style="flex: 1 1 140px; display: flex; flex-direction: column; gap: 4px; font-size: 14px">
 <p style="margin: 0 0 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #A7A1B8">Produkt</p>

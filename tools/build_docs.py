@@ -7,6 +7,7 @@ tests/snapshots/mcp_tools.json and mcp_prompts.json). Re-run after copying newer
 
 import html
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,7 +34,7 @@ COPY_ICON = ('<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"
              '<path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>')
 
 
-def term(command: str, label: str = "Terminal", prompt: bool = True) -> str:
+def term(command: str, label: str = "Terminal", prompt: bool = True, event: str = "") -> str:
     """A terminal block with a copy button (js/site.js wires every button.copy)."""
     sign = '<span class="prompt-sign" aria-hidden="true">$</span> ' if prompt else ""
     tag = "code" if "\n" not in command else "pre"
@@ -41,7 +42,7 @@ def term(command: str, label: str = "Terminal", prompt: bool = True) -> str:
         f'<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span>'
         f'<span aria-hidden="true"></span><em>{e(label)}</em></div>'
         f'<div class="cmd"><{tag}>{sign}<span class="cmd-text">{e(command)}</span></{tag}>'
-        f'<button type="button" class="copy" data-command="{e(command)}" hidden>{COPY_ICON}'
+        f'<button type="button" class="copy" data-command="{e(command)}" data-umami-event="{e(event or "docs-copy-" + re.sub(r"[^a-z0-9]+", "-", command.splitlines()[0].lower()).strip("-")[:48])}" hidden>{COPY_ICON}'
         f'<span aria-live="polite">Kopiuj</span></button></div></div>'
     )
 
@@ -120,7 +121,7 @@ STEPS = f"""
 <p class="step-num">Krok 1</p>
 <h3>Pobierz plik rozszerzenia</h3>
 <p>Otwórz stronę najnowszego wydania i w sekcji „Assets” kliknij plik, którego nazwa kończy się na <code>.mcpb</code>. Zapisze się w folderze Pobrane.</p>
-<p><a class="btn-link" href="{RELEASES}">Otwórz stronę wydania →</a></p>
+<p><a class="btn-link" href="{RELEASES}" data-umami-event="docs-open-release">Otwórz stronę wydania →</a></p>
 </div>
 </li>
 <li class="step">
@@ -250,6 +251,7 @@ PAGE = f"""<!doctype html>
 <link rel="preload" href="../assets/fonts/poppins-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="../css/site.css">
 <script src="../js/site.js" defer></script>
+<script defer src="https://cloud.umami.is/script.js" data-website-id="cdcef87a-abd4-4be6-970c-bef26c1152b6" data-domains="mbratkowski.github.io"></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Przejdź do treści</a>
@@ -265,7 +267,7 @@ PAGE = f"""<!doctype html>
 </nav>
 <nav class="pill-nav" aria-label="Linki zewnętrzne">
 <a href="{REPO}">GitHub</a>
-<a href="{RELEASES}" class="pill-strong">Pobierz</a>
+<a href="{RELEASES}" class="pill-strong" data-umami-event="docs-nav-download">Pobierz</a>
 </nav>
 </header>
 
@@ -283,7 +285,7 @@ PAGE = f"""<!doctype html>
 <p class="section-lead">Dla Claude Desktop na macOS. Linux działa tak samo; Windows nie jest jeszcze obsługiwany.</p>
 {STEPS}
 </section>
-{AGENT_SECTION.replace("{term}", term(AGENT_PROMPT, label="Prompt dla agenta AI", prompt=False))}
+{AGENT_SECTION.replace("{term}", term(AGENT_PROMPT, label="Prompt dla agenta AI", prompt=False, event="docs-copy-agent-prompt"))}
 
 <div class="wrap docs-layout">
 <nav class="toc" aria-label="Spis treści">
@@ -341,7 +343,7 @@ PAGE = f"""<!doctype html>
 {term("claude mcp add deweloperuch -- uvx deweloperuch-mcp")}
 <h3>Dowolna aplikacja obsługująca lokalne serwery MCP</h3>
 <p>Dodaj serwer w ustawieniach MCP swojej aplikacji. W Claude Desktop bez rozszerzenia jest to plik <code>claude_desktop_config.json</code>; inne aplikacje przyjmują to samo polecenie i argumenty:</p>
-{term(CONFIG_JSON, label="claude_desktop_config.json", prompt=False)}
+{term(CONFIG_JSON, label="claude_desktop_config.json", prompt=False, event="docs-copy-config-json")}
 <h3>Agent AI w terminalu: skill</h3>
 <p>Skill to gotowa instrukcja dla agenta kodującego (np. Claude Code, Codex, Cursor): podpowiada mu, których komend <code>deweloperuch</code> użyć i jak czytać wyniki. Instalacja wymaga Node.js:</p>
 {term("npx skills add MBratkowski/deweloperuch-mcp")}
@@ -431,6 +433,7 @@ PAGE = f"""<!doctype html>
 <h2>Prywatność</h2>
 <p>Serwer działa na Twoim komputerze i łączy się wyłącznie z deweloperuch.pl, i to tylko po dane do odczytu. Nie zbiera danych o Tobie i niczego nie wysyła autorom projektu.</p>
 <p>Twoje pytania trafiają do dostawcy Twojego asystenta AI na jego zasadach. Do deweloperuch.pl serwer wysyła tylko parametry potrzebne do pobrania danych (np. miasto, metraż, budżet).</p>
+<p>Ta strona liczy wejścia i kliknięcia narzędziem Umami: bez cookies i bez zapisywania danych, które pozwalałyby Cię rozpoznać.</p>
 <p>Pełna dokumentacja techniczna (po angielsku) jest <a href="{REPO}#readme">w repozytorium na GitHubie</a>.</p>
 </section>
 </div>
@@ -461,7 +464,7 @@ landing_block = f"""{LANDING_START}
 <h3>Niech AI zainstaluje to za Ciebie.</h3>
 <p>Masz agenta AI z dostępem do terminala, np. Claude Code? Skopiuj prompt i wklej go agentowi: sprawdzi system, doinstaluje uv i doda serwer do Twojej aplikacji, pytając o zgodę przed zmianą konfiguracji.</p>
 </div>
-{term(AGENT_PROMPT, label="Prompt dla agenta AI", prompt=False)}
+{term(AGENT_PROMPT, label="Prompt dla agenta AI", prompt=False, event="copy-agent-prompt")}
 </div>
 {LANDING_END}"""
 index = (ROOT / "index.html").read_text()
