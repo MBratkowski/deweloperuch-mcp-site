@@ -88,7 +88,7 @@ button.copy.is-copied { color: var(--accent-text) !important; }
 @keyframes caret { 50% { opacity: 0; } }
 
 /* Version pill: one line of text, wrapping as text on narrow screens. */
-.hero-copy > a:first-child { display: inline-block !important; text-align: center; line-height: 1.5; padding: 6px 14px !important; }
+.hero-copy > a:first-child { display: block !important; min-height: 0 !important; text-align: center; line-height: 1.5; padding: 8px 16px !important; }
 
 /* Small screens: the artboard is drawn at 1440 px. */
 @media (max-width: 720px) {
@@ -101,6 +101,7 @@ button.copy.is-copied { color: var(--accent-text) !important; }
   .window-badge { display: none !important; }
   .plan { padding: 24px !important; }
   .cmd-pill { border-radius: 22px !important; padding: 8px 12px !important; }
+  .hero-copy > a:first-child { border-radius: 18px !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {
