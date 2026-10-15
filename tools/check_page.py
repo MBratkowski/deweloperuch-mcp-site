@@ -97,6 +97,49 @@ with sync_playwright() as p:
         problems.append("copy buttons visible without JS")
     ctx.close()
 
+    # Docs page
+    ctx = browser.new_context(viewport={"width": 1440, "height": 900}, permissions=["clipboard-read", "clipboard-write"])
+    page = ctx.new_page()
+    errors, hosts = [], set()
+    page.on("console", lambda m: m.type == "error" and errors.append(m.text))
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.on("request", lambda r: hosts.add(urlparse(r.url).hostname))
+    page.goto(url + "docs/")
+    page.wait_for_load_state("networkidle")
+    page.screenshot(path=shots / "docs-top.png")
+    page.locator("#krok-po-kroku").screenshot(path=shots / "docs-steps.png")
+    page.locator("#zainstaluj-z-ai").screenshot(path=shots / "docs-agent.png")
+    for button in page.locator("button.copy").all():
+        command = button.get_attribute("data-command")
+        button.scroll_into_view_if_needed()
+        button.click()
+        if page.evaluate("navigator.clipboard.readText()") != command:
+            problems.append(f"docs copy failed for {command[:40]!r}")
+        if button.evaluate("b => b.parentElement.querySelector('.cmd-text').textContent") != command:
+            problems.append(f"docs visible text differs for {command[:40]!r}")
+    for href in page.locator("a[href^='#']").evaluate_all("els => els.map(e => e.getAttribute('href'))"):
+        if page.locator(href).count() != 1:
+            problems.append(f"docs anchor {href} missing")
+    if page.locator(".tool").count() != 13 + 4:
+        problems.append(f"docs tool+prompt cards: {page.locator('.tool').count()}")
+    external = {h for h in hosts if h not in ("127.0.0.1", "localhost", None)}
+    if external:
+        problems.append(f"docs external requests: {external}")
+    if errors:
+        problems.append(f"docs console errors: {errors}")
+    ctx.close()
+    for width in (320, 375):
+        ctx = browser.new_context(viewport={"width": width, "height": 800}, is_mobile=True)
+        page = ctx.new_page()
+        page.goto(url + "docs/")
+        page.wait_for_load_state("networkidle")
+        sw = page.evaluate("document.documentElement.scrollWidth")
+        if sw > width:
+            wide = page.evaluate(f"""Array.from(document.querySelectorAll('body *')).filter(e => e.getBoundingClientRect().right > {width} + 1).slice(0, 5).map(e => e.tagName + '.' + e.className + ' ' + Math.round(e.getBoundingClientRect().right))""")
+            problems.append(f"docs horizontal scroll at {width}: {sw} {wide}")
+        page.screenshot(path=shots / f"docs-mobile-{width}.png", full_page=True)
+        ctx.close()
+
     ctx = browser.new_context(viewport={"width": 1200, "height": 630}, reduced_motion="reduce", device_scale_factor=1)
     page = ctx.new_page()
     page.goto(url)

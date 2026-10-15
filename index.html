@@ -83,7 +83,7 @@
 <a href="#dla-kogo" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">Dla kogo</a>
 <a href="#instalacja" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">Instalacja</a>
 <a href="#faq" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">FAQ</a>
-<a href="https://github.com/MBratkowski/deweloperuch-mcp#readme" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">Dokumentacja</a>
+<a href="docs/" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">Dokumentacja</a>
 </div>
 <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px; border-radius: 999px; background: rgba(18,12,32,0.55); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255,255,255,0.10)">
 <a href="https://github.com/MBratkowski/deweloperuch-mcp" style="display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; text-decoration: none; font-size: 14px">
@@ -95,7 +95,7 @@ GitHub
 </header>
 
 <div class="hero-copy" style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 22px">
-<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" style="display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border-radius: 999px; background: rgba(12,10,20,0.45); border: 1px solid rgba(255,255,255,0.12); text-decoration: none; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #E9E5F2"><span data-fact="version">v0.1.2</span> · MIT · w oficjalnym MCP Registry →</a>
+<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" style="display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border-radius: 999px; background: rgba(12,10,20,0.45); border: 1px solid rgba(255,255,255,0.12); text-decoration: none; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #E9E5F2"><span data-fact="version">v0.1.1</span> · MIT · w oficjalnym MCP Registry →</a>
 <h1 style="margin: 0; font-family: 'Poppins', sans-serif; font-size: 68px; line-height: 1.04; font-weight: 700; letter-spacing: -0.03em; text-shadow: 0 2px 30px rgba(12,10,20,0.5)">Każdy ruch rynku mieszkań.<br><span style="color: #34D399">W rozmowie z AI.</span></h1>
 <p style="margin: 0; max-width: 620px; font-size: 18px; line-height: 1.6; color: #D3CDE2">Serwer MCP, który daje Twojemu asystentowi AI ceny ofertowe deweloperów z historią zmian, ceny transakcyjne z rejestru RCN oraz statystyki GUS i NBP. Za darmo i open source.</p>
 <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 8px">
@@ -289,7 +289,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <li>Kliknij go dwa razy albo przeciągnij do Ustawień, w zakładkę Rozszerzenia.</li>
 <li>Dostajesz 13 narzędzi i 4 gotowe prompty.</li>
 </ul>
-<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" style="margin-top: auto; display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; color: #6EE7B7; text-decoration: none">Pobierz .mcpb →</a>
+<a href="docs/#krok-po-kroku" style="margin-top: auto; display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; color: #6EE7B7; text-decoration: none">Instrukcja krok po kroku, z obrazkami →</a>
 </div>
 
 <div style="flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 28px; border-radius: 16px; background: #120E1C; border: 1px solid rgba(255,255,255,0.08)">
@@ -311,7 +311,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <p style="margin: 6px 0 0; color: #8E879F"># w innych klientach: "command": "uvx",<br># "args": ["deweloperuch-mcp"]</p>
 </div>
 </div>
-<p style="margin: 0; font-size: 14px; line-height: 1.55; color: #A7A1B8">Wymaga uv. Nic nie klonujesz, pakiet przychodzi z PyPI.</p>
+<p style="margin: 0; font-size: 14px; line-height: 1.55; color: #A7A1B8">Potrzebujesz tylko darmowego programu uv, który uruchamia serwer; instalujesz go raz, jedną komendą. Resztę ta komenda pobierze sama przy pierwszym starcie. <a href="docs/#uv" style="color: #6EE7B7">Jak zainstalować uv</a></p>
 </div>
 
 <div style="flex: 1 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 14px; padding: 28px; border-radius: 16px; background: #120E1C; border: 1px solid rgba(255,255,255,0.08)">
@@ -341,9 +341,41 @@ search_offers · <span class="chip-state">gotowe</span>
 </div>
 </div>
 </div>
-<p style="margin: 0; font-size: 14px; line-height: 1.55; color: #A7A1B8">Skill uczy agenta, której komendy użyć i co zrobić przy blokadzie.</p>
+<p style="margin: 0; font-size: 14px; line-height: 1.55; color: #A7A1B8">Skill to gotowa instrukcja dla agenta AI w terminalu: podpowiada mu, których komend użyć i jak czytać wyniki.</p>
 </div>
 </div>
+<!-- agent-prompt:start -->
+<div class="agent-card agent-card--landing">
+<div class="agent-copy">
+<p class="eyebrow">Na skróty</p>
+<h3>Niech AI zainstaluje to za Ciebie.</h3>
+<p>Masz agenta AI z dostępem do terminala, np. Claude Code? Skopiuj prompt i wklej go agentowi: sprawdzi system, doinstaluje uv i doda serwer do Twojej aplikacji, pytając o zgodę przed zmianą konfiguracji.</p>
+</div>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Prompt dla agenta AI</em></div><div class="cmd"><pre><span class="cmd-text">Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
+
+1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
+2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: curl -LsSf https://astral.sh/uv/install.sh | sh
+3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
+4. Dodaj serwer do aplikacji, której używam:
+   - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
+   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
+   - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
+   Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
+5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
+6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start.</span></pre><button type="button" class="copy" data-command="Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
+
+1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
+2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: curl -LsSf https://astral.sh/uv/install.sh | sh
+3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
+4. Dodaj serwer do aplikacji, której używam:
+   - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
+   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
+   - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
+   Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
+5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
+6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start." hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+</div>
+<!-- agent-prompt:end -->
 </section>
 
 <section id="zasady" style="max-width: 1240px; margin: 0 auto; padding: 140px 24px 0; box-sizing: border-box">
@@ -357,7 +389,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Tylko odczyt.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Niczego w serwisie nie tworzy ani nie zmienia.</p></div>
 <div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Jedno zapytanie na sekundę.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Wspólny limit dla wszystkich procesów na Twoim komputerze, do tego cache odpowiedzi.</p></div>
 <div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Sam się zatrzymuje.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Po błędzie 401, 403, 429 albo captchy przestaje wysyłać zapytania, dopóki tego nie sprawdzisz.</p></div>
-<div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Za zgodą autorów.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Autorzy deweloperuch.pl zgodzili się na projekt. Klient przedstawia się uczciwie, z linkiem do repozytorium.</p></div>
+<div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Za zgodą autorów.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Autorzy deweloperuch.pl zgodzili się na ten projekt i korzystanie z danych serwisu.</p></div>
 </div>
 </div>
 </section>
@@ -433,7 +465,7 @@ search_offers · <span class="chip-state">gotowe</span>
 </nav>
 <nav aria-label="Zasoby" style="flex: 1 1 140px; display: flex; flex-direction: column; gap: 4px; font-size: 14px">
 <p style="margin: 0 0 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #A7A1B8">Zasoby</p>
-<a href="https://github.com/MBratkowski/deweloperuch-mcp#readme" style="padding: 6px 0; text-decoration: none">Dokumentacja</a>
+<a href="docs/" style="padding: 6px 0; text-decoration: none">Dokumentacja</a>
 <a href="https://github.com/MBratkowski/deweloperuch-mcp/blob/main/CHANGELOG.md" style="padding: 6px 0; text-decoration: none">Zmiany</a>
 <a href="https://pypi.org/project/deweloperuch-mcp/" style="padding: 6px 0; text-decoration: none">PyPI</a>
 </nav>

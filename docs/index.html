@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dokumentacja · deweloperuch-mcp</title>
+<meta name="description" content="Jak zainstalować deweloperuch-mcp krok po kroku i jak z niego korzystać: instalacja z obrazkami, przykładowe pytania, narzędzia, prompty, CLI i rozwiązywanie problemów.">
+<meta name="theme-color" content="#0C0A14">
+<link rel="canonical" href="https://mbratkowski.github.io/deweloperuch-mcp-site/docs/">
+<meta property="og:type" content="website">
+<meta property="og:locale" content="pl_PL">
+<meta property="og:title" content="Dokumentacja deweloperuch-mcp">
+<meta property="og:description" content="Instalacja krok po kroku, przykładowe pytania, narzędzia, prompty i rozwiązywanie problemów.">
+<meta property="og:url" content="https://mbratkowski.github.io/deweloperuch-mcp-site/docs/">
+<meta property="og:image" content="https://mbratkowski.github.io/deweloperuch-mcp-site/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="../favicon.png">
+<link rel="apple-touch-icon" href="../apple-touch-icon.png">
+<link rel="preload" href="../assets/fonts/poppins-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="../css/site.css">
+<script src="../js/site.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Przejdź do treści</a>
+<div class="page docs">
+<header class="wrap topbar">
+<nav class="pill-nav" aria-label="Nawigacja">
+<a href="../" aria-label="deweloperuch-mcp, strona główna" class="brand"><img src="../assets/icon/icon-light.png" alt="" width="26" height="30"></a>
+<a href="../">Start</a>
+<a href="#krok-po-kroku">Instalacja</a>
+<a href="#narzedzia">Narzędzia</a>
+<a href="#prompty">Prompty</a>
+<a href="#problemy">Problemy</a>
+</nav>
+<nav class="pill-nav" aria-label="Linki zewnętrzne">
+<a href="https://github.com/MBratkowski/deweloperuch-mcp">GitHub</a>
+<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" class="pill-strong">Pobierz</a>
+</nav>
+</header>
+
+<main id="main">
+<section class="docs-hero">
+<div class="wrap">
+<p class="eyebrow">Dokumentacja</p>
+<h1>Zainstaluj i zapytaj w&nbsp;kilka minut.</h1>
+<p class="lead">Najprostsza droga to rozszerzenie do aplikacji Claude Desktop: cztery kroki, bez terminala. Niżej znajdziesz też instalację dla innych aplikacji i agentów AI, opis wszystkich narzędzi i to, co zrobić, gdy coś nie działa.</p>
+</div>
+</section>
+
+<section id="krok-po-kroku" class="wrap docs-steps" aria-labelledby="krok-po-kroku-title">
+<h2 id="krok-po-kroku-title">Instalacja krok po kroku</h2>
+<p class="section-lead">Dla Claude Desktop na macOS. Linux działa tak samo; Windows nie jest jeszcze obsługiwany.</p>
+
+<ol class="steps">
+<li class="step">
+<div class="step-art" aria-hidden="true">
+<div class="mock-window">
+<div class="mock-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>github.com · deweloperuch-mcp · Releases</em></div>
+<div class="mock-body">
+<p class="mock-label">Assets</p>
+<p class="mock-row is-hot"><span>deweloperuch-mcp-0.1.1.mcpb</span><span class="mock-cursor">⬇</span></p>
+<p class="mock-row"><span>deweloperuch_mcp-0.1.1-py3-none-any.whl</span></p>
+<p class="mock-row"><span>Source code (zip)</span></p>
+</div>
+</div>
+</div>
+<div class="step-body">
+<p class="step-num">Krok 1</p>
+<h3>Pobierz plik rozszerzenia</h3>
+<p>Otwórz stronę najnowszego wydania i w sekcji „Assets” kliknij plik, którego nazwa kończy się na <code>.mcpb</code>. Zapisze się w folderze Pobrane.</p>
+<p><a class="btn-link" href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest">Otwórz stronę wydania →</a></p>
+</div>
+</li>
+<li class="step">
+<div class="step-art" aria-hidden="true">
+<div class="mock-pair">
+<div class="mock-file"><span class="file-icon">.mcpb</span><span>deweloperuch-mcp…</span><span class="mock-hint">kliknij 2×</span></div>
+<span class="mock-arrow">→</span>
+<div class="mock-window mock-dialog">
+<div class="mock-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Claude</em></div>
+<div class="mock-body">
+<p class="mock-title">Zainstalować rozszerzenie?</p>
+<p class="mock-text">deweloperuch-mcp · 13 narzędzi</p>
+<p class="mock-actions"><span class="mock-btn-ghost">Cancel</span><span class="mock-btn">Install</span></p>
+</div>
+</div>
+</div>
+</div>
+<div class="step-body">
+<p class="step-num">Krok 2</p>
+<h3>Kliknij go dwa razy</h3>
+<p>Claude Desktop otworzy okno instalacji rozszerzenia: potwierdź przyciskiem <strong>Install</strong>. Jeśli nic się nie dzieje, otwórz w aplikacji <strong>Settings → Extensions</strong> (Ustawienia → Rozszerzenia) i przeciągnij tam pobrany plik.</p>
+</div>
+</li>
+<li class="step">
+<div class="step-art" aria-hidden="true">
+<div class="mock-window">
+<div class="mock-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Claude</em></div>
+<div class="mock-body mock-center">
+<p class="mock-title">Uruchamianie rozszerzenia…</p>
+<p class="mock-progress"><span></span></p>
+<p class="mock-text">pierwszy start: około minuty</p>
+</div>
+</div>
+</div>
+<div class="step-body">
+<p class="step-num">Krok 3</p>
+<h3>Uruchom aplikację ponownie</h3>
+<p>Zamknij i otwórz Claude Desktop. Za pierwszym razem rozszerzenie przygotowuje się około minuty: samo pobiera to, czego potrzebuje. Niczego nie instalujesz ręcznie i nie potrzebujesz terminala.</p>
+</div>
+</li>
+<li class="step">
+<div class="step-art" aria-hidden="true">
+<div class="mock-window">
+<div class="mock-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Nowa rozmowa</em></div>
+<div class="mock-body">
+<p class="mock-bubble">Znajdź mieszkania 40–55 m² w Krakowie do 800 000 zł.</p>
+<p class="mock-chip"><span class="mock-dot"></span>search_offers · gotowe</p>
+<p class="mock-lines"><span></span><span></span><span></span></p>
+</div>
+</div>
+</div>
+<div class="step-body">
+<p class="step-num">Krok 4</p>
+<h3>Zapytaj jak człowieka</h3>
+<p>Napisz pytanie zwykłymi słowami. Asystent sam sięgnie po narzędzia deweloperuch i odpowie tabelą z linkami do deweloperuch.pl. Przykłady pytań znajdziesz <a href="#pierwsze-pytania">niżej</a>.</p>
+</div>
+</li>
+</ol>
+<p class="caption">Ilustracje są poglądowe: wygląd okien w Twojej wersji aplikacji może się nieco różnić.</p>
+
+</section>
+
+<section id="zainstaluj-z-ai" class="wrap agent-install" aria-labelledby="zainstaluj-z-ai-title">
+<div class="agent-card">
+<div class="agent-copy">
+<p class="eyebrow">Na skróty</p>
+<h2 id="zainstaluj-z-ai-title">Niech AI zainstaluje to za Ciebie.</h2>
+<p>Masz agenta AI z dostępem do terminala, np. Claude Code? Skopiuj ten prompt i wklej go agentowi. Sprawdzi Twój system, w razie potrzeby zainstaluje uv i doda serwer do Twojej aplikacji. Przed każdą zmianą w plikach konfiguracji pokaże, co zmieni, i zapyta o zgodę.</p>
+</div>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Prompt dla agenta AI</em></div><div class="cmd"><pre><span class="cmd-text">Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
+
+1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
+2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: curl -LsSf https://astral.sh/uv/install.sh | sh
+3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
+4. Dodaj serwer do aplikacji, której używam:
+   - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
+   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
+   - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
+   Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
+5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
+6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start.</span></pre><button type="button" class="copy" data-command="Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
+
+1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
+2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: curl -LsSf https://astral.sh/uv/install.sh | sh
+3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
+4. Dodaj serwer do aplikacji, której używam:
+   - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
+   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
+   - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
+   Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
+5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
+6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start." hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+</div>
+</section>
+
+
+<div class="wrap docs-layout">
+<nav class="toc" aria-label="Spis treści">
+<p class="toc-title">Na tej stronie</p>
+<a href="#krok-po-kroku">Instalacja krok po kroku</a>
+<a href="#zainstaluj-z-ai">Instalacja z pomocą AI</a>
+<a href="#jak-to-dziala">Jak to działa</a>
+<a href="#wymagania">Czego potrzebujesz</a>
+<a href="#uv">Program uv</a>
+<a href="#inne-aplikacje">Inne aplikacje i agenci</a>
+<a href="#pierwsze-pytania">Pierwsze pytania</a>
+<a href="#ceny">Trzy rodzaje cen</a>
+<a href="#prompty">Gotowe prompty</a>
+<a href="#narzedzia">Narzędzia</a>
+<a href="#cli">Komendy w terminalu</a>
+<a href="#limity">Limity i blokada STOP</a>
+<a href="#problemy">Rozwiązywanie problemów</a>
+<a href="#prywatnosc">Prywatność</a>
+</nav>
+
+<div class="prose">
+<section id="jak-to-dziala">
+<h2>Jak to działa</h2>
+<p>Twój asystent AI uruchamia na Twoim komputerze mały program: serwer MCP. Gdy pytasz o mieszkania, asystent prosi ten program o dane, program pobiera je z deweloperuch.pl i oddaje asystentowi, a asystent układa odpowiedź, zwykle w tabeli z linkami do źródeł.</p>
+<p><strong>MCP</strong> (Model Context Protocol) to otwarty standard, dzięki któremu asystenci AI mogą korzystać z zewnętrznych narzędzi i danych. deweloperuch-mcp daje im 13 narzędzi, które tylko czytają dane: niczego w serwisie nie tworzą ani nie zmieniają.</p>
+<p>Nie zakładasz konta i nie potrzebujesz żadnego klucza. Projekt jest darmowy i otwarty (licencja MIT). To nieoficjalny projekt społeczności, który działa za zgodą autorów deweloperuch.pl.</p>
+</section>
+
+<section id="wymagania">
+<h2>Czego potrzebujesz</h2>
+<ul>
+<li><strong>Komputera z macOS albo Linuxem.</strong> Windows nie jest jeszcze obsługiwany.</li>
+<li><strong>Asystenta AI, który uruchamia lokalne serwery MCP</strong>, np. aplikacji Claude Desktop albo Claude Code. Asystenci, którzy przyjmują tylko zdalne serwery MCP, na razie z niego nie skorzystają.</li>
+<li><strong>Do instalacji przez terminal: programu uv</strong> (opis niżej). Rozszerzenie dla Claude Desktop go nie wymaga.</li>
+</ul>
+</section>
+
+<section id="uv">
+<h2>Program uv</h2>
+<p>uv to darmowy program, który pobiera i uruchamia narzędzia napisane w Pythonie. Nie musisz znać Pythona ani niczego konfigurować: wystarczy zainstalować uv raz. Potem komenda <code>uvx deweloperuch-mcp</code> sama pobierze i uruchomi serwer.</p>
+<h3>Instalacja uv</h3>
+<p>Otwórz aplikację Terminal (na Macu znajdziesz ją przez Spotlight: <kbd>⌘</kbd>+<kbd>spacja</kbd>, wpisz „Terminal”), wklej tę komendę i naciśnij Enter:</p>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">curl -LsSf https://astral.sh/uv/install.sh | sh</span></code><button type="button" class="copy" data-command="curl -LsSf https://astral.sh/uv/install.sh | sh" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<p>Jeśli masz Homebrew, możesz też użyć:</p>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">brew install uv</span></code><button type="button" class="copy" data-command="brew install uv" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<p>Po instalacji zamknij okno terminala i otwórz nowe. Sprawdź, czy wszystko działa:</p>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">uvx --version</span></code><button type="button" class="copy" data-command="uvx --version" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<p>Komenda powinna wypisać numer wersji. Jeśli widzisz „command not found”, zajrzyj do <a href="#problemy">rozwiązywania problemów</a>.</p>
+</section>
+
+<section id="inne-aplikacje">
+<h2>Inne aplikacje i agenci AI</h2>
+<h3>Claude Code</h3>
+<p>Jedna komenda w terminalu (wymaga <a href="#uv">uv</a>):</p>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">claude mcp add deweloperuch -- uvx deweloperuch-mcp</span></code><button type="button" class="copy" data-command="claude mcp add deweloperuch -- uvx deweloperuch-mcp" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<h3>Dowolna aplikacja obsługująca lokalne serwery MCP</h3>
+<p>Dodaj serwer w ustawieniach MCP swojej aplikacji. W Claude Desktop bez rozszerzenia jest to plik <code>claude_desktop_config.json</code>; inne aplikacje przyjmują to samo polecenie i argumenty:</p>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>claude_desktop_config.json</em></div><div class="cmd"><pre><span class="cmd-text">{
+  &quot;mcpServers&quot;: {
+    &quot;deweloperuch&quot;: {
+      &quot;command&quot;: &quot;uvx&quot;,
+      &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]
+    }
+  }
+}</span></pre><button type="button" class="copy" data-command="{
+  &quot;mcpServers&quot;: {
+    &quot;deweloperuch&quot;: {
+      &quot;command&quot;: &quot;uvx&quot;,
+      &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]
+    }
+  }
+}" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<h3>Agent AI w terminalu: skill</h3>
+<p>Skill to gotowa instrukcja dla agenta kodującego (np. Claude Code, Codex, Cursor): podpowiada mu, których komend <code>deweloperuch</code> użyć i jak czytać wyniki. Instalacja wymaga Node.js:</p>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">npx skills add MBratkowski/deweloperuch-mcp</span></code><button type="button" class="copy" data-command="npx skills add MBratkowski/deweloperuch-mcp" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<h3>Samo CLI</h3>
+<p>Komendę <code>deweloperuch</code> możesz uruchomić bez instalowania albo zainstalować na stałe:</p>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">uvx --from deweloperuch-mcp deweloperuch --help</span></code><button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch --help" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">uv tool install deweloperuch-mcp</span></code><button type="button" class="copy" data-command="uv tool install deweloperuch-mcp" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+</section>
+
+<section id="pierwsze-pytania">
+<h2>Pierwsze pytania</h2>
+<p>Pisz tak, jak pytałbyś znajomego, który zna rynek. Kilka pytań na dobry początek:</p>
+<ul class="examples">
+<li>„Znajdź mieszkania 40–55 m² na krakowskim Podgórzu do 800 000 zł, od najtańszych za metr.”</li>
+<li>„Czy ta oferta to okazja? Pokaż historię ceny, najniższą cenę z 30 i 90 dni i czy obniżka nie wygląda podejrzanie.”</li>
+<li>„Co buduje ten deweloper i w których miastach ma aktywne oferty?”</li>
+<li>„Jak ceny ofertowe w Gdańsku mają się do cen transakcyjnych z ostatnich kwartałów?”</li>
+<li>„Ile mniej więcej jest wart 55-metrowy lokal pod tym adresem, na podstawie transakcji w okolicy?”</li>
+<li>„Uszereguj miasta według ceny transakcyjnej za m² i pokaż obok wynagrodzenia i bezrobocie.”</li>
+</ul>
+<div class="note"><p><strong>Dwie wskazówki.</strong> Serwis nie ma danych o liczbie pokoi ani piętrze, więc zawężaj wyniki metrażem i ceną. Pytaj konkretnie (miasto, metraż, budżet): deweloperuch.pl to projekt społeczny, a wąskie pytania oszczędzają serwis i dają lepsze odpowiedzi.</p></div>
+</section>
+
+<section id="ceny">
+<h2>Trzy rodzaje cen</h2>
+<p>Narzędzia rozróżniają trzy rodzaje cen. Mówią o różnych rzeczach, więc asystent dostaje instrukcję, żeby ich nie mieszać:</p>
+<ul>
+<li><strong style="color: #C4B5FD">Ceny ofertowe</strong>: ile deweloperzy chcą dziś za mieszkania na rynku pierwotnym, z historią zmian cen.</li>
+<li><strong style="color: #FDE68A">Ceny transakcyjne</strong>: za ile mieszkania naprawdę się sprzedały, według Rejestru Cen Nieruchomości (RCN). Najnowsze okresy bywają niepełne.</li>
+<li><strong style="color: #7DD3FC">Dane oficjalne</strong>: statystyki GUS i NBP, czyli tło rynku: ceny, mieszkania oddane do użytkowania, wynagrodzenia i bezrobocie.</li>
+</ul>
+</section>
+
+<section id="prompty">
+<h2>Gotowe prompty</h2>
+<p>Prompty to gotowe polecenia, które wybierasz w aplikacji zamiast pisać pytanie od zera. Każdy prowadzi asystenta przez właściwe narzędzia w dobrej kolejności. Same niczego nie pobierają.</p>
+<article class="tool"><div class="tool-head"><h4>Znajdź mieszkanie</h4><code>znajdz_mieszkanie</code></div><p>Mieszkania od deweloperów w jednym mieście z budżetem, metrażem i dzielnicą: tabela ofert od najniższej ceny za m² z linkami do deweloperuch.pl.</p><div class="table-wrap"><table><thead><tr><th scope="col">Pole</th><th scope="col">Co wpisać</th></tr></thead><tbody><tr><td><code>miasto</code> <span class="req">wymagany</span></td><td>Miasto, np. Kraków, Gdańsk.</td></tr><tr><td><code>budzet_max</code></td><td>Najwyższa cena mieszkania w PLN, np. 800000.</td></tr><tr><td><code>metraz_min</code></td><td>Najmniejszy metraż w m², np. 40.</td></tr><tr><td><code>metraz_max</code></td><td>Największy metraż w m², np. 65.</td></tr><tr><td><code>dzielnica</code></td><td>Dzielnica, np. Mokotów.</td></tr></tbody></table></div></article><article class="tool"><div class="tool-head"><h4>Oceń ofertę</h4><code>ocen_oferte</code></div><p>Ocena ceny jednej oferty: historia ceny (najniższa z 30 i 90 dni, podejrzane obniżki), porównanie z rynkiem miasta i z wyceną z transakcji w okolicy; werdykt z zastrzeżeniami.</p><div class="table-wrap"><table><thead><tr><th scope="col">Pole</th><th scope="col">Co wpisać</th></tr></thead><tbody><tr><td><code>offer_id</code> <span class="req">wymagany</span></td><td>offer_id oferty z wyników search_offers albo get_investment.</td></tr><tr><td><code>investment_slug</code> <span class="req">wymagany</span></td><td>investment_slug inwestycji tej oferty, np. smolna: z tych samych wyników albo ostatni człon adresu strony inwestycji na deweloperuch.pl.</td></tr></tbody></table></div></article><article class="tool"><div class="tool-head"><h4>Prześwietl dewelopera</h4><code>przeswietl_dewelopera</code></div><p>Profil dewelopera: gdzie i ile buduje, jego inwestycje, aktywne oferty, ceny i ich zmiany; w całej Polsce albo w jednym mieście.</p><div class="table-wrap"><table><thead><tr><th scope="col">Pole</th><th scope="col">Co wpisać</th></tr></thead><tbody><tr><td><code>nazwa</code> <span class="req">wymagany</span></td><td>Nazwa dewelopera albo jej fragment, np. Atal, Dom Development.</td></tr><tr><td><code>miasto</code></td><td>Miasto, do którego zawęzić inwestycje, np. Kraków.</td></tr></tbody></table></div></article><article class="tool"><div class="tool-head"><h4>Porównaj miasta</h4><code>porownaj_miasta</code></div><p>Porównanie rynku mieszkań kilku miast: ceny ofertowe deweloperów, ceny transakcyjne z RCN i opcjonalnie wynagrodzenia i bezrobocie z GUS, w jednej tabeli.</p><div class="table-wrap"><table><thead><tr><th scope="col">Pole</th><th scope="col">Co wpisać</th></tr></thead><tbody><tr><td><code>miasta</code> <span class="req">wymagany</span></td><td>Nazwy miast rozdzielone przecinkami, np. Kraków, Wrocław, Gdańsk (najwyżej 5).</td></tr></tbody></table></div></article>
+</section>
+
+<section id="narzedzia">
+<h2>Narzędzia</h2>
+<p>Z narzędzi korzysta asystent, nie Ty: wystarczy, że zadasz pytanie. Ta lista przyda się, gdy chcesz wiedzieć, o co można zapytać. Opisy pochodzą prosto z serwera.</p>
+<div class="group" data-group="offers"><h3><span class="dot" style="background: #A78BFA" aria-hidden="true"></span>Ceny ofertowe <small>5</small></h3><p>Cenniki deweloperów na rynku pierwotnym i ich zmiany.</p><article class="tool" id="tool-search_offers"><div class="tool-head"><h4>Szukaj ofert mieszkań</h4><code style="color: #A78BFA">search_offers</code></div><p>Wyszukuje oferty mieszkań od deweloperów (tylko rynek pierwotny, ceny ofertowe, nie transakcyjne) w jednym mieście albo w całej Polsce (city=polska). Filtry: cena, metraż, cena za m², dzielnica, status (aktywne, archiwalne) i obniżka od pierwszej ceny; sortowanie po cenie, cenie za m², metrażu albo największej obniżce. Nie filtruje po liczbie pokoi ani piętrze (serwis nie ma takich danych) ani po deweloperze (jego inwestycje daje get_developer).</p><details><summary>Parametry (13)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>city</code> <span class="req">wymagany</span></td><td>tekst</td><td>city_slug miasta z search_locations (np. warszawa, krakow) albo polska dla całego kraju.</td></tr><tr><td><code>price_min</code></td><td>liczba</td><td>Najniższa cena oferty w PLN.</td></tr><tr><td><code>price_max</code></td><td>liczba</td><td>Najwyższa cena oferty w PLN.</td></tr><tr><td><code>area_min</code></td><td>liczba</td><td>Najmniejszy metraż w m².</td></tr><tr><td><code>area_max</code></td><td>liczba</td><td>Największy metraż w m².</td></tr><tr><td><code>price_per_m2_min</code></td><td>liczba</td><td>Najniższa cena za m² w PLN.</td></tr><tr><td><code>price_per_m2_max</code></td><td>liczba</td><td>Najwyższa cena za m² w PLN.</td></tr><tr><td><code>district</code></td><td>tekst</td><td>Nazwa dzielnicy dokładnie tak, jak podaje ją search_locations (kind=district, pole name), np. Mokotów; tylko z miastem tej dzielnicy, nie z polska.</td></tr><tr><td><code>price_dropped</code></td><td>tak/nie</td><td>true: tylko oferty, których obecna cena jest niższa od pierwszej ceny (liczy się zmiana od pierwszej ceny, nie ostatnia zmiana).</td></tr><tr><td><code>status</code></td><td>tekst</td><td>active (domyślnie): oferty obecnie w cennikach; archived: tylko wycofane; all: aktywne i wycofane.</td></tr><tr><td><code>sort</code></td><td>tekst</td><td>price_asc: od najtańszych, price_desc: od najdroższych, price_per_m2_asc i price_per_m2_desc: po cenie za m², area_asc i area_desc: po metrażu, biggest_drop: najpierw największa obniżka od pierwszej ceny (w %); brak: domyślna kolejność serwisu (nie jest gwarantowana).</td></tr><tr><td><code>page</code></td><td>liczba</td><td>Numer strony wyników, 1–20.</td></tr><tr><td><code>per_page</code></td><td>liczba</td><td>10 albo 50. Pozycja to ok. 500 znaków wyniku (z linkiem), więc 50 daje ok. 25 tys.; zwykle wystarcza 10.</td></tr></tbody></table></div></details></article><article class="tool" id="tool-get_offer"><div class="tool-head"><h4>Oferta z historią ceny</h4><code style="color: #A78BFA">get_offer</code></div><p>Zwraca jedną ofertę z pełną historią ceny, inwestycją i deweloperem. Użyj, gdy chcesz zobaczyć, jak zmieniała się cena mieszkania. Wymaga offer_id i investment_slug (oba podaje search_offers albo get_investment): samo offer_id nie wystarcza.</p><details><summary>Parametry (2)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>offer_id</code> <span class="req">wymagany</span></td><td>liczba</td><td>offer_id z search_offers albo get_investment.</td></tr><tr><td><code>investment_slug</code> <span class="req">wymagany</span></td><td>tekst</td><td>investment_slug inwestycji tej oferty, np. smolna (z search_investments, search_offers albo get_developer).</td></tr></tbody></table></div></details></article><article class="tool" id="tool-search_investments"><div class="tool-head"><h4>Szukaj inwestycji</h4><code style="color: #A78BFA">search_investments</code></div><p>Wyszukuje inwestycje (projekty deweloperskie, rynek pierwotny). Dwa tryby: city (pełne dane) albo samo name (cała Polska; tylko investment_slug, name i offers_active, w kolejności serwisu). Użyj, gdy pytanie dotyczy projektów, a nie pojedynczych mieszkań: np. najtańsze za m² w mieście, inwestycje jednego dewelopera, slug inwestycji po nazwie.</p><details><summary>Parametry (5)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>city</code></td><td>tekst</td><td>city_slug miasta z search_locations, np. warszawa, sopot (nie polska).</td></tr><tr><td><code>name</code></td><td>tekst</td><td>Fragment nazwy inwestycji, 2–100 znaków, np. Kolibki. Z city wielkość liter i polskie znaki nie mają znaczenia; bez city szuka serwis w całej Polsce.</td></tr><tr><td><code>developer_slug</code></td><td>tekst</td><td>developer_slug z search_developers (po nazwie) albo z pól developer_slug w search_offers, get_investment, get_offer, np. atal. Tylko z city.</td></tr><tr><td><code>sort</code></td><td>tekst</td><td>Tylko z city. active_offers: najwięcej aktywnych ofert (domyślnie); price_per_m2_asc, price_per_m2_desc: średnia cena za m²; price_asc, price_desc: średnia cena; name: alfabetycznie. Bez średniej na końcu.</td></tr><tr><td><code>limit</code></td><td>liczba</td><td>Najwięcej inwestycji w wyniku, 1–30, domyślnie 10. Pozycja z city to ok. 550–750 znaków wyniku (z linkami), więc 30 daje najwyżej ok. 23 tys.; zwykle wystarcza 10.</td></tr></tbody></table></div></details></article><article class="tool" id="tool-get_investment"><div class="tool-head"><h4>Inwestycja z ofertami</h4><code style="color: #A78BFA">get_investment</code></div><p>Zwraca inwestycję (projekt deweloperski): miasto, ulicę, współrzędne, dewelopera, średnie ceny aktywnych ofert, liczbę ofert i listę ofert (najpierw aktywne, potem archiwalne). Użyj, gdy chcesz zobaczyć mieszkania jednego projektu. investment_slug daje search_investments, search_offers albo get_developer. investment_url i developer_url to strony inwestycji i dewelopera na deweloperuch.pl: podawaj je użytkownikowi jako linki.</p><details><summary>Parametry (3)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>investment_slug</code> <span class="req">wymagany</span></td><td>tekst</td><td>investment_slug z search_investments, search_offers albo get_developer, np. smolna.</td></tr><tr><td><code>include_history</code></td><td>tak/nie</td><td>true: dołącz historię ceny każdej zwróconej oferty (dłuższy wynik).</td></tr><tr><td><code>limit</code></td><td>liczba</td><td>Najwięcej ofert w wyniku (najpierw aktywne), domyślnie 20, 0 = tylko podsumowanie inwestycji. Ile pominięto, mówi offers_omitted. Każda oferta to ok. 300 znaków wyniku, z historią ceny kilkaset więcej. Maksimum 200 daje ok. 60 tys. znaków; zwykle wystarcza domyślne 20.</td></tr></tbody></table></div></details></article><article class="tool" id="tool-get_market_statistics"><div class="tool-head"><h4>Statystyki rynku miasta</h4><code style="color: #A78BFA">get_market_statistics</code></div><p>Zwraca statystyki rynku ofert deweloperskich w jednym mieście: liczbę ofert, inwestycji i deweloperów, rozkład cen (PLN), cen za m² (PLN/m²) i metraży (m²) jako min, p25, median, p75 i max oraz największych deweloperów wg liczby ofert (developer_slug, offers, investments, median_price_per_m2, developer_url; developer_slug to identyfikator, a nazwę dewelopera daje get_developer). Opcjonalnie tylko oferty z zakresu ceny i metrażu. Użyj, gdy pytanie dotyczy rynku miasta (typowe ceny, kto ma najwięcej ofert), a nie konkretnych mieszkań (search_offers).</p><details><summary>Parametry (6)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>city</code> <span class="req">wymagany</span></td><td>tekst</td><td>city_slug jednego miasta z search_locations, np. krakow (nie polska).</td></tr><tr><td><code>price_min</code></td><td>liczba</td><td>Najniższa cena oferty w PLN.</td></tr><tr><td><code>price_max</code></td><td>liczba</td><td>Najwyższa cena oferty w PLN.</td></tr><tr><td><code>area_min</code></td><td>liczba</td><td>Najmniejszy metraż w m².</td></tr><tr><td><code>area_max</code></td><td>liczba</td><td>Największy metraż w m².</td></tr><tr><td><code>top_developers</code></td><td>liczba</td><td>Ilu największych deweloperów pokazać, 1–30, domyślnie 10.</td></tr></tbody></table></div></details></article></div><div class="group" data-group="rcn"><h3><span class="dot" style="background: #FACC15" aria-hidden="true"></span>Ceny transakcyjne (RCN) <small>4</small></h3><p>Za ile mieszkania naprawdę się sprzedały, z Rejestru Cen Nieruchomości.</p><article class="tool" id="tool-get_transaction_statistics"><div class="tool-head"><h4>Ceny transakcyjne w czasie</h4><code style="color: #FACC15">get_transaction_statistics</code></div><p>Zwraca ceny transakcyjne mieszkań w mieście z Rejestru Cen Nieruchomości (RCN) w kolejnych miesiącach albo kwartałach: liczbę transakcji i ceny za m². To ceny faktycznych sprzedaży, a nie ceny ofertowe deweloperów (search_offers, get_market_statistics) ani oficjalne ceny NBP (get_government_statistics).</p><details><summary>Parametry (3)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>city</code> <span class="req">wymagany</span></td><td>tekst</td><td>city_slug miasta z search_locations, np. warszawa, krakow, gdansk (małe litery bez polskich znaków). Statystyki są dla całych miast; dzielnice, ulice i cała Polska (polska) nie są obsługiwane.</td></tr><tr><td><code>granularity</code></td><td>tekst</td><td>month (domyślnie): miesiące, z medianą i średnią ceny za m², medianą metrażu i medianą ceny mieszkania; quarter: kwartały, tylko średnia cena za m² i liczba transakcji, ale dłuższa historia.</td></tr><tr><td><code>periods</code></td><td>liczba</td><td>Ile ostatnich okresów (miesięcy albo kwartałów) zwrócić, 1–60, domyślnie 12. 60 miesięcy to ok. 9 tys. znaków; dla trendu wieloletniego wybierz quarter zamiast wielu miesięcy.</td></tr></tbody></table></div></details></article><article class="tool" id="tool-rank_locations"><div class="tool-head"><h4>Ranking miast i powiatów</h4><code style="color: #FACC15">rank_locations</code></div><p>Ranking miejscowości (level=city) albo powiatów (level=powiat) w Polsce według transakcji z Rejestru Cen Nieruchomości (RCN): liczba transakcji i cena transakcyjna za m². Dla porównania wielu miast (gdzie najwięcej transakcji, gdzie najdrożej, gdzie najtaniej): to narzędzie; dla trendu jednego miasta w czasie: get_transaction_statistics. To ceny transakcyjne, nie ofertowe; oferty deweloperów daje search_offers.</p><details><summary>Parametry (4)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>level</code></td><td>tekst</td><td>city: miejscowości (miasta, także małe miasteczka i wsie), domyślnie; powiat: powiaty (bez ranking_url i bez odpowiednika w search_locations).</td></tr><tr><td><code>sort</code></td><td>tekst</td><td>transactions_desc: najwięcej transakcji (domyślnie); price_per_m2_desc: najwyższa cena za m²; price_per_m2_asc: najniższa cena za m². Miejsca bez ceny są na końcu.</td></tr><tr><td><code>limit</code></td><td>liczba</td><td>Ile pierwszych pozycji rankingu zwrócić, 1–100, domyślnie 20. Pozycja to ok. 120 znaków wyniku. Dla pełnych list zawężaj min_transactions, nie podnoś limitu bez potrzeby.</td></tr><tr><td><code>min_transactions</code></td><td>liczba</td><td>Pomiń miejsca z mniejszą liczbą transakcji; domyślnie 0 (wszystkie). Przy sortowaniu miejscowości (level=city) po cenie podaj np. 50.</td></tr></tbody></table></div></details></article><article class="tool" id="tool-get_building"><div class="tool-head"><h4>Budynek z transakcjami</h4><code style="color: #FACC15">get_building</code></div><p>Zwraca budynek z rejestru cen transakcyjnych (RCN): adres, miasto, współrzędne, średnie ceny podane przez serwis i lokale (mieszkania) z ich transakcjami: datą, ceną, ceną za m², rynkiem (pierwotny albo wtórny), rodzajem transakcji i stronami. To ceny, za które lokale sprzedano, a nie ceny ofertowe deweloperów. building_slug to ostatni człon adresu strony budynku z cenami transakcyjnymi na deweloperuch.pl, np. 23-marca-79c-sopot albo aleja-krakowska-279-warszawa; gdy go nie znasz, poproś użytkownika o link do tej strony. building_url to ta strona: podawaj ją użytkownikowi jako link. Kolejność: lokale od tego z najnowszą transakcją, transakcje każdego lokalu od najstarszej.</p><details><summary>Parametry (3)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>building_slug</code> <span class="req">wymagany</span></td><td>tekst</td><td>Slug budynku, np. 23-marca-79c-sopot, ze strony budynku albo z comparables w estimate_property_value.</td></tr><tr><td><code>limit</code></td><td>liczba</td><td>Najwięcej lokali w wyniku (tych z najnowszymi transakcjami), domyślnie 10, najwyżej 50; 0 = tylko podsumowanie budynku. Ile pominięto, mówi units_omitted. Wynik ma ok. 200 znaków na transakcję; lokal może mieć kilka transakcji, więc zwykle wystarcza domyślny limit.</td></tr><tr><td><code>include_trend</code></td><td>tak/nie</td><td>true: dołącz średnią cenę za m² transakcji w okolicy budynku w ostatnich 12 kwartałach (jedno zapytanie więcej).</td></tr></tbody></table></div></details></article><article class="tool" id="tool-estimate_property_value"><div class="tool-head"><h4>Wycena mieszkania</h4><code style="color: #FACC15">estimate_property_value</code></div><p>Szacuje wartość mieszkania o danym metrażu w punkcie (lat, lng) w Polsce na podstawie cen transakcyjnych z Rejestru Cen Nieruchomości (RCN) z okolicy. Wynik jest przybliżony: to porównanie z transakcjami w pobliżu, a nie operat szacunkowy. Użyj, gdy użytkownik pyta, ile może być warte mieszkanie albo czy jego cena jest rynkowa.</p><details><summary>Parametry (5)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>lat</code> <span class="req">wymagany</span></td><td>liczba</td><td>Szerokość geograficzna punktu w Polsce w stopniach, np. 52.2297: pole lat z search_locations (ulica albo dzielnica, nie samo miasto) albo ze współrzędnych inwestycji w get_investment (dokładniejsze dla konkretnej oferty).</td></tr><tr><td><code>lng</code> <span class="req">wymagany</span></td><td>liczba</td><td>Długość geograficzna punktu w Polsce w stopniach, np. 21.0122: pole lng z search_locations (ulica albo dzielnica, nie samo miasto) albo ze współrzędnych inwestycji w get_investment (dokładniejsze dla konkretnej oferty).</td></tr><tr><td><code>area_m2</code> <span class="req">wymagany</span></td><td>liczba</td><td>Metraż mieszkania w m², 10–500, np. 48.5.</td></tr><tr><td><code>address</code></td><td>tekst</td><td>Opcjonalny opis adresu, np. Marszałkowska 100, Warszawa. Trafia do serwisu, ale nie wyznacza położenia: decydują lat i lng.</td></tr><tr><td><code>limit</code></td><td>liczba</td><td>Ile najbliższych transakcji porównawczych zwrócić, 0–50, domyślnie 10. Transakcja to ok. 210 znaków wyniku (50 to ok. 10,6 tys.); 0 = tylko wycena i statystyki.</td></tr></tbody></table></div></details></article></div><div class="group" data-group="official"><h3><span class="dot" style="background: #38BDF8" aria-hidden="true"></span>Statystyki GUS i NBP <small>1</small></h3><p>Oficjalne dane: ceny, mieszkania oddane, wynagrodzenia, bezrobocie.</p><article class="tool" id="tool-get_government_statistics"><div class="tool-head"><h4>Statystyki GUS i NBP</h4><code style="color: #38BDF8">get_government_statistics</code></div><p>Zwraca oficjalne statystyki GUS i NBP jako szeregi czasowe dla Polski, agregatu miast albo miasta na prawach powiatu: mieszkania oddane do użytkowania i rozpoczęte (razem, wg form budownictwa, na wynajem), średnią powierzchnię mieszkań oddanych przez deweloperów, średnie ceny m² wg NBP (rynek pierwotny i wtórny, ceny ofertowe i transakcyjne), stopę bezrobocia, wynagrodzenia, demografię i ludność. Użyj jako kontekstu rynku; ofert i cen konkretnych mieszkań tu nie ma (search_offers).</p><details><summary>Parametry (3)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>location</code> <span class="req">wymagany</span></td><td>tekst</td><td>polska (cała Polska), agregat 7-miast, 10-miast albo 6-miast-bez-warszawy, albo jedno z 66 miast na prawach powiatu: nazwa małymi literami bez polskich znaków, z myślnikami zamiast spacji, np. warszawa, krakow, lodz, bielsko-biala, zielona-gora; Jastrzębie-Zdrój to jastrzebie. Dane są tylko dla 66 miast na prawach powiatu, a nie dla dzielnic i mniejszych miejscowości.</td></tr><tr><td><code>dataset</code> <span class="req">wymagany</span></td><td>tekst</td><td>dwellings_quarterly: mieszkania oddane do użytkowania i rozpoczęte (razem, wg form budownictwa, na wynajem), kwartalnie; dwellings_monthly: to samo miesięcznie; average_area: średnia powierzchnia mieszkania oddanego przez deweloperów (m², rocznie); demography: urodzenia żywe, zgony, przyrost naturalny (dla Polski miesięcznie, dla miast rocznie); population: ludność, kobiety i mężczyźni (rocznie); unemployment: stopa bezrobocia rejestrowanego (%, miesięcznie); wages: przeciętne miesięczne wynagrodzenie brutto w PLN (dla Polski miesięcznie, dla miast rocznie, czasem z relacją do średniej krajowej); nbp_prices: średnie ceny m² wg NBP, rynek pierwotny i wtórny, ofertowe i transakcyjne (PLN/m², kwartalnie). Częstotliwość zwraca pole frequency.</td></tr><tr><td><code>periods</code></td><td>liczba</td><td>Ile ostatnich okresów zwrócić (lat, kwartałów albo miesięcy), 1–120, domyślnie 12. Najszerszy zestaw (mieszkania, 15 szeregów) przy 120 miesiącach to ok. 10 tys. znaków. Dla trendów bierz dane roczne/kwartalne; miesięczne 120 okresów tylko, gdy użytkownik o to prosi.</td></tr></tbody></table></div></details></article></div><div class="group" data-group="helpers"><h3><span class="dot" style="background: #34D399" aria-hidden="true"></span>Narzędzia pomocnicze <small>3</small></h3><p>Zamieniają nazwy miejsc i deweloperów na identyfikatory i dają profil dewelopera.</p><article class="tool" id="tool-search_locations"><div class="tool-head"><h4>Szukaj lokalizacji</h4><code style="color: #34D399">search_locations</code></div><p>Znajduje miasta, dzielnice i ulice w Polsce po fragmencie nazwy. Użyj na początku, żeby zamienić nazwę miejsca na city_slug, którego wymaga search_offers. Nie zwraca ofert ani cen.</p><details><summary>Parametry (1)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>query</code> <span class="req">wymagany</span></td><td>tekst</td><td>Fragment nazwy miasta, dzielnicy lub ulicy, 2–100 znaków, z polskimi znakami, np. Kraków, Mokotów.</td></tr></tbody></table></div></details></article><article class="tool" id="tool-search_developers"><div class="tool-head"><h4>Szukaj deweloperów</h4><code style="color: #34D399">search_developers</code></div><p>Znajduje deweloperów (rynek pierwotny) po fragmencie nazwy, np. atal albo dom development. Użyj, żeby zamienić nazwę dewelopera na developer_slug, którego wymaga get_developer (profil dewelopera; domyślnie dla całej Polski, city=polska). Nie zwraca ofert ani cen.</p><details><summary>Parametry (2)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>name</code> <span class="req">wymagany</span></td><td>tekst</td><td>Fragment nazwy dewelopera, 2–100 znaków, np. atal, Dom Development.</td></tr><tr><td><code>limit</code></td><td>liczba</td><td>Najwięcej deweloperów w wyniku, domyślnie 5, najwyżej 20. Każdy to ok. 150 znaków wyniku.</td></tr></tbody></table></div></details></article><article class="tool" id="tool-get_developer"><div class="tool-head"><h4>Profil dewelopera</h4><code style="color: #34D399">get_developer</code></div><p>Zwraca profil dewelopera: nazwę, stronę www, podsumowanie jego aktywnych ofert (summary: active_offers, cities, avg_price, avg_area_m2, avg_price_per_m2), inwestycje z aktywnymi ofertami (najpierw te z największą liczbą aktywnych ofert: investment_slug, name, city, active_offers, total_offers razem z archiwalnymi, średnie aktywnych ofert, investment_url) i jego miasta (cities: inwestycje, aktywne oferty, średnia cena i cena za m²). Użyj, gdy pytanie dotyczy dewelopera: gdzie i ile buduje, w jakich cenach. developer_slug weź z search_developers (po nazwie) albo z pól developer_slug w search_offers, get_investment, get_offer. developer_url i investment_url to strony na deweloperuch.pl: podawaj je użytkownikowi jako linki.</p><details><summary>Parametry (3)</summary><div class="table-wrap"><table><thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead><tbody><tr><td><code>developer_slug</code> <span class="req">wymagany</span></td><td>tekst</td><td>developer_slug z search_developers (po nazwie) albo z pól developer_slug w search_offers, get_investment, get_offer, np. atal.</td></tr><tr><td><code>city</code></td><td>tekst</td><td>city_slug miasta z search_locations (np. krakow) albo polska (domyślnie: cała Polska).</td></tr><tr><td><code>limit</code></td><td>liczba</td><td>Najwięcej inwestycji w wyniku (najpierw te z największą liczbą aktywnych ofert), 1–100, domyślnie 20. Inwestycja to ok. 350 znaków wyniku; zwykle wystarcza domyślne 20.</td></tr></tbody></table></div></details></article></div>
+</section>
+
+<section id="cli">
+<h2>Komendy w terminalu</h2>
+<p>Każde narzędzie ma odpowiednik w komendzie <code>deweloperuch</code>. Dodaj <code>--help</code> do dowolnej komendy, żeby zobaczyć jej opcje, a <code>--json</code>, żeby dostać wynik jako JSON.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Komenda</th><th scope="col">Co robi</th></tr></thead><tbody><tr><td><code>deweloperuch locations search QUERY</code></td><td>Szuka miast, dzielnic i ulic; podaje identyfikator miasta (slug) do dalszych komend.</td></tr><tr><td><code>deweloperuch offers search CITY</code></td><td>Oferty mieszkań w mieście albo w całej Polsce (polska) z filtrami ceny, metrażu, ceny za m², dzielnicy i obniżki.</td></tr><tr><td><code>deweloperuch offers get OFFER_ID --investment SLUG</code></td><td>Jedna oferta z historią ceny i flagami (najniższa cena z 30 i 90 dni, podejrzana obniżka).</td></tr><tr><td><code>deweloperuch investments search [CITY]</code></td><td>Inwestycje w mieście albo po nazwie (--name) w całej Polsce.</td></tr><tr><td><code>deweloperuch investments get SLUG</code></td><td>Inwestycja z deweloperem i listą ofert.</td></tr><tr><td><code>deweloperuch developers search NAME</code></td><td>Szuka deweloperów po nazwie; podaje ich identyfikator.</td></tr><tr><td><code>deweloperuch developers get SLUG</code></td><td>Profil dewelopera: podsumowanie, inwestycje i miasta.</td></tr><tr><td><code>deweloperuch buildings get SLUG</code></td><td>Budynek z rejestru RCN z lokalami i transakcjami (--trend dodaje trend okolicy).</td></tr><tr><td><code>deweloperuch valuation estimate --lat --lng --area</code></td><td>Szacunkowa wartość mieszkania w danym miejscu z pobliskich transakcji.</td></tr><tr><td><code>deweloperuch stats market CITY</code></td><td>Statystyki rynku ofert w mieście: rozkłady cen i metraży, najwięksi deweloperzy.</td></tr><tr><td><code>deweloperuch stats transactions CITY</code></td><td>Ceny transakcyjne miasta miesiąc po miesiącu albo kwartałami.</td></tr><tr><td><code>deweloperuch stats cities</code></td><td>Ranking miejscowości albo powiatów według transakcji z RCN.</td></tr><tr><td><code>deweloperuch stats government LOCATION DATASET</code></td><td>Statystyki GUS i NBP dla Polski, agregatu albo miasta.</td></tr><tr><td><code>deweloperuch stop status</code></td><td>Pokazuje, czy działa blokada STOP i dlaczego; nie łączy się z serwisem.</td></tr><tr><td><code>deweloperuch stop clear</code></td><td>Zdejmuje blokadę STOP. Tylko po sprawdzeniu przyczyny.</td></tr></tbody></table></div>
+</section>
+
+<section id="limity">
+<h2>Limity i blokada STOP</h2>
+<p>Serwer jest „grzecznym klientem”: wysyła najwyżej jedno zapytanie na sekundę, jedno naraz, wspólnie dla wszystkich programów na Twoim komputerze, i pamięta odpowiedzi przez krótki czas.</p>
+<p>Gdy serwis odpowie odmową (błąd 401, 403, 429) albo pokaże zabezpieczenie typu captcha, serwer włącza <strong>blokadę STOP</strong> i przestaje wysyłać zapytania. Asystent zobaczy wtedy komunikat ze słowem STOP i powód.</p>
+<h3>Co zrobić przy blokadzie STOP</h3>
+<ol>
+<li>Sprawdź przyczynę:
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">uvx --from deweloperuch-mcp deweloperuch stop status</span></code><button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch stop status" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div></li>
+<li>Jeśli to chwilowe ograniczenie (429), odczekaj wskazany czas.</li>
+<li>Gdy przyczyna jest jasna, zdejmij blokadę:
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">uvx --from deweloperuch-mcp deweloperuch stop clear</span></code><button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch stop clear" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div></li>
+<li>Uruchom ponownie aplikację z asystentem: serwer po blokadzie potrzebuje restartu.</li>
+</ol>
+<div class="note warn"><p><strong>Nie usuwaj katalogu <code>~/.cache/deweloperuch-mcp</code></strong> ani plików w nim. To obchodzi blokadę bez sprawdzenia przyczyny. Używaj komendy <code>stop clear</code>.</p></div>
+</section>
+
+<section id="problemy">
+<h2>Rozwiązywanie problemów</h2>
+<h3>„command not found: uvx”</h3>
+<p>uv nie jest zainstalowany albo terminal go jeszcze nie widzi. Zainstaluj <a href="#uv">uv</a> i otwórz nowe okno terminala. Aplikację z asystentem uruchom ponownie, żeby też go zobaczyła.</p>
+<h3>Pierwsze uruchomienie trwa długo</h3>
+<p>To normalne: za pierwszym razem pobierane są potrzebne pliki. Trwa to zwykle około minuty, kolejne starty są szybkie.</p>
+<h3>Asystent nie widzi narzędzi</h3>
+<p>Uruchom aplikację ponownie i sprawdź, czy rozszerzenie albo serwer <code>deweloperuch</code> jest włączony w jej ustawieniach. W Claude Desktop na Macu dzienniki serwerów MCP są w katalogu <code>~/Library/Logs/Claude/</code> (pliki <code>mcp-server-*.log</code>).</p>
+<h3>„Następne zapytanie do deweloperuch.pl wolno wysłać dopiero za N s…”</h3>
+<p>Serwer pilnuje limitu zapytań. Odczekaj podany czas i zapytaj ponownie.</p>
+<h3>Wyniki są obcięte</h3>
+<p>Serwis pozwala przejrzeć najwyżej 20 stron wyników. Zamiast prosić o kolejne strony, zawęź pytanie: miasto, dzielnica, metraż, budżet.</p>
+<h3>Windows</h3>
+<p>Nie jest jeszcze obsługiwany: współdzielony limit zapytań korzysta z mechanizmu blokad plików, którego Windows nie ma.</p>
+<h3>Nadal nie działa?</h3>
+<p><a href="https://github.com/MBratkowski/deweloperuch-mcp/issues">Zgłoś problem na GitHubie</a>. Opisz, jak instalowałeś serwer, w jakiej aplikacji i jaki komunikat widzisz.</p>
+</section>
+
+<section id="prywatnosc">
+<h2>Prywatność</h2>
+<p>Serwer działa na Twoim komputerze i łączy się wyłącznie z deweloperuch.pl, i to tylko po dane do odczytu. Nie zbiera danych o Tobie i niczego nie wysyła autorom projektu.</p>
+<p>Twoje pytania trafiają do dostawcy Twojego asystenta AI na jego zasadach. Do deweloperuch.pl serwer wysyła tylko parametry potrzebne do pobrania danych (np. miasto, metraż, budżet).</p>
+<p>Pełna dokumentacja techniczna (po angielsku) jest <a href="https://github.com/MBratkowski/deweloperuch-mcp#readme">w repozytorium na GitHubie</a>.</p>
+</section>
+</div>
+</div>
+</main>
+
+<footer class="docs-footer">
+<div class="wrap">
+<p>Nieoficjalny projekt społeczności, niepowiązany z deweloperuch.pl, GUS ani NBP. Dane bez gwarancji poprawności; to nie jest porada inwestycyjna. Licencja MIT.</p>
+<p><a href="../">Strona główna</a> · <a href="https://github.com/MBratkowski/deweloperuch-mcp">GitHub</a> · <a href="https://pypi.org/project/deweloperuch-mcp/">PyPI</a></p>
+</div>
+</footer>
+</div>
+</body>
+</html>
