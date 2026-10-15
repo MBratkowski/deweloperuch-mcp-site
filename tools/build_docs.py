@@ -66,7 +66,7 @@ def tool_card(tool: dict, color: str) -> str:
         f'<div class="tool-head"><h4>{e(tool.get("title") or tool["name"])}</h4>'
         f'<code style="color: {color}">{e(tool["name"])}</code></div>'
         f"<p>{e(lead)}</p>"
-        f'<details><summary>Parametry ({len(props)})</summary><div class="table-wrap"><table>'
+        f'<details><summary>Parametry ({len(props)})</summary><div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table>'
         f'<thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead>'
         f"<tbody>{rows}</tbody></table></div></details></article>"
     )
@@ -94,7 +94,7 @@ def prompts_section() -> str:
         )
         cards.append(
             f'<article class="tool"><div class="tool-head"><h4>{e(p["title"])}</h4><code>{e(p["name"])}</code></div>'
-            f'<p>{e(p["description"])}</p><div class="table-wrap"><table><thead><tr><th scope="col">Pole</th>'
+            f'<p>{e(p["description"])}</p><div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table><thead><tr><th scope="col">Pole</th>'
             f'<th scope="col">Co wpisać</th></tr></thead><tbody>{rows}</tbody></table></div></article>'
         )
     return "".join(cards)
@@ -390,13 +390,13 @@ PAGE = f"""<!doctype html>
 <section id="cli">
 <h2>Komendy w terminalu</h2>
 <p>Każde narzędzie ma odpowiednik w komendzie <code>deweloperuch</code>. Dodaj <code>--help</code> do dowolnej komendy, żeby zobaczyć jej opcje, a <code>--json</code>, żeby dostać wynik jako JSON.</p>
-<div class="table-wrap"><table><thead><tr><th scope="col">Komenda</th><th scope="col">Co robi</th></tr></thead><tbody>{CLI_TABLE}</tbody></table></div>
+<div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table><thead><tr><th scope="col">Komenda</th><th scope="col">Co robi</th></tr></thead><tbody>{CLI_TABLE}</tbody></table></div>
 </section>
 
 <section id="limity">
 <h2>Limity i blokada STOP</h2>
 <p>Serwer jest „grzecznym klientem”: wysyła najwyżej jedno zapytanie na sekundę, jedno naraz, wspólnie dla wszystkich programów na Twoim komputerze, i pamięta odpowiedzi przez krótki czas.</p>
-<p>Gdy serwis odpowie odmową (błąd 401, 403, 429) albo pokaże zabezpieczenie typu captcha, serwer włącza <strong>blokadę STOP</strong> i przestaje wysyłać zapytania. Asystent zobaczy wtedy komunikat ze słowem STOP i powód.</p>
+<p>Gdy serwis odpowie odmową (błąd 401, 403, 429) albo pokaże zabezpieczenie typu captcha, serwer włącza <strong>blokadę STOP</strong> i przestaje wysyłać zapytania: po błędzie 429 na chwilę (blokada sama wygasa), w pozostałych przypadkach do Twojej decyzji. Asystent zobaczy wtedy komunikat ze słowem STOP i powód.</p>
 <h3>Co zrobić przy blokadzie STOP</h3>
 <ol>
 <li>Sprawdź przyczynę:
@@ -439,7 +439,7 @@ PAGE = f"""<!doctype html>
 
 <footer class="docs-footer">
 <div class="wrap">
-<p>Nieoficjalny projekt społeczności, niepowiązany z deweloperuch.pl, GUS ani NBP. Dane bez gwarancji poprawności; to nie jest porada inwestycyjna. Licencja MIT.</p>
+<p>Nieoficjalny projekt społeczności, niepowiązany z deweloperuch.pl, GUS ani NBP; działa za zgodą autorów deweloperuch.pl. Dane bez gwarancji poprawności; to nie jest porada inwestycyjna. Licencja MIT.</p>
 <p><a href="../">Strona główna</a> · <a href="{REPO}">GitHub</a> · <a href="https://pypi.org/project/deweloperuch-mcp/">PyPI</a></p>
 </div>
 </footer>

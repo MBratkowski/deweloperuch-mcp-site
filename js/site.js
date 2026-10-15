@@ -20,6 +20,7 @@
       }, 1800);
     };
     const failed = () => {
+      clearTimeout(timer);
       if (source) {
         const range = document.createRange();
         range.selectNodeContents(source);
@@ -56,15 +57,18 @@
   const question = composer.dataset.question;
   const steps = (name) => Array.from(demo.querySelectorAll(`[data-step="${name}"]`));
   const show = (el) => el.setAttribute('data-shown', '');
-  // A hidden tab throttles timers; finish at once instead of stalling half-way.
+  // A hidden tab throttles timers: when the tab is hidden mid-animation, finish at once
+  // instead of stalling half-way. Hiding the tab before the demo starts changes nothing.
+  let playing = false;
   let skip = false;
-  document.addEventListener('visibilitychange', () => { if (document.hidden) skip = true; });
+  document.addEventListener('visibilitychange', () => { if (document.hidden && playing) skip = true; });
   const wait = (ms) => (skip ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms)));
 
   demo.dataset.demo = 'ready';
   composer.textContent = '';
 
   async function play() {
+    playing = true;
     demo.dataset.demo = 'playing';
     composer.classList.add('is-typing');
     for (let i = 1; i <= question.length && !skip; i += 1) {
@@ -92,6 +96,7 @@
     steps('source').forEach(show);
     composer.textContent = placeholder;
     demo.dataset.demo = 'done';
+    playing = false;
   }
 
   const observer = new IntersectionObserver((entries) => {

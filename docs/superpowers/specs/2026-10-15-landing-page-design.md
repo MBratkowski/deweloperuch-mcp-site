@@ -83,7 +83,7 @@ Copy below is the approved Polish product text from the canvas; quoted literally
 7. **Zasady**: "Grzeczny klient." Four facts: read only; one request per second shared by all processes, plus a cache; stops itself after 401, 403, 429 or a captcha; runs with the authors' consent and an honest User-Agent.
 8. **FAQ**: "Zanim zainstalujesz." Six native `<details>` items: official or not, cost, which AI, Windows, data source and freshness, not investment advice. The first is open.
 9. **Final CTA**: large mascot, "Zapytaj o swoje mieszkanie.", plan card "Jedyny plan · 0 zł na zawsze" with four checks and the two buttons.
-10. **Footer**: icon, disclaimer ("Nieoficjalny projekt społeczności, niepowiązany z deweloperuch.pl, GUS ani NBP. Dane bez gwarancji poprawności; to nie jest porada inwestycyjna. Licencja MIT."), link columns Produkt / Zasoby / Projekt, and a one-line analytics note.
+10. **Footer**: icon, disclaimer ("Nieoficjalny projekt społeczności, niepowiązany z deweloperuch.pl, GUS ani NBP; działa za zgodą autorów deweloperuch.pl. Dane bez gwarancji poprawności; to nie jest porada inwestycyjna. Licencja MIT."), link columns Produkt / Zasoby / Projekt, and a one-line analytics note.
 
 ## 6. Interactions
 

@@ -41,6 +41,13 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 .page { background: var(--bg); color: var(--text); overflow-x: clip; }
+/* The UA rule `code { font-family: monospace }` would otherwise beat inherited fonts. */
+code, pre, kbd, samp { font-family: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace; }
+/* Install commands wrap instead of hiding behind a scrollbar; copying uses data-command. */
+#instalacja code { white-space: pre-wrap !important; overflow-wrap: anywhere; overflow-x: visible !important; }
+/* Three cards per row at 1440 px: count padding and border into the flex basis. */
+#dla-kogo > div > div, #instalacja > div > div { box-sizing: border-box; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 a { color: var(--text); }
 a:hover { color: var(--accent-text); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
@@ -93,6 +100,7 @@ button.copy.is-copied { color: var(--accent-text) !important; }
   #zasady > div { padding: 28px !important; }
   .window-badge { display: none !important; }
   .plan { padding: 24px !important; }
+  .cmd-pill { border-radius: 22px !important; padding: 8px 12px !important; }
 }
 
 @media (prefers-reduced-motion: reduce) {

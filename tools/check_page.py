@@ -153,3 +153,5 @@ server.shutdown()
 print("PROBLEMS:" if problems else "ALL OK")
 for p_ in problems:
     print(" -", p_)
+
+sys.exit(1 if problems else 0)

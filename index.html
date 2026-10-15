@@ -17,6 +17,7 @@
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="preload" href="assets/fonts/poppins-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/poppins-latin-ext-700-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/site.css">
 <script src="js/site.js" defer></script>
 <script type="application/ld+json">
@@ -27,8 +28,7 @@
 <a class="skip-link" href="#main">Przejdź do treści</a>
 <div class="page">
 
-<main id="main">
-<section class="hero" style="position: relative; overflow: hidden">
+<div class="hero-bg" style="position: relative; overflow: hidden">
 <svg aria-hidden="true" viewBox="0 0 1440 760" preserveAspectRatio="xMidYMax slice" style="position: absolute; top: 0; left: 0; width: 100%; height: 760px; display: block">
 <defs>
 <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0C0A14"></stop><stop offset="0.42" stop-color="#1C1140"></stop><stop offset="0.78" stop-color="#2D1B5C"></stop><stop offset="1" stop-color="#3B2475"></stop></linearGradient>
@@ -74,33 +74,37 @@
 </g>
 <rect x="0" y="600" width="1440" height="160" fill="url(#fade)"></rect>
 </svg>
-
-<div style="position: relative; max-width: 1240px; margin: 0 auto; padding: 20px 24px 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 80px">
-<header style="width: 100%; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px">
-<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px 8px 4px 12px; border-radius: 999px; background: rgba(18,12,32,0.55); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255,255,255,0.10)">
+<header style="position: relative; max-width: 1240px; margin: 0 auto; padding: 20px 24px 0; box-sizing: border-box; width: 100%; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px">
+<nav aria-label="Sekcje strony" style="display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px 8px 4px 12px; border-radius: 999px; background: rgba(18,12,32,0.55); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255,255,255,0.10)">
 <a href="#" aria-label="deweloperuch-mcp, strona główna" style="display: inline-flex; align-items: center; min-height: 44px; padding-right: 8px"><img src="assets/icon/icon-light.png" alt="" style="width: 26px; height: 30px"></a>
 <a href="#dane" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">Dane</a>
 <a href="#dla-kogo" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">Dla kogo</a>
 <a href="#instalacja" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">Instalacja</a>
 <a href="#faq" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">FAQ</a>
 <a href="docs/" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px; text-decoration: none; font-size: 14px">Dokumentacja</a>
-</div>
-<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px; border-radius: 999px; background: rgba(18,12,32,0.55); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255,255,255,0.10)">
+</nav>
+<nav aria-label="Pobieranie i kod" style="display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px; border-radius: 999px; background: rgba(18,12,32,0.55); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255,255,255,0.10)">
 <a href="https://github.com/MBratkowski/deweloperuch-mcp" style="display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; text-decoration: none; font-size: 14px">
 <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"></path></svg>
 GitHub
 </a>
 <a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" style="display: inline-flex; align-items: center; min-height: 44px; padding: 0 16px; border-radius: 999px; background: rgba(255,255,255,0.10); text-decoration: none; font-size: 14px; font-weight: 600">Pobierz</a>
-</div>
+</nav>
 </header>
+<main id="main">
+<section class="hero" style="position: relative">
+
+
+<div style="position: relative; max-width: 1240px; margin: 0 auto; padding: 80px 24px 0; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; gap: 80px">
+
 
 <div class="hero-copy" style="display: flex; flex-direction: column; align-items: center; text-align: center; gap: 22px">
-<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" style="display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border-radius: 999px; background: rgba(12,10,20,0.45); border: 1px solid rgba(255,255,255,0.12); text-decoration: none; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #E9E5F2"><span data-fact="version">v0.1.1</span> · MIT · w oficjalnym MCP Registry →</a>
+<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" style="display: inline-flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 14px; border-radius: 999px; background: rgba(12,10,20,0.45); border: 1px solid rgba(255,255,255,0.12); text-decoration: none; font-family: 'JetBrains Mono', monospace; font-size: 13px; color: #E9E5F2"><span data-fact="version">v0.1.1</span> · MIT · w oficjalnym MCP Registry</a>
 <h1 style="margin: 0; font-family: 'Poppins', sans-serif; font-size: 68px; line-height: 1.04; font-weight: 700; letter-spacing: -0.03em; text-shadow: 0 2px 30px rgba(12,10,20,0.5)">Każdy ruch rynku mieszkań.<br><span style="color: #34D399">W rozmowie z AI.</span></h1>
 <p style="margin: 0; max-width: 620px; font-size: 18px; line-height: 1.6; color: #D3CDE2">Serwer MCP, który daje Twojemu asystentowi AI ceny ofertowe deweloperów z historią zmian, ceny transakcyjne z rejestru RCN oraz statystyki GUS i NBP. Za darmo i open source.</p>
 <div style="display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 8px">
 <a href="#instalacja" data-goatcounter-click="cta-install" style="display: inline-flex; align-items: center; gap: 10px; min-height: 52px; padding: 0 28px; border-radius: 999px; background: var(--accent); color: #052E21; text-decoration: none; font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 10px 40px rgba(16,185,129,0.45)">Zainstaluj za darmo</a>
-<div style="display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 10px; padding: 4px 4px 4px 18px; border-radius: 999px; background: rgba(12,10,20,0.55); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.12); font-family: 'JetBrains Mono', monospace; font-size: 13px">
+<div class="cmd-pill" style="display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 10px; padding: 4px 4px 4px 18px; border-radius: 999px; background: rgba(12,10,20,0.55); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.12); font-family: 'JetBrains Mono', monospace; font-size: 13px">
 <span style="color: #D3CDE2">albo w terminalu:</span>
 <code style="color: #F1EEF7"><span class="cmd-text">uvx deweloperuch-mcp</span></code>
 <button type="button" class="copy" data-command="uvx deweloperuch-mcp" data-goatcounter-click="copy-hero" hidden style="display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: 999px; border: 0; background: rgba(255,255,255,0.08); color: #D3CDE2; font-family: 'JetBrains Mono', monospace; font-size: 12px; cursor: pointer">
@@ -142,7 +146,7 @@ search_offers · <span class="chip-state">gotowe</span>
 </p>
 <p data-step="answer" style="margin: 0">We Wrocławiu jest <strong>2 587</strong> pasujących ofert. Pięć z największą obniżką od pierwszej ceny:</p>
 <div data-step="table" style="border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08)">
-<div style="overflow-x: auto">
+<div style="overflow-x: auto" tabindex="0" role="region" aria-label="Tabela ofert">
 <table style="width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums">
 <thead>
 <tr style="background: #1A1426; text-align: left; font-size: 11px; color: #A7A1B8">
@@ -233,7 +237,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <p style="margin: 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Tło rynku: ceny, budownictwo i praca.</p>
 </div>
 <dl style="flex: 1 1 520px; min-width: 0; margin: 0; display: flex; flex-direction: column; gap: 22px">
-<div><dt style="font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #7DD3FC">get_government_statistics</dt><dd style="margin: 4px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Oficjalne szeregi czasowe dla Polski, regionu albo miasta: ceny mieszkań, mieszkania oddane, wynagrodzenia i bezrobocie.</dd></div>
+<div><dt style="font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #7DD3FC">get_government_statistics</dt><dd style="margin: 4px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Oficjalne szeregi czasowe dla Polski, grup największych miast albo miasta na prawach powiatu: ceny mieszkań, mieszkania oddane, wynagrodzenia i bezrobocie.</dd></div>
 <div><dt style="font-family: 'JetBrains Mono', monospace; font-size: 14px; color: #6EE7B7">search_locations · search_developers · get_developer</dt><dd style="margin: 4px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Narzędzia pomocnicze: zamieniają nazwę miasta albo dewelopera na identyfikator i dają profil dewelopera.</dd></div>
 </dl>
 </div>
@@ -388,7 +392,7 @@ search_offers · <span class="chip-state">gotowe</span>
 <div style="flex: 2 1 520px; min-width: 0; display: flex; flex-wrap: wrap; gap: 28px 32px">
 <div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Tylko odczyt.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Niczego w serwisie nie tworzy ani nie zmienia.</p></div>
 <div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Jedno zapytanie na sekundę.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Wspólny limit dla wszystkich procesów na Twoim komputerze, do tego cache odpowiedzi.</p></div>
-<div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Sam się zatrzymuje.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Po błędzie 401, 403, 429 albo captchy przestaje wysyłać zapytania, dopóki tego nie sprawdzisz.</p></div>
+<div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Sam się zatrzymuje.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Po błędzie 401, 403, 429 albo captchy przestaje wysyłać zapytania: po 429 na chwilę, w pozostałych przypadkach do Twojej decyzji.</p></div>
 <div style="flex: 1 1 240px; min-width: 0"><h3 style="margin: 0; font-size: 16px; font-weight: 600">Za zgodą autorów.</h3><p style="margin: 6px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">Autorzy deweloperuch.pl zgodzili się na ten projekt i korzystanie z danych serwisu.</p></div>
 </div>
 </div>
@@ -444,18 +448,19 @@ search_offers · <span class="chip-state">gotowe</span>
 <li style="display: flex; align-items: center; gap: 10px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg>Działa lokalnie, na Twoim komputerze</li>
 <li style="display: flex; align-items: center; gap: 10px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"></path></svg>Otwarty kod na GitHubie</li>
 </ul>
-<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" style="display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 999px; background: var(--accent); color: #052E21; text-decoration: none; font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 10px 40px rgba(16,185,129,0.35)">Zainstaluj za darmo</a>
+<a href="docs/#krok-po-kroku" style="display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 999px; background: var(--accent); color: #052E21; text-decoration: none; font-family: 'Poppins', sans-serif; font-weight: 600; font-size: 16px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.45), 0 10px 40px rgba(16,185,129,0.35)">Zainstaluj za darmo</a>
 <a href="https://github.com/MBratkowski/deweloperuch-mcp" style="display: flex; align-items: center; justify-content: center; min-height: 52px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.16); text-decoration: none; font-weight: 600; font-size: 16px">Zobacz kod na GitHubie</a>
 </div>
 </section>
 
 </main>
+</div>
 
 <footer style="border-top: 1px solid rgba(255,255,255,0.08)">
 <div style="max-width: 1240px; margin: 0 auto; padding: 48px 24px; box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 40px 64px">
 <div style="flex: 2 1 340px; min-width: 0; display: flex; flex-direction: column; gap: 14px">
 <p style="margin: 0; display: flex; align-items: center; gap: 10px"><img src="assets/icon/icon-light.png" alt="" style="width: 26px; height: 30px"><span style="font-family: 'Poppins', sans-serif; font-weight: 600">deweloperuch-mcp</span></p>
-<p style="margin: 0; max-width: 460px; font-size: 13px; line-height: 1.6; color: #A7A1B8">Nieoficjalny projekt społeczności, niepowiązany z deweloperuch.pl, GUS ani NBP. Dane bez gwarancji poprawności; to nie jest porada inwestycyjna. Licencja MIT.</p>
+<p style="margin: 0; max-width: 460px; font-size: 13px; line-height: 1.6; color: #A7A1B8">Nieoficjalny projekt społeczności, niepowiązany z deweloperuch.pl, GUS ani NBP; działa za zgodą autorów deweloperuch.pl. Dane bez gwarancji poprawności; to nie jest porada inwestycyjna. Licencja MIT.</p>
 </div>
 <nav aria-label="Produkt" style="flex: 1 1 140px; display: flex; flex-direction: column; gap: 4px; font-size: 14px">
 <p style="margin: 0 0 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: #A7A1B8">Produkt</p>
