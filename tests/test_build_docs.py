@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from tools import build_docs, docs_content, html_helpers
-from tools.release import BuildError, Release, load_release
+from tools.release import BuildError, Release, load_release, pinned_version
 from tools.docs_content import Group
 from tools.html_helpers import fill_blocks
 from tools.docs_renderer import render_docs, render_landing
@@ -72,17 +72,27 @@ def test_building_twice_changes_nothing(site: Path) -> None:
     assert {path: read(site, path) for path in first} == first == {path: read(ROOT, path) for path in first}
 
 
-def test_a_version_bump_changes_every_version_on_both_pages(site: Path, saved: Release) -> None:
-    write(dataclasses.replace(saved, version="0.2.0"), site)
+@pytest.mark.parametrize("old_version, new_version", [("0.1.2", "0.1.3"), ("0.1.3", "0.2.0"), ("0.2.0", "1.0.0")])
+def test_a_version_bump_changes_every_version_on_both_pages(
+    site: Path, saved: Release, old_version: str, new_version: str
+) -> None:
+    previous = dataclasses.replace(saved, version=old_version)
+    write(previous, site)
     assert build_docs.main(site) == 0
-    for path in ("index.html", "docs/index.html"):
-        old, new = read(ROOT, path), read(site, path)
-        assert "0.1.2" in old and "0.1.2" not in new, path
-        assert new.replace("0.2.0", "0.1.2") == old, path
-    assert '<span data-fact="version">v0.2.0</span>' in read(site, "index.html")
+    before = {path: read(site, path) for path in ("index.html", "docs/index.html")}
+
+    release = dataclasses.replace(previous, version=new_version)
+    write(release, site)
+    assert load_release(site) == release
+    assert build_docs.main(site) == 0
+    for path, old in before.items():
+        new = read(site, path)
+        assert old_version in old and old_version not in new, path
+        assert new.replace(new_version, old_version) == old, path
+    assert f'<span data-fact="version">v{new_version}</span>' in read(site, "index.html")
     docs = read(site, "docs/index.html")
-    assert "deweloperuch-mcp-0.2.0.mcpb" in docs and "deweloperuch_mcp-0.2.0-py3-none-any.whl" in docs
-    assert check_all(dataclasses.replace(saved, version="0.2.0"), root=site) == []
+    assert f"deweloperuch-mcp-{new_version}.mcpb" in docs and f"deweloperuch_mcp-{new_version}-py3-none-any.whl" in docs
+    assert check_all(release, root=site) == []
 
 
 def test_a_release_with_another_tool_and_prompt_changes_every_count(site: Path, saved: Release, parcels_group: None) -> None:
@@ -128,7 +138,7 @@ def test_a_new_tool_stops_the_build_with_its_name(site: Path, saved: Release, ca
 
 def test_a_removed_tool_stops_the_build_with_its_name(saved: Release) -> None:
     release = dataclasses.replace(saved, tools=tuple(t for t in saved.tools if t["name"] != "get_building"))
-    with pytest.raises(BuildError, match="GROUPS names tools that deweloperuch-mcp 0.1.2 does not have: get_building"):
+    with pytest.raises(BuildError, match=rf"GROUPS names tools that deweloperuch-mcp {saved.version} does not have: get_building"):
         render_docs(release)
 
 
@@ -180,9 +190,9 @@ def test_marked_counts() -> None:
     assert html_helpers.prompts_phrase(4, fact=True) == '<span data-fact="prompt-count">4</span> gotowe prompty'
 
 
-def cli_snapshot(site: Path, commands: list[dict], version: str = "0.1.2") -> None:
+def cli_snapshot(site: Path, commands: list[dict], version: str | None = None) -> None:
     (site / "data/server/cli_commands.json").write_text(
-        json.dumps({"version": version, "commands": commands}), encoding="utf-8"
+        json.dumps({"version": version if version is not None else pinned_version(site), "commands": commands}), encoding="utf-8"
     )
 
 
@@ -224,7 +234,7 @@ def test_bad_cli_snapshot_stops_before_changing_pages(site: Path, problem: str, 
     if problem == "missing":
         path.unlink()
     elif problem == "version":
-        cli_snapshot(site, [command], version="0.0.1")
+        cli_snapshot(site, [command], version=pinned_version(site) + ".1")
     elif problem == "duplicate":
         cli_snapshot(site, [command, command])
     elif problem == "empty":
