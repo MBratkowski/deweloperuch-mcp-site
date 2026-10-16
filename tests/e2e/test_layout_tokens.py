@@ -4,7 +4,7 @@ import pytest
 from playwright.sync_api import Page
 
 
-@pytest.mark.parametrize("width", [320, 720, 721, 900, 901, 1440])
+@pytest.mark.parametrize("width", [320, 720, 721, 760, 761, 900, 901, 1440])
 def test_page_variants_follow_shared_container_tokens(page: Page, page_url: str, width: int) -> None:
     page.set_viewport_size({"width": width, "height": 900})
     page.goto(page_url)
@@ -48,7 +48,7 @@ def test_page_variants_follow_shared_container_tokens(page: Page, page_url: str,
         # Measure visible content too: changing a container must also move the
         # navigation, section heading and footer that share its left edge.
         aligned_content = page.locator(
-            ".topbar > nav:first-child, #dane > .section-heading, .footer-copy, "
+            ".topbar > .nav-shell, #dane > .section-heading, .footer-copy, "
             ".docs-hero .eyebrow, .docs-steps > h2, .docs-footer .wrap > p"
         )
         assert aligned_content.count() >= 3

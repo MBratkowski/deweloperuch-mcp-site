@@ -53,15 +53,20 @@ ${head}
 <rect x="0" y="600" width="1440" height="160" fill="url(#fade)"></rect>
 </svg>
 <header class="wrap topbar topbar--landing" data-social-hide="navigation">
-<nav aria-label="Sekcje strony" class="pill-nav pill-nav--sections">
+<div class="nav-shell" data-navigation>
+<div class="pill-nav pill-nav--sections nav-primary">
 ${nav_brand}
+${nav_toggle}
+<nav id="site-navigation" class="nav-links" aria-label="Sekcje strony">
 <a href="#dane">Dane</a>
 <a href="#dla-kogo">Dla kogo</a>
 <a href="#instalacja">Instalacja</a>
 <a href="#faq">FAQ</a>
 <a href="docs/">Dokumentacja</a>
 </nav>
+</div>
 ${nav_actions}
+</div>
 </header>
 <main id="main">
 <section class="hero">

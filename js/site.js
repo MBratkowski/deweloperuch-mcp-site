@@ -4,6 +4,38 @@
 
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  // Enhance the always-visible HTML navigation only after its controls are wired.
+  function initNavigation(navigation) {
+    const toggle = navigation.querySelector('.nav-toggle');
+    const mobile = matchMedia('(max-width: 760px)');
+    const setExpanded = (open) => {
+      toggle.setAttribute('aria-expanded', String(open));
+      navigation.toggleAttribute('data-nav-open', open);
+    };
+    toggle.addEventListener('click', () => setExpanded(!navigation.hasAttribute('data-nav-open')));
+    navigation.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && navigation.hasAttribute('data-nav-open')) {
+        setExpanded(false);
+        toggle.focus();
+      }
+    });
+    navigation.addEventListener('click', (event) => {
+      const link = event.target.closest('a');
+      if (!link || !mobile.matches) return;
+      setExpanded(false);
+      if (link.closest('#site-navigation') || link.id === 'project-link') toggle.focus({ preventScroll: true });
+    });
+    mobile.addEventListener('change', () => {
+      setExpanded(false);
+      if (navigation.contains(document.activeElement)) {
+        (mobile.matches ? toggle : navigation.querySelector('.brand')).focus({ preventScroll: true });
+      }
+    });
+    toggle.hidden = false;
+    navigation.setAttribute('data-nav-ready', '');
+  }
+  document.querySelectorAll('[data-navigation]').forEach(initNavigation);
+
   // Copy buttons ship hidden so a page without JS never shows a dead button.
   // writeText runs synchronously inside the click handler (Safari requires it).
   function initCopy(button) {

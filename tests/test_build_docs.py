@@ -494,7 +494,7 @@ def test_shared_site_settings_reach_head_navigation_footer_and_install_steps(
             assert metadata["sameAs"] == ["https://code.invalid/owner/server", "https://packages.invalid/project/server/"]
 
 
-@pytest.mark.parametrize("fragment", ["head", "nav_brand", "nav_actions", "footer_notice"])
+@pytest.mark.parametrize("fragment", ["head", "nav_brand", "nav_toggle", "nav_actions", "footer_notice"])
 def test_shared_fragment_edits_reach_both_pages(site: Path, fragment: str) -> None:
     source = site / f"tools/templates/shared/{fragment}.html"
     marker = f"<!-- edited shared {fragment} -->"

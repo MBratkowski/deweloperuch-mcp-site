@@ -47,3 +47,13 @@ def test_interaction_states(visual_page: Page, site_url: str, assert_visual, nam
         control.focus()
         assert control.evaluate("el => el.matches(':focus-visible')")
     assert_visual(name, page.locator(crop).screenshot(animations="disabled", caret="hide"))
+
+
+@pytest.mark.parametrize("route", ["landing", "docs"])
+def test_mobile_navigation_expanded(visual_page: Page, site_url: str, assert_visual, route: str) -> None:
+    page = visual_page
+    page.set_viewport_size({"width": 375, "height": 812})
+    page.goto(site_url + ("docs/" if route == "docs" else ""))
+    page.get_by_role("button", name="Menu", exact=True).click()
+    settle(page)
+    assert_visual(f"{route}-menu-open", page.locator(".topbar").screenshot(animations="disabled", caret="hide"))
