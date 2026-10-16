@@ -19,5 +19,8 @@ package = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-addopts = "-ra"
-markers = ["network: needs PyPI and uvx; runs only with LANDING_NETWORK=1"]
+addopts = "-ra -m 'not visual'"
+markers = [
+    "network: needs PyPI and uvx; runs only with LANDING_NETWORK=1",
+    "visual: canonical Linux Chromium image comparisons; run explicitly with -m visual",
+]

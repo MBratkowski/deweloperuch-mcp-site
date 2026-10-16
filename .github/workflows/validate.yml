@@ -21,6 +21,51 @@ jobs:
       - run: uv run playwright install --with-deps chromium
       - run: uv run pytest
 
+  visual:
+    name: Visual baselines (pinned Linux Chromium)
+    runs-on: ubuntu-24.04
+    container:
+      # Keep this image, uv.lock and tests/visual/baselines/renderer.json in sync.
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --ipc=host
+    env:
+      VISUAL_RENDERER: playwright-1.64.0-noble-amd64
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --locked --python 3.12
+      - run: uv run pytest tests/visual -m visual --browser chromium --tracing retain-on-failure
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: visual-results
+          path: test-results/
+          if-no-files-found: error
+          retention-days: 14
+
+  browser-smoke:
+    name: Browser smoke (Firefox, WebKit)
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --locked --python 3.12
+      - run: uv run pytest tests/e2e/test_browser_smoke.py --browser firefox --browser webkit --tracing retain-on-failure --screenshot only-on-failure
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: browser-smoke-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   generated:
     name: Generated files match the pinned release and the demo data
     runs-on: ubuntu-24.04
