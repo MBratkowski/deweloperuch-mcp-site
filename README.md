@@ -128,6 +128,50 @@ wait. A missing/changed hook or an initialization/playback exception returns the
 `final`, restores the available shipped text, removes typing/busy indicators, and disconnects
 the observer. No JavaScript and reduced motion keep the shipped final state.
 
+## Social image and icons
+
+Regenerate after a hero, page-source, local resource or renderer dependency change:
+
+```bash
+uv sync --locked
+uv run playwright install chromium
+uv run python -m tools.build_docs
+uv run python -m tools.render_images
+uv run python -m tools.render_images --check
+```
+
+Review `assets/og.png`: the complete heading, description and skyline must appear;
+navigation, release badge, install/command controls and the note must be hidden.
+Commit the generated PNGs and `assets/images.json` together. Rendering only serves
+local files and blocks every external request, including analytics; it never captures
+new demo data or contacts deweloperuch.pl.
+
+The landing source template owns `data-social-hide` roles (`navigation`, `version`,
+`actions`, `note`) and `data-social-content` roles (`heading`, `description`, `skyline`).
+Each role occurs exactly once. These attributes do not affect the published page.
+The renderer preserves layout while hiding the marked controls, waits for fonts,
+and rejects missing hooks, hidden/empty copy and copy outside the 1200×630 capture.
+Keep the attributes when wrapping or reordering markup.
+
+`--check` checks SHA-256 digests of the published landing HTML, renderer, lockfile,
+local CSS/JavaScript, WOFF2 fonts, icon PNGs and generated images. It first compares
+`index.html` with the canonical offline page render, so changes to shared page
+configuration/fragments, landing templates, release metadata and saved demo inputs
+cannot be hidden behind an old generated page. Resource families are tracked
+conservatively, including additions. Missing or stale inputs/outputs fail with the
+regeneration commands. CI runs this check after the page build; release-sync PRs
+regenerate the images before running tests.
+
+Chromium, Playwright, Pillow, OS and architecture are recorded as provenance.
+The portable freshness check does not rerender or compare pixels across platforms:
+font rasterization can differ between macOS and Linux. Browser regression tests
+verify composition and compare wrapper/reorder captures within the same browser.
+Review the generated image when updating the renderer or locked dependencies.
+
+The icon in `assets/icon/` and its derivatives (`favicon.png`, `apple-touch-icon.png`,
+`assets/og.png`) remain outside MIT: all rights reserved, used with permission of
+the deweloperuch.pl authors. See `LICENSE`.
+
 ## Checks
 
 The checks use [uv](https://docs.astral.sh/uv/) (Python ≥ 3.12):
@@ -146,6 +190,7 @@ uv run pytest
 - `uv run python -m tools.check_facts` (or explicit `--pinned`): the page facts, written copy, complete generated pages and demo against the committed pinned MCP/CLI snapshots, offline. It never discovers the latest release. `LANDING_NETWORK=1 uv run pytest` additionally checks the pages against metadata inspected from the pinned package and syncs that package into a temporary folder to compare it with `data/server/`.
 - `uv run python -m tools.check_facts --latest`: explicit release-freshness monitoring against the latest deweloperuch-mcp on PyPI. It lists MCP tools and prompts and inspects the CLI without invoking callbacks, so nothing reaches deweloperuch.pl. A release other than the pinned one fails with synchronization commands; a failed latest-release lookup also fails this monitor.
 - `uv run python -m tools.render_images`: renders `favicon.png`, `apple-touch-icon.png` and `assets/og.png`.
+- `tests/test_images.py` and `tests/e2e/test_social_image.py`: image freshness, same-size wrong-image detection, semantic composition and wrapper/reorder regressions, offline. `uv run python -m tools.render_images --check` checks the committed manifest without launching Chromium.
 
 CI (`.github/workflows/check.yml`, on every push, pull request and manual run) calls the reusable `validate.yml` workflow for the tests, the offline pinned fact check, a guard that syncs the pinned release, builds both complete pages including the saved demo and fails on any difference from the commit, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). No validation job resolves the latest deweloperuch-mcp release. Local Lighthouse measures each commit's own files; `pages.yml` measures the live site after every deployment.
 

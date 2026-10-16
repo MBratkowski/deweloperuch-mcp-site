@@ -7,7 +7,7 @@ ${head}
 <div class="page landing">
 
 <div class="hero-bg">
-<svg aria-hidden="true" viewBox="0 0 1440 760" preserveAspectRatio="xMidYMax slice" class="hero-art">
+<svg aria-hidden="true" viewBox="0 0 1440 760" preserveAspectRatio="xMidYMax slice" class="hero-art" data-social-content="skyline">
 <defs>
 <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0C0A14"></stop><stop offset="0.42" stop-color="#1C1140"></stop><stop offset="0.78" stop-color="#2D1B5C"></stop><stop offset="1" stop-color="#3B2475"></stop></linearGradient>
 <radialGradient id="aurora" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#34D399" stop-opacity="0.5"></stop><stop offset="1" stop-color="#34D399" stop-opacity="0"></stop></radialGradient>
@@ -52,7 +52,7 @@ ${head}
 </g>
 <rect x="0" y="600" width="1440" height="160" fill="url(#fade)"></rect>
 </svg>
-<header class="wrap topbar topbar--landing">
+<header class="wrap topbar topbar--landing" data-social-hide="navigation">
 <nav aria-label="Sekcje strony" class="pill-nav pill-nav--sections">
 ${nav_brand}
 <a href="#dane">Dane</a>
@@ -71,16 +71,16 @@ ${nav_actions}
 
 
 <div class="hero-copy">
-<a href="${version_releases}" class="version-pill">${hero_version} · MIT · w oficjalnym MCP Registry</a>
-<h1 class="hero-title">Każdy ruch rynku mieszkań.<br><span class="text-accent">W rozmowie z AI.</span></h1>
-<p class="hero-lead">Serwer MCP, który daje Twojemu asystentowi AI ceny ofertowe deweloperów z historią zmian, ceny transakcyjne z rejestru RCN oraz statystyki GUS i NBP. Za darmo i open source.</p>
-<div class="hero-actions">
+<a href="${version_releases}" class="version-pill" data-social-hide="version">${hero_version} · MIT · w oficjalnym MCP Registry</a>
+<h1 class="hero-title" data-social-content="heading">Każdy ruch rynku mieszkań.<br><span class="text-accent">W rozmowie z AI.</span></h1>
+<p class="hero-lead" data-social-content="description">Serwer MCP, który daje Twojemu asystentowi AI ceny ofertowe deweloperów z historią zmian, ceny transakcyjne z rejestru RCN oraz statystyki GUS i NBP. Za darmo i open source.</p>
+<div class="hero-actions" data-social-hide="actions">
 <a href="#instalacja" data-umami-event="cta-install" class="button button--primary button--hero">Zainstaluj za darmo</a>
 <div class="cmd-pill">
 <span class="text-secondary">albo w terminalu:</span>
 ${run_server}
 </div>
-<p class="hero-note">Nieoficjalny projekt, działa za zgodą autorów deweloperuch.pl.</p>
+<p class="hero-note" data-social-hide="note">Nieoficjalny projekt, działa za zgodą autorów deweloperuch.pl.</p>
 </div>
 </div>
 

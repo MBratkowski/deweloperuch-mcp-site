@@ -1,0 +1,35 @@
+{
+  "inputs": {
+    "assets/fonts/jetbrains-mono-latin-400-normal.woff2": "14425ba9c695763c1547f48a206b7aa60350a33ae23de09f0407877f3fcd89eb",
+    "assets/fonts/jetbrains-mono-latin-500-normal.woff2": "cb182feeed4d798ff6961d3c79f7026279448fca0676438aaecb21f3fc39553a",
+    "assets/fonts/jetbrains-mono-latin-ext-400-normal.woff2": "505dfba8ecbe77e82765f36d317ed7ef4ac42719dc5f4ae68d1c483fd22d0d14",
+    "assets/fonts/jetbrains-mono-latin-ext-500-normal.woff2": "879df9319f1cbf633bee1dd489e376a9e1e8c458f4abddcfe381cb83b5e6b027",
+    "assets/fonts/poppins-latin-600-normal.woff2": "f4e80d9dfd374d02989b87a27b5ed4cb78fbb177c27f1478e9a8b0afb7513149",
+    "assets/fonts/poppins-latin-700-normal.woff2": "9338e65fc077355c7a87ae0d64cc101e23b9bf8ad78ae65f0f319c857311b526",
+    "assets/fonts/poppins-latin-ext-600-normal.woff2": "bb1f2d582e7fba586ab70c91ef062d3becaf78b887654953863521b73665d171",
+    "assets/fonts/poppins-latin-ext-700-normal.woff2": "ccfd87f69ef00d811da3d06488cec4e79ec99d289cfbcbe4be42031cecae775a",
+    "assets/icon/icon-dark.png": "3d9e896452ab3bc847907b98ae9441932e764a19e6a129deedf5850c18cf5967",
+    "assets/icon/icon-light.png": "2294849faa90739491a5892d1476746872ec31fee567e3fa99780ceb957c3eea",
+    "assets/icon/icon-tile-512.png": "e7b3368c8595e8d736f160af0ce8248a42c8d53616903a448c93dee3596a796b",
+    "css/docs.css": "9e45f4a1c52a3e10acbb7e9b3d05f8b4eb329155d4582c01fba62fcbc0c45f6d",
+    "css/landing.css": "056e6eafbf7b67c2ae60250edb48d697a2df4b799c311d8d51458fbf672fa708",
+    "css/site.css": "6916411abf115da8db793a6a682d87abe2b13650f554216740df9bf5bf773ecc",
+    "index.html": "6993f4a72507915dac46d1c56455cab1fc28a477850fa78f86073c7a70053d0b",
+    "js/site.js": "19711c870933033273cd5b38d0d550393dc756c19282a5435aeae6f217047b89",
+    "tools/render_images.py": "e5ef25fd6a89675480599182eaee8ab8e1f6df183fc4a3a10e48bb78c8c3bb8c",
+    "uv.lock": "9af73ecbfe41b9e2d38506b129abb4007ad063f1b4dae1e0dd8fefa26e6a01f2"
+  },
+  "outputs": {
+    "apple-touch-icon.png": "bdcfe9167700ca1606b002dfa3dffa65843653f6ce04de647612c21285afea04",
+    "assets/og.png": "87804da498a8956bf417f2d090996369f0556990edbb81485ddf0343f9d8ace7",
+    "favicon.png": "925c21bc64fc4712e3d6640ac7c019d6d11c2c6ed4e73a8c5a00db0ad1c7e98a"
+  },
+  "renderer": {
+    "architecture": "arm64",
+    "chromium": "156.0.8078.4",
+    "pillow": "12.3.0",
+    "platform": "Darwin",
+    "playwright": "1.64.0"
+  },
+  "schema": 1
+}
