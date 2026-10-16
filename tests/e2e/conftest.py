@@ -1,8 +1,8 @@
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 import pytest
-from playwright.sync_api import Browser, BrowserContext, Page, Route
+from playwright.sync_api import BrowserContext, Page, Route
 
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost"})
 # Umami Cloud: the script (cloud.umami.is) and its event endpoint (gateway.umami.is).
@@ -29,11 +29,6 @@ def keep_offline(context: BrowserContext) -> list[str]:
     return hosts
 
 
-@pytest.fixture(scope="session")
-def browser_context_args(browser_context_args: dict) -> dict:
-    return {**browser_context_args, "viewport": {"width": 1440, "height": 900}}
-
-
 @pytest.fixture(autouse=True)
 def requested_hosts(context: BrowserContext) -> list[str]:
     """Every end-to-end test runs offline; the hosts the default context asked for."""
@@ -41,19 +36,14 @@ def requested_hosts(context: BrowserContext) -> list[str]:
 
 
 @pytest.fixture
-def new_context(browser: Browser) -> Iterator[Callable[..., BrowserContext]]:
-    """Make an extra offline context (mobile viewport, no JavaScript, ...)."""
-    contexts: list[BrowserContext] = []
-
+def new_context(new_context: Callable[..., BrowserContext]) -> Callable[..., BrowserContext]:
+    """Keep all contexts offline while preserving Playwright's artifact lifecycle."""
     def make(**kwargs: object) -> BrowserContext:
-        context = browser.new_context(**kwargs)
+        context = new_context(**kwargs)
         keep_offline(context)
-        contexts.append(context)
         return context
 
-    yield make
-    for context in contexts:
-        context.close()
+    return make
 
 
 @pytest.fixture
