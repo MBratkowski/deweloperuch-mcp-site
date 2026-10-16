@@ -174,6 +174,38 @@ The icon in `assets/icon/` and its derivatives (`favicon.png`, `apple-touch-icon
 `assets/og.png`) remain outside MIT: all rights reserved, used with permission of
 the deweloperuch.pl authors. See `LICENSE`.
 
+## Release graphics for X / Twitter
+
+Export a 1200×630 PNG with the release number, headline, up to three changelog
+highlights and the website address. It uses the landing page's local fonts,
+colors and icon; no network service or image-generation API is needed.
+
+```bash
+uv sync --locked
+uv run playwright install chromium
+uv run python -m tools.render_release data/releases/0.1.3.json
+# Or choose a destination:
+uv run python -m tools.render_release data/releases/0.1.3.json --output announcement.png
+```
+
+The default output is `exports/release-v0.1.3.png` (ignored by Git).
+Automated release callers can pass `--expect-version 0.1.3` to reject metadata
+for a different version before rendering or overwriting an existing PNG.
+For the next release, copy [data/releases/0.1.3.json](data/releases/0.1.3.json)
+and edit `version` (without `v`), `date` (`YYYY-MM-DD`), `headline` and `changes`.
+Each change has a `type` (`added`, `changed` or `fixed`), `title` and
+`description`; all copy is plain text. Select the one to three most useful
+changes for readers; the JSON is an editorial summary, not a live release lookup.
+
+The renderer blocks external requests, waits for local fonts, and rejects
+missing assets or text that leaves its region. Shorten the copy if it does not
+fit. Failed rendering leaves an existing export untouched. Review the PNG
+before posting; the command only writes a local image.
+
+Example for 0.1.3: [download PNG](docs/examples/release-v0.1.3.png).
+The icon and graphics derived from it retain the licence exception described
+in [LICENSE](LICENSE).
+
 ## Checks
 
 The checks use [uv](https://docs.astral.sh/uv/) (Python ≥ 3.12):

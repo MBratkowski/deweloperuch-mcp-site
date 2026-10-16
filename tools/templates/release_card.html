@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>$package v$version — nowe wydanie</title>
+<link rel="stylesheet" href="css/site.css">
+<style>$styles</style>
+</head>
+<body>
+<main class="release-card" data-release-card>
+  <header class="card-header" data-card-region>
+    <div class="brand-lockup">
+      <img src="assets/icon/icon-light.png" width="48" height="56" alt="">
+      <div><p class="card-brand" data-card-text>$package</p><p class="card-tagline" data-card-text>Dane mieszkaniowe dla Twojego AI</p></div>
+    </div>
+    <p class="release-date" data-card-text><span class="live-dot"></span>NOWE WYDANIE <span class="date">$date</span></p>
+  </header>
+  <div class="card-content">
+    <section class="release-intro" data-card-region>
+      <p class="version" data-card-text data-release-version>v$version</p>
+      <h1 data-card-text>$headline</h1>
+      <p class="platforms" data-card-text>MCP + CLI · open source</p>
+    </section>
+    <section class="changelog" aria-label="Co nowego">
+      <div class="changelog-bar" data-card-region><span class="terminal-dots" aria-hidden="true"><i></i><i></i><i></i></span><p data-card-text>CHANGELOG.md</p></div>
+      <div class="changes">$changes</div>
+    </section>
+  </div>
+  <footer class="card-footer" data-card-region>
+    <a class="card-url" href="$site_url" data-card-text>$site_label</a>
+    <a class="card-cta" href="$site_url" data-card-text>Zainstaluj za darmo <span aria-hidden="true">↗</span></a>
+  </footer>
+</main>
+</body>
+</html>
