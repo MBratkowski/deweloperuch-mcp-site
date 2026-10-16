@@ -60,7 +60,7 @@
 
 <section id="krok-po-kroku" class="wrap docs-steps" aria-labelledby="krok-po-kroku-title">
 <h2 id="krok-po-kroku-title">Instalacja krok po kroku</h2>
-<p class="section-lead">Dla Claude Desktop na macOS. Linux działa tak samo; Windows nie jest jeszcze obsługiwany.</p>
+<p class="section-lead">Dla Claude Desktop na macOS i Windowsie. Ilustracje pokazują przykładowe okna aplikacji.</p>
 
 <ol class="steps">
 <li class="step">
@@ -69,8 +69,8 @@
 <div class="mock-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>github.com · deweloperuch-mcp · Releases</em></div>
 <div class="mock-body">
 <p class="mock-label">Assets</p>
-<p class="mock-row is-hot"><span>deweloperuch-mcp-0.1.2.mcpb</span><span class="mock-cursor">⬇</span></p>
-<p class="mock-row"><span>deweloperuch_mcp-0.1.2-py3-none-any.whl</span></p>
+<p class="mock-row is-hot"><span>deweloperuch-mcp-0.1.3.mcpb</span><span class="mock-cursor">⬇</span></p>
+<p class="mock-row"><span>deweloperuch_mcp-0.1.3-py3-none-any.whl</span></p>
 <p class="mock-row"><span>Source code (zip)</span></p>
 </div>
 </div>
@@ -151,23 +151,23 @@
 </div>
 <div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Prompt dla agenta AI</em></div><div class="cmd"><pre><span class="cmd-text">Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
 
-1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
-2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: curl -LsSf https://astral.sh/uv/install.sh | sh
+1. Sprawdź system: obsługiwane są macOS, Linux oraz Windows 10 (1903+) i 11. Na Windowsie katalog pamięci podręcznej musi być na lokalnym dysku NTFS.
+2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: na macOS i Linuxie curl -LsSf https://astral.sh/uv/install.sh | sh; na Windowsie w PowerShellu powershell -ExecutionPolicy ByPass -c &quot;irm https://astral.sh/uv/install.ps1 | iex&quot;. Po instalacji otwórz nowy terminal.
 3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
 4. Dodaj serwer do aplikacji, której używam:
    - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
-   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
+   - Claude Desktop: w pliku claude_desktop_config.json (macOS: ~/Library/Application Support/Claude/; Windows: %APPDATA%\Claude\) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku. Jeśli aplikacja nie znajduje uvx, użyj pełnej ścieżki; na Windowsie odczytaj ją przez (Get-Command uvx).Source i zapisz jako poprawny ciąg JSON.
    - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
    Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
 5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
 6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start.</span></pre><button type="button" class="copy" data-command="Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
 
-1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
-2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: curl -LsSf https://astral.sh/uv/install.sh | sh
+1. Sprawdź system: obsługiwane są macOS, Linux oraz Windows 10 (1903+) i 11. Na Windowsie katalog pamięci podręcznej musi być na lokalnym dysku NTFS.
+2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: na macOS i Linuxie curl -LsSf https://astral.sh/uv/install.sh | sh; na Windowsie w PowerShellu powershell -ExecutionPolicy ByPass -c &quot;irm https://astral.sh/uv/install.ps1 | iex&quot;. Po instalacji otwórz nowy terminal.
 3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
 4. Dodaj serwer do aplikacji, której używam:
    - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
-   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
+   - Claude Desktop: w pliku claude_desktop_config.json (macOS: ~/Library/Application Support/Claude/; Windows: %APPDATA%\Claude\) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku. Jeśli aplikacja nie znajduje uvx, użyj pełnej ścieżki; na Windowsie odczytaj ją przez (Get-Command uvx).Source i zapisz jako poprawny ciąg JSON.
    - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
    Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
 5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
@@ -206,7 +206,7 @@
 <section id="wymagania">
 <h2>Czego potrzebujesz</h2>
 <ul>
-<li><strong>Komputera z macOS albo Linuxem.</strong> Windows nie jest jeszcze obsługiwany.</li>
+<li><strong>Komputera z macOS, Linuxem albo Windowsem 10 (1903+) lub 11.</strong> Na Windowsie katalog pamięci podręcznej musi być na lokalnym dysku NTFS.</li>
 <li><strong>Asystenta AI, który uruchamia lokalne serwery MCP</strong>, np. aplikacji Claude Desktop albo Claude Code. Asystenci, którzy przyjmują tylko zdalne serwery MCP, na razie z niego nie skorzystają.</li>
 <li><strong>Do instalacji przez terminal: programu uv</strong> (opis niżej). Rozszerzenie dla Claude Desktop go nie wymaga.</li>
 </ul>
@@ -216,10 +216,12 @@
 <h2>Program uv</h2>
 <p>uv to darmowy program, który pobiera i uruchamia narzędzia napisane w Pythonie. Nie musisz znać Pythona ani niczego konfigurować: wystarczy zainstalować uv raz. Potem komenda <code>uvx deweloperuch-mcp</code> sama pobierze i uruchomi serwer.</p>
 <h3>Instalacja uv</h3>
-<p>Otwórz aplikację Terminal (na Macu znajdziesz ją przez Spotlight: <kbd>⌘</kbd>+<kbd>spacja</kbd>, wpisz „Terminal”), wklej tę komendę i naciśnij Enter:</p>
+<p>Na macOS i Linuxie otwórz Terminal (na Macu znajdziesz go przez Spotlight: <kbd>⌘</kbd>+<kbd>spacja</kbd>, wpisz „Terminal”), wklej tę komendę i naciśnij Enter:</p>
 <div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">curl -LsSf https://astral.sh/uv/install.sh | sh</span></code><button type="button" class="copy" data-command="curl -LsSf https://astral.sh/uv/install.sh | sh" data-umami-event="docs-copy-curl-lssf-https-astral-sh-uv-install-sh-sh" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
 <p>Jeśli masz Homebrew, możesz też użyć:</p>
 <div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">brew install uv</span></code><button type="button" class="copy" data-command="brew install uv" data-umami-event="docs-copy-brew-install-uv" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<p>Na Windowsie otwórz PowerShell i wklej:</p>
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>PowerShell</em></div><div class="cmd"><code><span class="cmd-text">powershell -ExecutionPolicy ByPass -c &quot;irm https://astral.sh/uv/install.ps1 | iex&quot;</span></code><button type="button" class="copy" data-command="powershell -ExecutionPolicy ByPass -c &quot;irm https://astral.sh/uv/install.ps1 | iex&quot;" data-umami-event="docs-copy-powershell-executionpolicy-bypass-c-irm-https-as" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
 <p>Po instalacji zamknij okno terminala i otwórz nowe. Sprawdź, czy wszystko działa:</p>
 <div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">uvx --version</span></code><button type="button" class="copy" data-command="uvx --version" data-umami-event="docs-copy-uvx-version" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
 <p>Komenda powinna wypisać numer wersji. Jeśli widzisz „command not found”, zajrzyj do <a href="#problemy">rozwiązywania problemów</a>.</p>
@@ -247,6 +249,7 @@
     }
   }
 }" data-umami-event="docs-copy-config-json" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
+<p>Jeśli aplikacja na Windowsie nie znajduje <code>uvx</code>, odczytaj pełną ścieżkę poleceniem <code>(Get-Command uvx).Source</code> w PowerShellu i wpisz ją w polu <code>command</code>. W JSON każdy ukośnik odwrotny zapisuj podwójnie, np. <code>C:\\<wbr>Users\\<wbr>Jan\\<wbr>.local\\<wbr>bin\\<wbr>uvx.exe</code>.</p>
 <h3>Agent AI w terminalu: skill</h3>
 <p>Skill to gotowa instrukcja dla agenta kodującego (np. Claude Code, Codex, Cursor): podpowiada mu, których komend <code>deweloperuch</code> użyć i jak czytać wyniki. Instalacja wymaga Node.js:</p>
 <div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Terminal</em></div><div class="cmd"><code><span class="prompt-sign" aria-hidden="true">$</span> <span class="cmd-text">npx skills add MBratkowski/deweloperuch-mcp</span></code><button type="button" class="copy" data-command="npx skills add MBratkowski/deweloperuch-mcp" data-umami-event="docs-copy-npx-skills-add-mbratkowski-deweloperuch-mcp" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button></div></div>
@@ -329,7 +332,7 @@
 <h3>Wyniki są obcięte</h3>
 <p>Serwis pozwala przejrzeć najwyżej 20 stron wyników. Zamiast prosić o kolejne strony, zawęź pytanie: miasto, dzielnica, metraż, budżet.</p>
 <h3>Windows</h3>
-<p>Nie jest jeszcze obsługiwany: współdzielony limit zapytań korzysta z mechanizmu blokad plików, którego Windows nie ma.</p>
+<p>Zainstaluj aktualne wydanie serwera lub rozszerzenia. Wymagany jest Windows 10 (1903+) albo 11 i lokalny dysk NTFS dla katalogu pamięci podręcznej (domyślnie <code>%USERPROFILE%\<wbr>.cache\<wbr>deweloperuch-mcp</code>). Po instalacji uv uruchom ponownie aplikację z asystentem; jeśli nadal nie znajduje <code>uvx</code>, podaj jego pełną ścieżkę w konfiguracji MCP, jak opisano <a href="#inne-aplikacje">wyżej</a>.</p>
 <h3>Nadal nie działa?</h3>
 <p><a href="https://github.com/MBratkowski/deweloperuch-mcp/issues">Zgłoś problem na GitHubie</a>. Opisz, jak instalowałeś serwer, w jakiej aplikacji i jaki komunikat widzisz.</p>
 </section>

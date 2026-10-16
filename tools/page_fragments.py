@@ -28,7 +28,7 @@ def structured_data() -> str:
     data = {
         "@context": "https://schema.org", "@type": "SoftwareApplication", "name": config.PACKAGE,
         "description": "Serwer MCP z danymi o rynku mieszkań w Polsce: ceny ofertowe deweloperów, ceny transakcyjne z RCN, statystyki GUS i NBP.",
-        "applicationCategory": "DeveloperApplication", "operatingSystem": "macOS, Linux",
+        "applicationCategory": "DeveloperApplication", "operatingSystem": "macOS, Linux, Windows 10 (1903+), Windows 11",
         "license": "https://opensource.org/licenses/MIT", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "PLN"},
         "url": site.base_url, "sameAs": [site.repository_url, site.pypi_url],
     }
