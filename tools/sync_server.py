@@ -28,7 +28,7 @@ from tools.release import PACKAGE, ROOT, SERVER_DIR, BuildError, Release, pinned
 
 PYPI_URL = f"https://pypi.org/pypi/{PACKAGE}/json"
 # Use the same public source as latest_version and revalidate just-published releases.
-UVX_OPTIONS = ("--no-config", "--default-index", "https://pypi.org/simple", "--refresh-package", PACKAGE)
+UVX_OPTIONS = ("--no-config", "--index", "https://pypi.org/simple", "--index-strategy", "first-index", "--refresh-package", PACKAGE)
 
 
 def latest_version() -> str:

@@ -14,7 +14,7 @@ from tools.release import BuildError
 
 ROOT = Path(__file__).resolve().parent.parent
 SERVER_FILES = ("version.json", "mcp_tools.json", "mcp_prompts.json", "cli_commands.json")
-PUBLIC_UVX = ["uvx", "--no-config", "--default-index", "https://pypi.org/simple", "--refresh-package", "deweloperuch-mcp"]
+PUBLIC_UVX = ["uvx", "--no-config", "--index", "https://pypi.org/simple", "--index-strategy", "first-index", "--refresh-package", "deweloperuch-mcp"]
 
 
 def committed(name: str) -> str:
@@ -148,7 +148,12 @@ def test_cli_export_timeout_has_a_useful_error(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.network
-def test_sync_of_the_pinned_release_reproduces_the_committed_files(tmp_path: Path) -> None:
+def test_sync_of_the_pinned_release_reproduces_the_committed_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A developer's unavailable mirror must not override the documented public source.
+    for name in ("UV_INDEX", "UV_EXTRA_INDEX_URL", "UV_DEFAULT_INDEX"):
+        monkeypatch.setenv(name, "http://127.0.0.1:1/simple")
+    monkeypatch.setenv("UV_INDEX_STRATEGY", "unsafe-best-match")
+    monkeypatch.setenv("UV_HTTP_RETRIES", "0")
     (tmp_path / "data/server").mkdir(parents=True)
     (tmp_path / "data/server/version.json").write_text(committed("version.json"), encoding="utf-8")
     assert in_thread(lambda: sync_server.main(["--pinned"], root=tmp_path)) == 0
