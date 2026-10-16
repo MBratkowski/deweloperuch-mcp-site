@@ -1,0 +1,51 @@
+name: Release freshness
+
+# Freshness is reported separately from Check and Pages. A newer release or a
+# failed latest-version lookup makes this monitor red without blocking pinned PRs.
+# Sync independently opens or updates the daily synchronization pull request.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-freshness
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  facts:
+    name: Facts against the latest release
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: astral-sh/setup-uv@v10.2.0
+      - run: uv sync --locked
+      # Package-qualified MCP/CLI metadata only; no data callback is invoked.
+      - name: Check latest release
+        id: freshness
+        run: uv run python -m tools.check_facts --latest 2>&1 | tee "$RUNNER_TEMP/freshness.log"
+      - name: Report freshness
+        if: always()
+        env:
+          OUTCOME: ${{ steps.freshness.outcome }}
+        run: |
+          {
+            echo "## Release freshness"
+            echo
+            echo "Monitor result: $OUTCOME. This monitor is separate from pinned publication validation."
+            echo
+            if [ -f "$RUNNER_TEMP/freshness.log" ]; then
+              echo '```text'
+              cat "$RUNNER_TEMP/freshness.log"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

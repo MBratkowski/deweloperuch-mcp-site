@@ -36,6 +36,10 @@ jobs:
           echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "Pinned: deweloperuch-mcp $pinned. Latest on PyPI: $latest." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$latest" != "$pinned" ]; then
+            echo "::warning::The pinned release is stale: $pinned; latest on PyPI: $latest. The synchronization pull request follows."
+            echo "The pinned release is stale; Sync will open or update the synchronization pull request below." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   sync:
     # A static name: Actions shows the name of a skipped job unevaluated.
