@@ -16,7 +16,8 @@
 .step-body { display: flex; flex-direction: column; gap: 10px; padding: 22px 24px 26px; }
 .step-num { margin: 0; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
 .step h3 { margin: 0; font-family: var(--font-heading); font-size: 22px; font-weight: 600; }
-.step p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
+/* Keep context defaults below component typography, regardless of source order. */
+:where(.step p) { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
 .step code { font-family: var(--font-mono); color: var(--text); }
 .caption { margin: 16px 0 0; color: var(--muted); font-size: 13px; }
 .mock-window { width: 100%; max-width: 400px; border-radius: 10px; overflow: hidden; background: var(--surface); border: 1px solid rgba(255, 255, 255, 0.10); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5); font-size: 12px; }
