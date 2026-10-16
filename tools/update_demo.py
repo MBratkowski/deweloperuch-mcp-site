@@ -80,8 +80,8 @@ ROW = (
 CHAT = """
 <p data-step="question" class="chat-question">{question}</p>
 <p data-step="chip" class="tool-chip">
-<span class="chip-dot status-dot" aria-hidden="true"></span>
-{tool} · <span class="chip-state">gotowe</span>
+<span data-demo-role="chip-dot" class="chip-dot status-dot" aria-hidden="true"></span>
+{tool} · <span data-demo-role="chip-state" class="chip-state">gotowe</span>
 </p>
 <p data-step="answer" class="chat-answer">{answer}</p>
 <div data-step="table" class="offers-table-frame">
@@ -104,7 +104,7 @@ CHAT = """
 </div>
 <p data-step="source" class="chat-source">Ceny ofertowe z deweloperuch.pl, stan na {date}. <a href="{list_url}" class="text-offers">Otwórz pełną listę</a></p>
 <div class="composer">
-<span class="composer-text" data-question="{question}">Pokaż historię ceny lokalu {first}…</span>
+<span data-demo-role="composer" class="composer-text" data-question="{question}">Pokaż historię ceny lokalu {first}…</span>
 <span aria-hidden="true" class="composer-send">
 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"></path><path d="M5 12l7-7 7 7"></path></svg>
 </span>

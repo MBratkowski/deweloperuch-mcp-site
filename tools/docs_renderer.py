@@ -5,11 +5,11 @@ from string import Template
 
 from tools import docs_content as content
 from tools.html_helpers import _lines, e, fill_blocks, prompts_phrase, prompts_sentence_start, term, tools_phrase
-from tools.release import PACKAGE, REPO, RELEASES, Release, validate_cli
+from tools.release import PACKAGE, REPO, RELEASES, Release, normalize_mcp_metadata, schema_types, validate_cli
 
 
 def schema_type(prop: dict) -> str:
-    types = [o.get("type") for o in prop.get("anyOf", [prop])]
+    types = schema_types(prop)
     names = {"string": "tekst", "integer": "liczba", "number": "liczba", "boolean": "tak/nie", "array": "lista"}
     return " albo ".join(names.get(t, t) for t in types if t and t != "null") or "—"
 
@@ -173,6 +173,7 @@ DANE_ROW = (
 
 def landing_blocks(release: Release) -> dict[str, str]:
     """The generated parts of index.html for ``release``, by marker name."""
+    release = normalize_mcp_metadata(release)
     content.check_release(release)
     groups = {group.key: group for group in content.GROUPS}
     tools, prompts = len(release.tools), len(release.prompts)
@@ -215,6 +216,7 @@ def cli_table(release: Release) -> str:
 
 def render_docs(release: Release) -> str:
     """Render the docs from the saved release; no subprocess or network access."""
+    release = normalize_mcp_metadata(release)
     content.check_release(release)
     template = Template((Path(__file__).with_name("templates") / "docs.html").read_text(encoding="utf-8"))
     return template.substitute(

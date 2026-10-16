@@ -968,11 +968,12 @@
 
 /* Demo animation states (js/site.js); without JS the HTML shows the final state. */
 #demo [data-step] { transition: opacity 0.35s ease, transform 0.35s ease; }
+#demo[data-demo="final"] [data-step] { transition: none; }
 #demo[data-demo="ready"] [data-step],
 #demo[data-demo="playing"] [data-step]:not([data-shown]) { opacity: 0; transform: translateY(4px); }
-#demo .chip-dot.is-busy { animation: pulse 0.9s ease-in-out infinite; }
-.composer-text.is-typing { color: var(--text); }
-#demo .composer-text.is-typing::after { content: "▍"; color: var(--accent); animation: caret 1s steps(1) infinite; }
+#demo[data-demo="playing"] [data-demo-role="chip-dot"].is-busy { animation: pulse 0.9s ease-in-out infinite; }
+#demo[data-demo="playing"] [data-demo-role="composer"].is-typing { color: var(--text); }
+#demo[data-demo="playing"] [data-demo-role="composer"].is-typing::after { content: "▍"; color: var(--accent); animation: caret 1s steps(1) infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 @keyframes caret { 50% { opacity: 0; } }
 
