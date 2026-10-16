@@ -125,6 +125,13 @@ a:hover { color: var(--accent-text); }
   .nav-shell[data-nav-ready]:not([data-nav-open]) .nav-github { display: none; }
 }
 
+/* Reserve the compact header before deferred JavaScript arrives. Disabled scripting
+   or a failed script request keeps the expanded HTML links without a menu control. */
+@media (max-width: 760px) and (scripting: enabled) {
+  :root:not([data-nav-failed]) .nav-shell:not([data-nav-open]) .nav-links,
+  :root:not([data-nav-failed]) .nav-shell:not([data-nav-open]) .nav-github { display: none; }
+}
+
 /* Shared theme vocabulary: metadata names a family; CSS owns its colours. */
 .theme-offers { --theme: var(--offers); --theme-text: var(--offers-text); }
 .theme-rcn { --theme: var(--rcn); --theme-text: var(--rcn-text); }
