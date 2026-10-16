@@ -54,7 +54,7 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
       - run: uv sync --locked
 
-      # `uvx deweloperuch-mcp==$LATEST`; listing tools sends nothing to deweloperuch.pl.
+      # List MCP metadata and inspect the pinned CLI; neither invokes data callbacks.
       - name: Write data/server/
         run: uv run python -m tools.sync_server "$LATEST"
 
@@ -79,13 +79,13 @@ jobs:
           {
             echo "deweloperuch-mcp $LATEST is the latest release on PyPI; the pages show $PINNED."
             echo
-            echo "\`tools/sync_server.py\` wrote \`data/server/\` from $LATEST (it only lists the tools and prompts; nothing is sent to deweloperuch.pl) for \`tools/build_docs.py\`, which builds \`docs/index.html\` and the generated blocks of \`index.html\` from it."
+            echo "\`tools/sync_server.py\` wrote the MCP and CLI metadata in \`data/server/\` from $LATEST (listing and introspection only; nothing is sent to deweloperuch.pl) for \`tools/build_docs.py\`, which builds \`docs/index.html\` and the generated blocks of \`index.html\` from it."
             echo
             echo "- Build: $BUILD"
             echo "- Tests (\`uv run pytest\`): $TESTS"
             echo
             if [ "$BUILD" != success ]; then
-              echo "The build stopped: the release does not fit the hand-written parts of \`tools/build_docs.py\` (the tool groups with their Dane lines, the CLI table). Edit them as the log says, run the build and push to this branch."
+              echo "The build stopped: check the log for invalid release metadata or tool groups in \`tools/docs_content.py\` that need updating. The CLI table is generated from \`data/server/cli_commands.json\`. Fix the reported input, run the build and push to this branch."
               echo
               echo '<details><summary>Build log</summary>'
               echo

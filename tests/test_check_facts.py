@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from tools import build_docs, check_facts
+from tools import check_facts, docs_renderer
+from tools.release import load_release
 from tools.check_facts import (
     Release,
     check_all,
@@ -61,7 +62,7 @@ def prompts_json() -> dict:
 @pytest.fixture
 def release() -> Release:
     """The saved listing (data/server/*.json) as the release the pages show."""
-    return build_docs.load_release()
+    return load_release()
 
 
 def with_tools(release: Release, *, add: tuple[str, ...] = (), remove: tuple[str, ...] = ()) -> Release:
@@ -185,7 +186,7 @@ def test_docs_build_detects_stale_output(index_html: str, release: Release) -> N
     docs_html = read("docs/index.html")
     assert check_docs_build(docs_html, index_html, release) == []
     assert check_docs_build(docs_html.replace("13 narzędzi", "12 narzędzi", 1), index_html, release)
-    stale = index_html.replace(build_docs.AGENT_BLOCK, build_docs.AGENT_BLOCK.replace("Na skróty", "Skrót"))
+    stale = index_html.replace(docs_renderer.AGENT_BLOCK, docs_renderer.AGENT_BLOCK.replace("Na skróty", "Skrót"))
     assert stale != index_html
     assert any("generated blocks" in m for m in check_docs_build(docs_html, stale, release))
     hand_edited = index_html.replace(">v0.1.2<", ">v0.1.3<")
@@ -205,6 +206,24 @@ def test_compare_snapshots_reports_changed_instructions(tools_json: dict, prompt
 
 def test_demo_matches_its_data(index_html: str) -> None:
     assert check_demo(index_html, json.loads(read("data/demo.json"))) == []
+
+
+def test_check_all_detects_changed_cli_metadata(release: Release) -> None:
+    changed = dataclasses.replace(release, cli_commands=tuple(
+        {**command, "description": "Nowy opis komendy."} if command["name"] == "offers search" else command
+        for command in release.cli_commands
+    ))
+    messages = check_all(changed)
+    assert any("cli_commands.json" in message and "offers search" in message and "description" in message for message in messages)
+
+
+def test_check_all_detects_added_and_removed_cli_commands(release: Release) -> None:
+    changed = dataclasses.replace(release, cli_commands=tuple(
+        command for command in release.cli_commands if command["name"] != "skill show"
+    ) + ({"name": "reports export", "usage": "deweloperuch reports export", "description": "Eksportuj dane."},))
+    messages = check_all(changed)
+    assert any("cli_commands.json" in message and "reports export" in message and "misses" in message for message in messages)
+    assert any("cli_commands.json" in message and "skill show" in message and "does not have" in message for message in messages)
 
 
 @pytest.mark.parametrize(

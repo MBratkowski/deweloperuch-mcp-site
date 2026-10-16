@@ -33,7 +33,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
       - run: uv sync --locked
-      # `uvx deweloperuch-mcp==<data/server/version.json>`; listing tools sends nothing to deweloperuch.pl.
+      # List MCP metadata and inspect the pinned CLI; neither invokes data callbacks.
       - run: uv run python -m tools.sync_server --pinned
       - run: uv run python -m tools.build_docs
       # Renders the committed data/demo.json; it never captures (tools/capture_demo.py runs only by hand).
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
       - run: uv sync --locked
-      # PyPI and `uvx deweloperuch-mcp==<latest>`; listing tools sends nothing to deweloperuch.pl.
+      # PyPI and package-qualified MCP/CLI metadata; no data tool or command is invoked.
       # A release newer than data/server/version.json fails here until its sync is merged.
       - run: uv run python -m tools.check_facts
 

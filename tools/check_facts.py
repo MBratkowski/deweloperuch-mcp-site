@@ -4,6 +4,7 @@
 
 Reads the latest version from PyPI, starts that release over stdio
 (``uvx deweloperuch-mcp==<version>``) and reads ``tools/list`` and ``prompts/list``.
+CLI metadata is inspected in the same pinned environment without invoking callbacks.
 Listing calls no tool, so nothing reaches deweloperuch.pl: the server's session only
 constructs its HTTP client (checked in the server code of 0.1.1). Then it compares:
 
@@ -28,25 +29,22 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.request import Request, urlopen
 
-from tools import build_docs
-from tools.build_docs import Release
+from tools import docs_content, docs_renderer
+from tools.release import ROOT, PACKAGE, BuildError, Release, load_release
+from tools.sync_server import read_release
 from tools.update_demo import format_area, format_change, format_date, format_pln, group_thousands
 
-ROOT = Path(__file__).resolve().parent.parent
-PACKAGE = build_docs.PACKAGE
-PYPI_URL = f"https://pypi.org/pypi/{PACKAGE}/json"
 
 
 def groups() -> dict[str, frozenset[str]]:
-    """The tool groups of tools/build_docs.py by key."""
-    return {group.key: frozenset(group.tools) for group in build_docs.GROUPS}
+    """The tool groups of tools/docs_content.py by key."""
+    return {group.key: frozenset(group.tools) for group in docs_content.GROUPS}
 
 
 def dane_rows() -> tuple[tuple[str, ...], ...]:
     """The groups of each list of the Dane section, in page order."""
-    return tuple(keys for _, keys in build_docs.DANE_LISTS)
+    return tuple(keys for _, keys in docs_content.DANE_LISTS)
 
 
 # What the docs page shows of a tool or a prompt; other listing fields may come and go
@@ -251,7 +249,7 @@ def compare(page: PageFacts, release: Release) -> list[str]:
 
     ungrouped = tools - frozenset().union(*tool_groups.values())
     if ungrouped:
-        problems.append(f"{version} has tools in no group of tools/build_docs.py GROUPS: {_names(ungrouped)}")
+        problems.append(f"{version} has tools in no group of tools/docs_content.py GROUPS: {_names(ungrouped)}")
     for group, members in tool_groups.items():
         expected = len(members & tools)
         if group not in page.group_counts:
@@ -291,8 +289,8 @@ def _subset(entry: dict, fields: tuple[str, ...]) -> dict:
     return {field: entry[field] for field in fields if field in entry}
 
 
-def compare_listing(kind: str, saved: list[dict], released: tuple[dict, ...], fields: tuple[str, ...], version: str) -> list[str]:
-    where = f"data/server/mcp_{kind}s.json"
+def compare_listing(kind: str, saved: list[dict], released: tuple[dict, ...], fields: tuple[str, ...], version: str, *, where: str | None = None) -> list[str]:
+    where = where or f"data/server/mcp_{kind}s.json"
     saved_by_name = {entry["name"]: _subset(entry, fields) for entry in saved}
     released_by_name = {entry["name"]: _subset(entry, fields) for entry in released}
     problems = []
@@ -336,8 +334,8 @@ def compare_pinned(pinned: str, release: Release) -> list[str]:
 def check_docs_build(docs_html: str, index_html: str, saved: Release) -> list[str]:
     """Both pages against what tools/build_docs.py builds from ``saved`` (data/server/)."""
     try:
-        docs, index = build_docs.render_docs(saved), build_docs.render_landing(index_html, saved)
-    except build_docs.BuildError as error:
+        docs, index = docs_renderer.render_docs(saved), docs_renderer.render_landing(index_html, saved)
+    except BuildError as error:
         return [f"tools/build_docs.py stops: {line}" for line in str(error).splitlines()]
     problems = []
     if docs_html != docs:
@@ -413,58 +411,21 @@ def check_demo(index_html: str, demo: dict) -> list[str]:
     return problems
 
 
-# The release.
-
-
-def latest_version() -> str:
-    request = Request(PYPI_URL, headers={"Accept": "application/json"})
-    with urlopen(request, timeout=30) as response:
-        return json.load(response)["info"]["version"]
-
-
-async def read_release(version: str | None = None) -> Release:
-    """``version`` (default: the latest on PyPI) as ``tools/list`` and ``prompts/list`` give it."""
-    from mcp import Client, StdioServerParameters
-
-    version = version or latest_version()
-    server = StdioServerParameters(command="uvx", args=[f"{PACKAGE}=={version}"])
-    async with Client(server) as client:
-        tools, prompts, cursor = [], [], None
-        while True:
-            listed = await client.list_tools(cursor=cursor)
-            tools += listed.tools
-            if not (cursor := listed.next_cursor):
-                break
-        while True:
-            listed = await client.list_prompts(cursor=cursor)
-            prompts += listed.prompts
-            if not (cursor := listed.next_cursor):
-                break
-        info, instructions = client.server_info, client.instructions
-    served = info.version if info else None
-    if served != version:
-        raise RuntimeError(f"uvx {PACKAGE}=={version} reports version {served}")
-    dump = {"mode": "json", "by_alias": True, "exclude_none": True}
-    return Release(
-        version=version,
-        tools=tuple(tool.model_dump(**dump) for tool in tools),
-        prompts=tuple(prompt.model_dump(**dump) for prompt in prompts),
-        name=info.name if info else "",
-        instructions=instructions or "",
-    )
-
-
 def check_all(release: Release, root: Path = ROOT) -> list[str]:
     def read(path: str) -> str:
         return (root / path).read_text(encoding="utf-8")
 
     index_html, docs_html = read("index.html"), read("docs/index.html")
-    saved = build_docs.load_release(root)
+    saved = load_release(root)
     problems = compare_pinned(saved.version, release)
     problems += compare(read_page_facts(index_html), release)
     problems += compare_written("index.html", read_written_facts(index_html), release)
     problems += compare_written("docs/index.html", read_written_facts(docs_html), release)
     problems += compare_snapshots(json.loads(read("data/server/mcp_tools.json")), json.loads(read("data/server/mcp_prompts.json")), release)
+    cli_problems = compare_listing("command", list(saved.cli_commands), release.cli_commands, ("usage", "description"), release.version, where="data/server/cli_commands.json")
+    problems += cli_problems
+    if cli_problems:
+        problems.append(f"  {SYNC_COMMANDS.format(version=release.version)}")
     problems += check_docs_build(docs_html, index_html, saved)
     problems += check_demo(index_html, json.loads(read("data/demo.json")))
     return problems
