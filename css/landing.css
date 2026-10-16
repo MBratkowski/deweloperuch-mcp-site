@@ -37,7 +37,8 @@
 
 .topbar--landing {
   position: relative;
-  padding: 20px 24px 0;
+  /* Keep the shared container gutters and navigation top spacing. */
+  padding-bottom: 0;
   width: 100%;
 }
 
