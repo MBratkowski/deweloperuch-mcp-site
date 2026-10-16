@@ -18,7 +18,8 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from tools.build_docs import NUMBER_WORDS, ROOT, BuildError, _lines, fill_blocks, plural
+from tools.html_helpers import NUMBER_WORDS, _lines, fill_blocks, plural
+from tools.release import ROOT, BuildError
 
 DEMO_PATH = "data/demo.json"
 # The window's copy (the answer, the "Obniżka" column) is written for this order; tools/capture_demo.py uses it.

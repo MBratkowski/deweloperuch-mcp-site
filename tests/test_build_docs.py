@@ -1,11 +1,15 @@
 import dataclasses
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 
-from tools import build_docs
-from tools.build_docs import BuildError, Group, Release, fill_blocks, load_release, render_docs, render_landing
+from tools import build_docs, docs_content, html_helpers
+from tools.release import BuildError, Release, load_release
+from tools.docs_content import Group
+from tools.html_helpers import fill_blocks
+from tools.docs_renderer import render_docs, render_landing
 from tools.check_facts import check_all, parse, read_page_facts, read_written_facts, squash
 from tools.sync_server import write
 
@@ -51,9 +55,9 @@ def site(tmp_path: Path) -> Path:
 @pytest.fixture
 def parcels_group(monkeypatch: pytest.MonkeyPatch) -> None:
     """GROUPS with NEW_TOOL in a row of the offers group, as the hand edit for it would add."""
-    offers, *rest = build_docs.GROUPS
+    offers, *rest = docs_content.GROUPS
     extended = dataclasses.replace(offers, rows=offers.rows + ((("search_parcels",), "Działki budowlane w mieście."),))
-    monkeypatch.setattr(build_docs, "GROUPS", (extended, *rest))
+    monkeypatch.setattr(docs_content, "GROUPS", (extended, *rest))
 
 
 def test_committed_pages_are_the_build_output(saved: Release) -> None:
@@ -117,7 +121,7 @@ def test_a_new_tool_stops_the_build_with_its_name(site: Path, saved: Release, ca
     write(release, site)
     assert build_docs.main(site) == 1
     error = capsys.readouterr().err
-    assert "deweloperuch-mcp 0.2.0 has tools that no group in tools/build_docs.py GROUPS holds: search_parcels" in error
+    assert "deweloperuch-mcp 0.2.0 has tools that no group in tools/docs_content.py GROUPS holds: search_parcels" in error
     assert read(site, "index.html") == read(ROOT, "index.html")
     assert read(site, "docs/index.html") == read(ROOT, "docs/index.html")
 
@@ -129,14 +133,14 @@ def test_a_removed_tool_stops_the_build_with_its_name(saved: Release) -> None:
 
 
 def test_a_missing_demo_prompt_stops_the_build(saved: Release) -> None:
-    release = dataclasses.replace(saved, prompts=tuple(p for p in saved.prompts if p["name"] != build_docs.DEMO_PROMPT))
+    release = dataclasses.replace(saved, prompts=tuple(p for p in saved.prompts if p["name"] != docs_content.DEMO_PROMPT))
     with pytest.raises(BuildError, match="DEMO_PROMPT"):
         render_landing(read(ROOT, "index.html"), release)
 
 
 def test_a_tool_in_two_groups_stops_the_build(saved: Release, monkeypatch: pytest.MonkeyPatch) -> None:
     extra = Group("extra", "Extra", "Extra", "#000000", "#000000", "", ((("get_offer",), ""),))
-    monkeypatch.setattr(build_docs, "GROUPS", build_docs.GROUPS + (extra,))
+    monkeypatch.setattr(docs_content, "GROUPS", docs_content.GROUPS + (extra,))
     with pytest.raises(BuildError, match="more than once: get_offer"):
         render_docs(saved)
 
@@ -166,11 +170,68 @@ def test_fill_blocks_fills_every_occurrence_and_only_named_blocks() -> None:
     ],
 )
 def test_polish_counts(count: int, tools: str, prompts: str, sentence: str) -> None:
-    assert build_docs.tools_phrase(count) == tools
-    assert build_docs.prompts_phrase(count) == prompts
-    assert build_docs.prompts_sentence_start(count) == sentence
+    assert html_helpers.tools_phrase(count) == tools
+    assert html_helpers.prompts_phrase(count) == prompts
+    assert html_helpers.prompts_sentence_start(count) == sentence
 
 
 def test_marked_counts() -> None:
-    assert build_docs.tools_phrase(13, fact=True) == '<span data-fact="tool-count">13</span> narzędzi'
-    assert build_docs.prompts_phrase(4, fact=True) == '<span data-fact="prompt-count">4</span> gotowe prompty'
+    assert html_helpers.tools_phrase(13, fact=True) == '<span data-fact="tool-count">13</span> narzędzi'
+    assert html_helpers.prompts_phrase(4, fact=True) == '<span data-fact="prompt-count">4</span> gotowe prompty'
+
+
+def cli_snapshot(site: Path, commands: list[dict], version: str = "0.1.2") -> None:
+    (site / "data/server/cli_commands.json").write_text(
+        json.dumps({"version": version, "commands": commands}), encoding="utf-8"
+    )
+
+
+def test_cli_table_comes_from_the_pinned_snapshot(site: Path) -> None:
+    cli_snapshot(site, [{
+        "name": "reports export",
+        "usage": "deweloperuch reports export [OPTIONS] TARGET",
+        "description": "Eksportuj <dane> & statystyki.",
+    }])
+    build_docs.build(site)
+    docs = parse(read(site, "docs/index.html"))
+    [section] = docs.find_all("section", id="cli")
+    text = section.text()
+    assert "deweloperuch reports export [OPTIONS] TARGET" in text
+    assert "Eksportuj <dane> & statystyki." in text
+    assert "locations search" not in text
+    assert "&lt;dane&gt; &amp; statystyki." in read(site, "docs/index.html")
+
+
+def test_cli_command_order_does_not_depend_on_snapshot_order(site: Path) -> None:
+    commands = [
+        {"name": "reports export", "usage": "deweloperuch reports export", "description": "Eksportuj dane."},
+        {"name": "buildings get", "usage": "deweloperuch buildings get SLUG", "description": "Pokaż budynek."},
+    ]
+    cli_snapshot(site, commands)
+    build_docs.build(site)
+    first = read(site, "docs/index.html")
+    cli_snapshot(site, list(reversed(commands)))
+    build_docs.build(site)
+    assert read(site, "docs/index.html") == first
+    assert first.index("deweloperuch buildings get SLUG") < first.index("deweloperuch reports export")
+
+
+@pytest.mark.parametrize("problem", ["missing", "version", "duplicate", "empty", "malformed"])
+def test_bad_cli_snapshot_stops_before_changing_pages(site: Path, problem: str, capsys: pytest.CaptureFixture[str]) -> None:
+    command = {"name": "reports export", "usage": "deweloperuch reports export", "description": "Eksportuj dane."}
+    cli_snapshot(site, [command])
+    path = site / "data/server/cli_commands.json"
+    if problem == "missing":
+        path.unlink()
+    elif problem == "version":
+        cli_snapshot(site, [command], version="0.0.1")
+    elif problem == "duplicate":
+        cli_snapshot(site, [command, command])
+    elif problem == "empty":
+        cli_snapshot(site, [])
+    else:
+        path.write_text("{", encoding="utf-8")
+    before = {name: read(site, name) for name in ("index.html", "docs/index.html")}
+    assert build_docs.main(site) == 1
+    assert "cli_commands.json" in capsys.readouterr().err
+    assert {name: read(site, name) for name in before} == before

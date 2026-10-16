@@ -25,7 +25,7 @@ from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 
-from tools.build_docs import PACKAGE, ROOT, pinned_version
+from tools.release import PACKAGE, ROOT, pinned_version
 from tools.update_demo import SORT
 
 DEMO_PATH = "data/demo.json"

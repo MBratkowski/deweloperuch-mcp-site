@@ -1,0 +1,95 @@
+{
+  "commands": [
+    {
+      "description": "Pokaż budynek z lokalami i ich transakcjami (ceny transakcyjne, nie ofertowe).",
+      "name": "buildings get",
+      "usage": "deweloperuch buildings get [OPTIONS] {SLUG}"
+    },
+    {
+      "description": "Pokaż dewelopera z jego inwestycjami i miastami.",
+      "name": "developers get",
+      "usage": "deweloperuch developers get [OPTIONS] {SLUG}"
+    },
+    {
+      "description": "Znajdź deweloperów po nazwie; podaje slug dewelopera do `developers get`.",
+      "name": "developers search",
+      "usage": "deweloperuch developers search [OPTIONS] {NAME}"
+    },
+    {
+      "description": "Pokaż inwestycję z deweloperem i ofertami.",
+      "name": "investments get",
+      "usage": "deweloperuch investments get [OPTIONS] {SLUG}"
+    },
+    {
+      "description": "Szukaj inwestycji w mieście albo po nazwie (w całej Polsce).",
+      "name": "investments search",
+      "usage": "deweloperuch investments search [OPTIONS] [CITY]"
+    },
+    {
+      "description": "Znajdź miasta, dzielnice i ulice; podaje slug miasta do `offers search`.",
+      "name": "locations search",
+      "usage": "deweloperuch locations search [OPTIONS] {QUERY}"
+    },
+    {
+      "description": "Pokaż ofertę z historią ceny.",
+      "name": "offers get",
+      "usage": "deweloperuch offers get [OPTIONS] {OFFER_ID}"
+    },
+    {
+      "description": "Szukaj ofert mieszkań w mieście; najwyżej 20 stron wyników.",
+      "name": "offers search",
+      "usage": "deweloperuch offers search [OPTIONS] {CITY}"
+    },
+    {
+      "description": "Zainstaluj skill deweloperuch-cli w katalogu skilli agenta (bez Node.js).",
+      "name": "skill install",
+      "usage": "deweloperuch skill install [OPTIONS]"
+    },
+    {
+      "description": "Pokaż katalog skilla w zainstalowanym pakiecie.",
+      "name": "skill path",
+      "usage": "deweloperuch skill path [OPTIONS]"
+    },
+    {
+      "description": "Wypisz SKILL.md: instrukcje skilla dla agenta.",
+      "name": "skill show",
+      "usage": "deweloperuch skill show [OPTIONS]"
+    },
+    {
+      "description": "Pokaż ranking miejscowości albo powiatów według transakcji RCN.",
+      "name": "stats cities",
+      "usage": "deweloperuch stats cities [OPTIONS]"
+    },
+    {
+      "description": "Pokaż statystyki GUS i NBP lokalizacji jako tabelę okresów i wartości.",
+      "name": "stats government",
+      "usage": "deweloperuch stats government [OPTIONS] {LOCATION} {DATASET}"
+    },
+    {
+      "description": "Pokaż statystyki aktywnych ofert miasta: ceny, metraże, największych deweloperów.",
+      "name": "stats market",
+      "usage": "deweloperuch stats market [OPTIONS] {CITY}"
+    },
+    {
+      "description": "Pokaż ceny transakcyjne mieszkań (RCN) w mieście, miesiąc po miesiącu albo kwartałami.",
+      "name": "stats transactions",
+      "usage": "deweloperuch stats transactions [OPTIONS] {CITY}"
+    },
+    {
+      "description": "Zdejmij blokadę STOP. Tylko człowiek, po sprawdzeniu przyczyny (`stop status`).",
+      "name": "stop clear",
+      "usage": "deweloperuch stop clear [OPTIONS]"
+    },
+    {
+      "description": "Pokaż blokadę STOP; kod 3, gdy wstrzymuje zapytania (także wygasająca), 0, gdy nie.",
+      "name": "stop status",
+      "usage": "deweloperuch stop status [OPTIONS]"
+    },
+    {
+      "description": "Oszacuj wartość mieszkania z transakcji w okolicy punktu (przybliżenie, nie operat).",
+      "name": "valuation estimate",
+      "usage": "deweloperuch valuation estimate [OPTIONS]"
+    }
+  ],
+  "version": "0.1.2"
+}

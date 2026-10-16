@@ -1,4 +1,5 @@
 import json
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -7,11 +8,12 @@ import pytest
 from mcp.types import Implementation, ListPromptsResult, ListToolsResult, Prompt, Tool
 
 from tools import check_facts, sync_server
-from tools.build_docs import load_release
-from tools.sync_server import dump, server_files, stable
+from tools.release import load_release
+from tools.sync_server import dump, server_files, stable, write
+from tools.release import BuildError
 
 ROOT = Path(__file__).resolve().parent.parent
-SERVER_FILES = ("version.json", "mcp_tools.json", "mcp_prompts.json")
+SERVER_FILES = ("version.json", "mcp_tools.json", "mcp_prompts.json", "cli_commands.json")
 
 
 def committed(name: str) -> str:
@@ -64,6 +66,7 @@ class FakeClient:
 @pytest.fixture
 def fake_client(monkeypatch: pytest.MonkeyPatch) -> type[FakeClient]:
     monkeypatch.setattr(mcp, "Client", FakeClient)
+    monkeypatch.setattr(sync_server, "read_cli", lambda version: load_release().cli_commands)
     monkeypatch.setattr(FakeClient, "started", [])
     monkeypatch.setattr(FakeClient, "calls", [])
     return FakeClient
@@ -111,7 +114,7 @@ def test_sync_pinned_reads_version_json(tmp_path: Path, fake_client: type[FakeCl
 
 
 def test_sync_defaults_to_the_latest_release(tmp_path: Path, fake_client: type[FakeClient], monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(check_facts, "latest_version", lambda: fake_client.version)
+    monkeypatch.setattr(sync_server, "latest_version", lambda: fake_client.version)
     assert in_thread(lambda: sync_server.main([], root=tmp_path)) == 0
     assert fake_client.started == [["uvx", f"deweloperuch-mcp=={fake_client.version}"]]
 
@@ -120,6 +123,27 @@ def test_sync_refuses_a_server_of_another_version(tmp_path: Path, fake_client: t
     with pytest.raises(RuntimeError, match="reports version"):
         in_thread(lambda: sync_server.main(["0.0.1"], root=tmp_path))
     assert not (tmp_path / "data/server").exists()
+
+
+def test_cli_export_failure_leaves_snapshots_untouched(tmp_path: Path, fake_client: type[FakeClient], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    def failed_export(version: str) -> tuple[dict, ...]:
+        raise BuildError("cli_commands.json: metadata export failed")
+
+    write(load_release(), tmp_path)
+    before = {name: (tmp_path / "data/server" / name).read_bytes() for name in SERVER_FILES}
+    monkeypatch.setattr(sync_server, "read_cli", failed_export)
+    assert in_thread(lambda: sync_server.main([fake_client.version], root=tmp_path)) == 1
+    assert "cli_commands.json" in capsys.readouterr().err
+    assert {name: (tmp_path / "data/server" / name).read_bytes() for name in SERVER_FILES} == before
+
+
+def test_cli_export_timeout_has_a_useful_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def timeout(command: list[str], **kwargs) -> subprocess.CompletedProcess:
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(sync_server.subprocess, "run", timeout)
+    with pytest.raises(BuildError, match="cli_commands.json.*timed out"):
+        sync_server.read_cli("0.1.2")
 
 
 @pytest.mark.network
