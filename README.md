@@ -65,11 +65,11 @@ uv run pytest
 - `uv run python -m tools.check_facts`: the pages and saved MCP/CLI metadata against the latest deweloperuch-mcp on PyPI. It lists the MCP tools and prompts and inspects the CLI without invoking callbacks, which sends nothing to deweloperuch.pl. A release other than the pinned one fails it first, with the sync commands. `LANDING_NETWORK=1 uv run pytest` runs the same check as a test and also syncs the pinned release into a temporary folder to compare it with `data/server/`.
 - `uv run python -m tools.render_images`: renders `favicon.png`, `apple-touch-icon.png` and `assets/og.png`.
 
-CI (`.github/workflows/check.yml`, on every push, pull request and weekly) runs the tests, a guard that syncs the pinned release, builds the pages, renders the demo and fails on any difference from the commit, the fact check against the latest release, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). Lighthouse measures each commit's own files served locally; `pages.yml` measures the live site after every deployment.
+CI (`.github/workflows/check.yml`, on every push, pull request and weekly) calls the reusable `validate.yml` workflow for the tests, a guard that syncs the pinned release, builds the pages, renders the demo and fails on any difference from the commit, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). Check also runs the fact check against the latest release. Local Lighthouse measures each commit's own files; `pages.yml` measures the live site after every deployment.
 
 ## Publishing
 
-`.github/workflows/pages.yml` deploys on every push to `main`. It publishes only the site files (`index.html`, `docs/index.html`, `css/`, `js/`, `assets/`, the icons), not the specs, tools or tests, and then runs Lighthouse against the live pages.
+`.github/workflows/pages.yml` runs on every push to `main` and can be started manually. Both paths first call the same `validate.yml` workflow as Check, from the same commit. Every validation checkout and the deployment checkout use the event's immutable `github.sha`; deployment depends on successful validation in that run, so a failed, skipped or cancelled required check blocks publishing and success for another commit cannot authorize it. The latest-release fact check stays in Check and is not a deployment gate. Pages publishes only the site files (`index.html`, `docs/index.html`, `css/`, `js/`, `assets/`, the icons), then runs a separate Lighthouse job against the live pages.
 
 ## Licence
 
