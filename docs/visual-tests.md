@@ -20,6 +20,8 @@ The Pillow comparator accepts at most 8 levels of difference per RGB channel for
 
 ## Inspect a failure
 
+For a failure in **Tests (pytest, Playwright)**, download `main-chromium-results` from the Check or Pages run. Each failed browser test retains Playwright trace ZIPs and `test-failed-*.png` screenshots under its test directory. Open a trace with `uv run playwright show-trace <trace-file.zip>` (a test with multiple contexts has numbered trace files). CI retains this artifact for 14 days and uploads it only on failure; passing tests discard their diagnostics. A failure before the browser creates diagnostics may have no artifact, so check the job log as well.
+
 Open the failing **Visual baselines (pinned Linux Chromium)** job and download its `visual-results` artifact. For each comparison, `visual/<name>/` contains:
 
 - `actual.png`: this commit's rendered page or control state.
