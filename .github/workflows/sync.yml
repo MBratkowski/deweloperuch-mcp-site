@@ -120,6 +120,10 @@ jobs:
             data/server
             index.html
             docs/index.html
+            favicon.png
+            apple-touch-icon.png
+            assets/og.png
+            assets/images.json
           commit-message: Update the pages to deweloperuch-mcp ${{ env.LATEST }}
           title: Update the pages to deweloperuch-mcp ${{ env.LATEST }}
           body-path: ${{ runner.temp }}/body.md
