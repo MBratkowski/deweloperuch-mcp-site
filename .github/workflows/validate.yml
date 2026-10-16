@@ -19,7 +19,14 @@ jobs:
       - uses: astral-sh/setup-uv@v10.2.0
       - run: uv sync --locked
       - run: uv run playwright install --with-deps chromium
-      - run: uv run pytest
+      - run: uv run pytest --browser chromium --tracing retain-on-failure --screenshot only-on-failure
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: main-chromium-results
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   visual:
     name: Visual baselines (pinned Linux Chromium)
