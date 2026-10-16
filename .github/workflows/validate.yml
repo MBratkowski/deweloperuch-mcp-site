@@ -86,6 +86,8 @@ jobs:
       - run: uv run python -m tools.build_docs
       # Renders the committed data/demo.json; it never captures (tools/capture_demo.py runs only by hand).
       - run: uv run python -m tools.update_demo
+      # Portable source/output digests; do not compare macOS and Linux renderer pixels.
+      - run: uv run python -m tools.render_images --check
       - name: Nothing changed
         run: |
           git diff --exit-code

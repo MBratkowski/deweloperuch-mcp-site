@@ -73,6 +73,7 @@ jobs:
         continue-on-error: true
         run: |
           uv run playwright install --with-deps chromium
+          uv run python -m tools.render_images
           uv run pytest 2>&1 | tee "$RUNNER_TEMP/pytest.log"
 
       - name: Write the pull request body
