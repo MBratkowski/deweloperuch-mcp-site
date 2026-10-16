@@ -245,3 +245,102 @@ def test_bad_cli_snapshot_stops_before_changing_pages(site: Path, problem: str, 
     assert build_docs.main(site) == 1
     assert "cli_commands.json" in capsys.readouterr().err
     assert {name: read(site, name) for name in before} == before
+
+
+@pytest.mark.parametrize("missing", [True, False], ids=["omitted", "null"])
+def test_optional_mcp_display_metadata_is_normalized(site: Path, saved: Release, missing: bool) -> None:
+    tools = json.loads(json.dumps(saved.tools))
+    prompts = json.loads(json.dumps(saved.prompts))
+    tool, prompt = tools[0], prompts[0]
+    parameter = next(iter(tool["inputSchema"]["properties"].values()))
+    fields = [(tool, "title"), (tool, "description"), (parameter, "description"),
+              (prompt, "title"), (prompt, "description"), (prompt["arguments"][0], "description")]
+    for record, key in fields:
+        if missing:
+            record.pop(key, None)
+        else:
+            record[key] = None
+    release = dataclasses.replace(saved, tools=tuple(tools), prompts=tuple(prompts))
+    docs = render_docs(release)
+    assert f'<h4>{tool["name"]}</h4>' in docs
+    assert f'<h3>{prompt["name"]}</h3>' in docs
+    assert "None" not in docs
+    assert f'data-prompt="{prompt["name"]}"' in render_landing(read(ROOT, "index.html"), release)
+    write(release, site)
+    assert load_release(site) == release
+    assert build_docs.main(site) == 0
+    assert read(site, "docs/index.html") == docs
+
+
+@pytest.mark.parametrize("missing", [True, False], ids=["omitted", "null"])
+def test_optional_prompt_arguments_render_an_empty_table(saved: Release, missing: bool) -> None:
+    prompt = dict(saved.prompts[0])
+    if missing:
+        prompt.pop("arguments")
+    else:
+        prompt["arguments"] = None
+    release = dataclasses.replace(saved, prompts=(prompt, *saved.prompts[1:]))
+    docs = parse(render_docs(release))
+    [section] = docs.find_all("section", id="prompty")
+    [card, *_] = section.find_all("article")
+    assert card.find_all("tbody")[0].text() == ""
+
+
+@pytest.mark.parametrize("schema, expected", [
+    ({"type": "string"}, "tekst"),
+    ({"type": "integer"}, "liczba"),
+    ({"type": "number"}, "liczba"),
+    ({"type": "boolean"}, "tak/nie"),
+    ({"type": "array"}, "lista"),
+    ({"type": "object"}, "object"),
+    ({"type": "null"}, "—"),
+    ({}, "—"),
+    ({"type": ["string", "null"]}, "tekst"),
+    ({"type": ["null", "integer", "boolean"]}, "liczba albo tak/nie"),
+    ({"anyOf": [{"type": ["string", "null"]}, {"type": "array"}]}, "tekst albo lista"),
+    ({"anyOf": [{"anyOf": [{"type": "number"}, {"type": "null"}]}, {"type": "boolean"}]}, "liczba albo tak/nie"),
+])
+def test_json_schema_type_labels(schema: dict, expected: str) -> None:
+    from tools.docs_renderer import schema_type
+
+    assert schema_type(schema) == expected
+
+
+@pytest.mark.parametrize("snapshot, path, value, field", [
+    ("mcp_tools.json", ("tools", 0, "description"), 42, "description"),
+    ("mcp_tools.json", ("tools", 0, "name"), None, "name"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema"), None, "inputSchema"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "properties"), [], "properties"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "properties", "city"), None, "city"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "properties", "city"), {"type": ["string", []]}, "city.type"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "properties", "city"), {"type": "date"}, "city.type"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "properties", "city"), {"type": []}, "city.type"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "properties", "city"), {"type": ["string", "string"]}, "city.type"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "properties", "city"), {"anyOf": {}}, "city.anyOf"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "properties", "city"), {"anyOf": [None]}, "city.anyOf"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "properties", "city"), {"$ref": "#/$defs/City"}, "city"),
+    ("mcp_tools.json", ("tools", 0, "inputSchema", "required"), "city", "required"),
+    ("mcp_prompts.json", ("prompts", 0, "title"), [], "title"),
+    ("mcp_prompts.json", ("prompts", 0, "description"), False, "description"),
+    ("mcp_prompts.json", ("prompts", 0, "arguments"), {}, "arguments"),
+    ("mcp_prompts.json", ("prompts", 0, "arguments", 0, "description"), {}, "description"),
+    ("mcp_prompts.json", ("prompts", 0, "arguments", 0, "required"), "yes", "required"),
+    ("mcp_tools.json", ("tools",), None, "tools"),
+    ("mcp_prompts.json", ("prompts",), [None], "prompts"),
+])
+def test_bad_mcp_metadata_stops_before_changing_pages(
+    site: Path, snapshot: str, path: tuple, value: object, field: str, capsys: pytest.CaptureFixture[str],
+) -> None:
+    source = site / "data/server" / snapshot
+    metadata = json.loads(source.read_text(encoding="utf-8"))
+    record = metadata
+    for key in path[:-1]:
+        record = record[key]
+    record[path[-1]] = value
+    source.write_text(json.dumps(metadata), encoding="utf-8")
+    before = {name: read(site, name) for name in ("index.html", "docs/index.html")}
+    assert build_docs.main(site) == 1
+    error = capsys.readouterr().err
+    assert snapshot in error and field in error
+    assert "sync_server" in error or "support" in error
+    assert {name: read(site, name) for name in before} == before
