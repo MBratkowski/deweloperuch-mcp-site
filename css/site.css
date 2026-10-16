@@ -89,7 +89,8 @@ a:hover { color: var(--accent-text); }
 .agent-card .agent-copy h2, .agent-card .agent-copy h3 { margin: 0; font-family: var(--font-heading); font-weight: 700; letter-spacing: -0.02em; }
 .agent-card .agent-copy h2 { font-size: 32px; line-height: 1.15; }
 .agent-card .agent-copy h3 { font-size: 24px; line-height: 1.2; }
-.agent-card .agent-copy p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
+/* Context defaults have zero specificity so component classes always take precedence. */
+:where(.agent-card .agent-copy p) { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
 .agent-card .term { flex: 2 1 420px; min-width: 0; margin: 0; }
 .agent-card--landing { margin-top: 20px; }
 .eyebrow { margin: 0; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
