@@ -86,14 +86,16 @@ def test_groups_cover_tools_exactly() -> None:
 
 
 def test_compare_pinned_names_the_commands(release: Release) -> None:
-    assert compare_pinned("0.1.2", release) == []
-    [message] = compare_pinned("0.1.2", dataclasses.replace(release, version="0.1.3"))
-    assert "pins deweloperuch-mcp 0.1.2, but the release is 0.1.3" in message
-    assert "tools.sync_server 0.1.3" in message and "tools/build_docs.py" in message
+    version = release.version
+    newer = version + ".1"
+    assert compare_pinned(version, release) == []
+    [message] = compare_pinned(version, dataclasses.replace(release, version=newer))
+    assert f"pins deweloperuch-mcp {version}, but the release is {newer}" in message
+    assert f"tools.sync_server {newer}" in message and "tools/build_docs.py" in message
 
 
 def test_check_all_puts_a_new_release_first(release: Release) -> None:
-    messages = check_all(dataclasses.replace(release, version="0.1.3"))
+    messages = check_all(dataclasses.replace(release, version=release.version + ".1"))
     assert messages[0].startswith("data/server/version.json pins")
 
 
@@ -107,8 +109,9 @@ def test_page_facts_are_read_from_the_markers(index_html: str) -> None:
 
 
 def test_compare_reports_version(index_html: str, release: Release) -> None:
-    messages = compare(read_page_facts(index_html), dataclasses.replace(release, version="0.9.9"))
-    assert any("0.9.9" in m for m in messages)
+    version = release.version + ".1"
+    messages = compare(read_page_facts(index_html), dataclasses.replace(release, version=version))
+    assert any(version in m for m in messages)
 
 
 def test_compare_names_new_tool(index_html: str, release: Release) -> None:
@@ -147,6 +150,7 @@ def test_compare_reports_missing_markers(release: Release) -> None:
 
 
 def test_written_counts_and_versions(release: Release) -> None:
+    release = dataclasses.replace(release, version="1.2.3")
     html = (
         "<p>Dostajesz 14 narzędzi i Pięć gotowych promptów.</p>"
         "<p>Pobierz deweloperuch-mcp-0.1.0.mcpb albo uvx deweloperuch-mcp==0.1.0.</p>"
@@ -189,7 +193,7 @@ def test_docs_build_detects_stale_output(index_html: str, release: Release) -> N
     stale = index_html.replace(docs_renderer.AGENT_BLOCK, docs_renderer.AGENT_BLOCK.replace("Na skróty", "Skrót"))
     assert stale != index_html
     assert any("generated blocks" in m for m in check_docs_build(docs_html, stale, release))
-    hand_edited = index_html.replace(">v0.1.2<", ">v0.1.3<")
+    hand_edited = index_html.replace(f">v{release.version}<", f">v{release.version}.1<")
     assert hand_edited != index_html
     assert any("generated blocks" in m for m in check_docs_build(docs_html, hand_edited, release))
 
@@ -255,11 +259,11 @@ def test_main_exit_codes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Capture
     assert "OK" in capsys.readouterr().out
 
     async def newer_release() -> Release:
-        return dataclasses.replace(release, version="9.9.9")
+        return dataclasses.replace(release, version=release.version + ".1")
 
     monkeypatch.setattr(check_facts, "read_release", newer_release)
     assert in_thread(check_facts.main) == 1
-    assert "9.9.9" in capsys.readouterr().out
+    assert release.version + ".1" in capsys.readouterr().out
 
 
 @pytest.mark.network
