@@ -14,7 +14,7 @@ def schema_type(prop: dict) -> str:
     return " albo ".join(names.get(t, t) for t in types if t and t != "null") or "—"
 
 
-def tool_card(tool: dict, color: str) -> str:
+def tool_card(tool: dict) -> str:
     lead = tool["description"].split("\n\n")[0]
     props = tool["inputSchema"].get("properties", {})
     required = set(tool["inputSchema"].get("required") or [])
@@ -26,7 +26,7 @@ def tool_card(tool: dict, color: str) -> str:
     return (
         f'<article class="tool" id="tool-{e(tool["name"])}">'
         f'<div class="tool-head"><h4>{e(tool.get("title") or tool["name"])}</h4>'
-        f'<code style="color: {color}">{e(tool["name"])}</code></div>'
+        f'<code class="tool-identifier">{e(tool["name"])}</code></div>'
         f"<p>{e(lead)}</p>"
         f'<details><summary>Parametry ({len(props)})</summary><div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table>'
         f'<thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead>'
@@ -38,9 +38,9 @@ def tools_section(release: Release) -> str:
     by_name = {t["name"]: t for t in release.tools}
     parts = []
     for group in content.GROUPS:
-        cards = "".join(tool_card(by_name[n], group.color) for n in group.tools)
+        cards = "".join(tool_card(by_name[n]) for n in group.tools)
         parts.append(
-            f'<div class="group" data-group="{group.key}"><h3><span class="dot" style="background: {group.color}" aria-hidden="true"></span>'
+            f'<div class="group theme-{group.key}" data-group="{group.key}"><h3><span class="dot" aria-hidden="true"></span>'
             f"{e(group.label)} <small>{len(group.tools)}</small></h3><p>{e(group.blurb)}</p>{cards}</div>"
         )
     return "".join(parts)
@@ -159,16 +159,15 @@ AGENT_BLOCK = f"""
 </div>
 """
 
-SIDEBAR_PROMPT = '<p style="margin: 0; padding: 7px 10px; border-radius: 7px; color: #D3CDE2" data-prompt="{title}">{title}</p>'
-SIDEBAR_PROMPT_ACTIVE = '<p style="margin: 0; padding: 7px 10px; border-radius: 7px; background: rgba(167,139,250,0.14); color: #DDD6FE; font-weight: 600" data-prompt="{title}">{title}</p>'
+SIDEBAR_PROMPT = '<p class="sidebar-prompt{active}" data-prompt="{title}">{title}</p>'
 SIDEBAR_GROUP = (
-    '<p style="margin: 0; display: flex; align-items: center; gap: 8px; padding: 5px 10px; color: #D3CDE2">'
-    '<span aria-hidden="true" style="width: 7px; height: 7px; border-radius: 50%; background: {color}"></span><span style="flex: 1">{label}</span>'
-    "<span style=\"font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #A7A1B8\" data-fact=\"group-count\" data-group=\"{key}\">{count}</span></p>"
+    '<p class="sidebar-group theme-{key}">'
+    '<span aria-hidden="true" class="theme-dot"></span><span class="sidebar-group-name">{label}</span>'
+    '<span class="sidebar-group-count" data-fact="group-count" data-group="{key}">{count}</span></p>'
 )
 DANE_ROW = (
-    "<div><dt style=\"font-family: 'JetBrains Mono', monospace; font-size: 14px; color: {tint}\">{names}</dt>"
-    '<dd style="margin: 4px 0 0; font-size: 15px; line-height: 1.6; color: #A7A1B8">{text}</dd></div>'
+    '<div class="theme-{key}"><dt class="tool-name">{names}</dt>'
+    '<dd>{text}</dd></div>'
 )
 
 
@@ -181,11 +180,14 @@ def landing_blocks(release: Release) -> dict[str, str]:
         "hero-version": f'<span data-fact="version">v{e(release.version)}</span>',
         "demo-tool-count": tools_phrase(tools, fact=True),
         "demo-prompts": _lines([
-            (SIDEBAR_PROMPT_ACTIVE if p["name"] == content.DEMO_PROMPT else SIDEBAR_PROMPT).format(title=e(p.get("title") or p["name"]))
+            SIDEBAR_PROMPT.format(
+                title=e(p.get("title") or p["name"]),
+                active=" is-active" if p["name"] == content.DEMO_PROMPT else "",
+            )
             for p in release.prompts
         ]),
         "demo-tool-groups": _lines([
-            SIDEBAR_GROUP.format(color=g.color, label=e(g.short_label), key=g.key, count=len(g.tools)) for g in content.GROUPS
+            SIDEBAR_GROUP.format(label=e(g.short_label), key=g.key, count=len(g.tools)) for g in content.GROUPS
         ]),
         "personas-prompt-count": prompts_sentence_start(prompts),
         "install-counts": f"{tools_phrase(tools)} i {prompts_phrase(prompts)}",
@@ -194,7 +196,7 @@ def landing_blocks(release: Release) -> dict[str, str]:
     }
     for name, keys in content.DANE_LISTS:
         blocks[name] = _lines([
-            DANE_ROW.format(tint=groups[key].tint, names=e(" · ".join(names)), text=e(text))
+            DANE_ROW.format(key=key, names=e(" · ".join(names)), text=e(text))
             for key in keys
             for names, text in groups[key].rows
         ])

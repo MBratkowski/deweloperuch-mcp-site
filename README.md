@@ -2,7 +2,7 @@
 
 The landing page of [deweloperuch-mcp](https://github.com/MBratkowski/deweloperuch-mcp), an MCP server and CLI over the public data of deweloperuch.pl. Live at https://mbratkowski.github.io/deweloperuch-mcp-site/.
 
-- One static page: `index.html`, `css/site.css`, `js/site.js`. No build step, no framework, no third-party requests.
+- Static landing page and documentation: `index.html`, `docs/index.html`, `css/`, `js/site.js`. No frontend build step or framework; the only third-party requests are Umami analytics.
 - Design: the approved Claude Design artboard, exported to `docs/design/noc.dc.html`. Spec and plan: `docs/superpowers/`.
 - Fonts: Poppins and JetBrains Mono from Fontsource 5.3.0, self-hosted in `assets/fonts/` under the SIL Open Font License (`OFL-*.txt`).
 - Demo data: `data/demo.json`, captured on 2026-10-16 with the package CLI (`deweloperuch offers search wroclaw --area-min 40 --area-max 55 --sort biggest_drop --json`), one request through the package's shared limiter; see [Demo data](#demo-data).
@@ -14,6 +14,13 @@ python3 -m http.server 8000
 ```
 
 Then open http://127.0.0.1:8000/.
+
+## Styles
+
+- `css/site.css` owns the self-hosted fonts, design tokens, accessibility defaults and shared components: the page container, navigation, terminal, copy button and agent card.
+- `css/landing.css` owns landing sections, cards, the demo window, animation states and their responsive rules. `css/docs.css` owns the documentation layout, reference tables and installation illustrations. Each page loads the shared stylesheet followed by its own stylesheet.
+- Reuse component classes (`wrap`, `card`, `section-heading`, `term`, `copy`) and explicit variants (`button--primary`, `term--compact`). Use `:root` tokens for shared colours, fonts and container dimensions. The `theme-offers`, `theme-rcn`, `theme-official` and `theme-helpers` classes set `--theme` and `--theme-text`; generators select a theme by the metadata's group key, without storing CSS colours in Python.
+- Keep presentation in CSS, including generated HTML. Change `tools/docs_renderer.py`, `tools/templates/docs.html` or `tools/update_demo.py`, then regenerate the affected blocks with the commands below. The original artboard in `docs/design/` is an archived reference.
 
 ## Server data
 

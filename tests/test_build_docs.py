@@ -139,7 +139,7 @@ def test_a_missing_demo_prompt_stops_the_build(saved: Release) -> None:
 
 
 def test_a_tool_in_two_groups_stops_the_build(saved: Release, monkeypatch: pytest.MonkeyPatch) -> None:
-    extra = Group("extra", "Extra", "Extra", "#000000", "#000000", "", ((("get_offer",), ""),))
+    extra = Group("extra", "Extra", "Extra", "", ((("get_offer",), ""),))
     monkeypatch.setattr(docs_content, "GROUPS", docs_content.GROUPS + (extra,))
     with pytest.raises(BuildError, match="more than once: get_offer"):
         render_docs(saved)

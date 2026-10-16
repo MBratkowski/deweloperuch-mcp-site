@@ -57,6 +57,26 @@ def test_every_install_command_has_a_copy_button(page: Page, site_url: str) -> N
     assert set(COMMANDS) <= set(commands)
 
 
+def test_install_ctas_keep_readable_contrast_on_hover(page: Page, site_url: str) -> None:
+    page.goto(site_url)
+    buttons = page.get_by_role("link", name="Zainstaluj za darmo", exact=True).all()
+    assert buttons
+    for button in buttons:
+        button.hover()
+        contrast = button.evaluate(
+            r"""el => {
+              const luminance = color => color.match(/[\d.]+/g).slice(0, 3)
+                .map(Number).map(c => c / 255)
+                .map(c => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+                .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+              const style = getComputedStyle(el);
+              const text = luminance(style.color), background = luminance(style.backgroundColor);
+              return (Math.max(text, background) + 0.05) / (Math.min(text, background) + 0.05);
+            }"""
+        )
+        assert contrast >= 4.5, f"Hovered install button has {contrast:.2f}:1 text contrast"
+
+
 def test_demo_waits_until_in_view(page: Page, site_url: str) -> None:
     page.set_viewport_size({"width": 1440, "height": 600})
     page.goto(site_url)

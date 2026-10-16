@@ -13,8 +13,6 @@ class Group:
     key: str
     label: str  # the docs heading
     short_label: str  # the line in the landing's demo sidebar
-    color: str
-    tint: str  # the tool names in the Dane section
     blurb: str  # under the docs heading
     rows: tuple[tuple[tuple[str, ...], str], ...]  # Dane rows: tool names and what they give
 
@@ -25,22 +23,22 @@ class Group:
 
 
 GROUPS = (
-    Group("offers", "Ceny ofertowe", "Ceny ofertowe", "#A78BFA", "#C4B5FD", "Cenniki deweloperów na rynku pierwotnym i ich zmiany.", (
+    Group("offers", "Ceny ofertowe", "Ceny ofertowe", "Cenniki deweloperów na rynku pierwotnym i ich zmiany.", (
         (("search_offers",), "Oferty w mieście albo w całej Polsce, z filtrami ceny, metrażu, ceny za m², dzielnicy i obniżki."),
         (("get_offer",), "Jedna oferta z pełną historią ceny i flagami: najniższa cena z 30 i 90 dni, podejrzana obniżka."),
         (("search_investments", "get_investment"), "Inwestycje w mieście albo po nazwie, a w nich deweloper i lista ofert."),
         (("get_market_statistics",), "Rynek ofert jednego miasta: liczby, rozkłady cen i metraży, najwięksi deweloperzy."),
     )),
-    Group("rcn", "Ceny transakcyjne (RCN)", "Transakcje RCN", "#FACC15", "#FDE68A", "Za ile mieszkania naprawdę się sprzedały, z Rejestru Cen Nieruchomości.", (
+    Group("rcn", "Ceny transakcyjne (RCN)", "Transakcje RCN", "Za ile mieszkania naprawdę się sprzedały, z Rejestru Cen Nieruchomości.", (
         (("get_transaction_statistics",), "Ceny transakcyjne miasta miesiąc po miesiącu albo kwartałami."),
         (("rank_locations",), "Ranking miejscowości albo powiatów według transakcji i ceny za m²."),
         (("get_building",), "Budynek z rejestru z lokalami i transakcjami, opcjonalnie z trendem okolicy."),
         (("estimate_property_value",), "Przybliżona wartość mieszkania w danym miejscu z pobliskich transakcji."),
     )),
-    Group("official", "Statystyki GUS i NBP", "GUS i NBP", "#38BDF8", "#7DD3FC", "Oficjalne dane: ceny, mieszkania oddane, wynagrodzenia, bezrobocie.", (
+    Group("official", "Statystyki GUS i NBP", "GUS i NBP", "Oficjalne dane: ceny, mieszkania oddane, wynagrodzenia, bezrobocie.", (
         (("get_government_statistics",), "Oficjalne szeregi czasowe dla Polski, grup największych miast albo miasta na prawach powiatu: ceny mieszkań, mieszkania oddane, wynagrodzenia i bezrobocie."),
     )),
-    Group("helpers", "Narzędzia pomocnicze", "Pomocnicze", "#34D399", "#6EE7B7", "Zamieniają nazwy miejsc i deweloperów na identyfikatory i dają profil dewelopera.", (
+    Group("helpers", "Narzędzia pomocnicze", "Pomocnicze", "Zamieniają nazwy miejsc i deweloperów na identyfikatory i dają profil dewelopera.", (
         (("search_locations", "search_developers", "get_developer"), "Narzędzia pomocnicze: zamieniają nazwę miasta albo dewelopera na identyfikator i dają profil dewelopera."),
     )),
 )
