@@ -96,7 +96,8 @@ a:hover { color: var(--accent-text); }
 .eyebrow { margin: 0; font-family: var(--font-mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
 .btn-link { color: var(--accent-text); font-weight: 600; text-decoration: none; display: inline-flex; align-items: center; min-height: 44px; }
 
-/* Shared page container and navigation. */
+/* Shared page container and navigation. The width cap includes both gutters;
+   variants only override the vertical spacing they need. */
 .wrap { max-width: var(--content-width); margin: 0 auto; padding-left: var(--page-gutter); padding-right: var(--page-gutter); box-sizing: border-box; }
 .topbar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; padding-top: 20px; padding-bottom: 20px; }
 .pill-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 4px 8px; border-radius: 999px; background: rgba(18, 12, 32, 0.55); backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%); border: 1px solid rgba(255, 255, 255, 0.10); }
