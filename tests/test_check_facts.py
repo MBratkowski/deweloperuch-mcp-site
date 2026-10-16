@@ -3,6 +3,7 @@ import copy
 from concurrent.futures import ThreadPoolExecutor
 import dataclasses
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -250,22 +251,59 @@ def test_demo_reports_each_difference(index_html: str, change, expected: str) ->
     assert any(expected in m for m in messages), messages
 
 
-def test_main_exit_codes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], release: Release) -> None:
-    async def fake_release() -> Release:
-        return release
-
-    monkeypatch.setattr(check_facts, "read_release", fake_release)
-    assert in_thread(check_facts.main) == 0
-    assert "OK" in capsys.readouterr().out
-
+def test_main_defaults_to_pinned_when_upstream_is_newer(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], release: Release) -> None:
     async def newer_release() -> Release:
         return dataclasses.replace(release, version=release.version + ".1")
 
     monkeypatch.setattr(check_facts, "read_release", newer_release)
+    monkeypatch.setattr(check_facts.sys, "argv", ["check_facts"])
+    assert in_thread(check_facts.main) == 0
+    assert f"OK: the pages match deweloperuch-mcp {release.version} (" in capsys.readouterr().out
+
+
+def test_main_pinned_does_not_need_latest_lookup(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    async def unavailable_release() -> Release:
+        raise OSError("PyPI is unavailable")
+
+    monkeypatch.setattr(check_facts, "read_release", unavailable_release)
+    monkeypatch.setattr(check_facts.sys, "argv", ["check_facts", "--pinned"])
+    assert in_thread(check_facts.main) == 0
+    assert "OK" in capsys.readouterr().out
+
+
+def test_main_pinned_reports_page_inconsistency(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    shutil.copytree(ROOT / "data", tmp_path / "data")
+    shutil.copytree(ROOT / "docs", tmp_path / "docs")
+    shutil.copytree(ROOT / "tools/templates", tmp_path / "tools/templates")
+    (tmp_path / "index.html").write_text(read("index.html").replace("13 narzędzi", "12 narzędzi", 1), encoding="utf-8")
+
+    assert check_facts.main(["--pinned"], root=tmp_path) == 1
+    assert "'12 narzędzi'" in capsys.readouterr().out
+
+
+def test_main_latest_reports_stale_release(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], release: Release) -> None:
+    async def newer_release() -> Release:
+        return dataclasses.replace(release, version=release.version + ".1")
+
+    monkeypatch.setattr(check_facts, "read_release", newer_release)
+    monkeypatch.setattr(check_facts.sys, "argv", ["check_facts", "--latest"])
     assert in_thread(check_facts.main) == 1
-    assert release.version + ".1" in capsys.readouterr().out
+    report = capsys.readouterr().out
+    assert f"pins deweloperuch-mcp {release.version}, but the release is {release.version}.1" in report
+    assert "tools.sync_server" in report
+
+
+def test_main_latest_reports_lookup_failure(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    async def unavailable_release() -> Release:
+        raise OSError("PyPI is unavailable")
+
+    monkeypatch.setattr(check_facts, "read_release", unavailable_release)
+    monkeypatch.setattr(check_facts.sys, "argv", ["check_facts", "--latest"])
+    assert in_thread(check_facts.main) == 1
+    assert "PyPI is unavailable" in capsys.readouterr().err
 
 
 @pytest.mark.network
-def test_live_release_matches_the_pages() -> None:
-    assert check_all(in_thread(lambda: asyncio.run(read_release()))) == []
+def test_live_pinned_release_matches_the_pages() -> None:
+    version = load_release().version
+    assert check_all(in_thread(lambda: asyncio.run(read_release(version)))) == []

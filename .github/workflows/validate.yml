@@ -30,6 +30,9 @@ jobs:
           ref: ${{ github.sha }}
       - uses: astral-sh/setup-uv@v10.2.0
       - run: uv sync --locked
+      # Check marked and written page facts against the committed snapshots, offline.
+      # Latest-release discovery belongs to freshness.yml and sync.yml, never this gate.
+      - run: uv run python -m tools.check_facts --pinned
       # List MCP metadata and inspect the pinned CLI; neither invokes data callbacks.
       - run: uv run python -m tools.sync_server --pinned
       - run: uv run python -m tools.build_docs
@@ -72,11 +75,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Stage the published files
-        run: |
-          mkdir -p _site/docs
-          cp -R index.html css js assets favicon.png apple-touch-icon.png _site/
-          cp docs/index.html _site/docs/
+      - name: Package the public site
+        run: python3 -m tools.package_site
 
       - name: Lighthouse
         run: |

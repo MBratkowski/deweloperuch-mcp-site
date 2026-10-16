@@ -1,26 +1,22 @@
-"""Check the landing page and the docs page against the released deweloperuch-mcp.
+"""Check the landing page and docs against the committed pinned release.
 
-    uv run python -m tools.check_facts
+    uv run python -m tools.check_facts             # committed snapshots, offline
+    uv run python -m tools.check_facts --pinned    # the same publication check
+    uv run python -m tools.check_facts --latest    # upstream freshness monitoring
 
-Reads the latest version from PyPI, starts that release over stdio
-(``uvx deweloperuch-mcp==<version>``) and reads ``tools/list`` and ``prompts/list``.
-CLI metadata is inspected in the same pinned environment without invoking callbacks.
-Listing calls no tool, so nothing reaches deweloperuch.pl: the server's session only
-constructs its HTTP client (checked in the server code of 0.1.1). Then it compares:
+By default, reads data/server/ without resolving the latest version or starting a
+package. The explicit --latest mode reads PyPI and inspects that release over stdio
+(``uvx deweloperuch-mcp==<version>``), using only ``tools/list``, ``prompts/list`` and
+callback-free CLI metadata inspection. Neither mode reaches deweloperuch.pl.
 
-- the version pinned in data/server/version.json with the release, so a new release
-  fails with the commands that take the pages to it;
-- the facts marked in index.html (``data-fact``, ``data-group``, ``data-prompt``), the
-  tool names in the Dane section and the persona prompts with the release;
-- counts and versions written in the copy of both pages ("13 narzędzi",
-  "deweloperuch-mcp-0.1.2.mcpb") with the release;
-- data/server/*.json, the source of the generated parts, with the release;
-- docs/index.html and the generated blocks of index.html with tools/build_docs.py output;
-- the demo block of index.html with data/demo.json.
+Checks the version, marked and written page facts, MCP/CLI snapshots, generated
+output of tools/build_docs.py, and the demo block against data/demo.json. Latest
+mode also reports a release newer than the pin, with synchronization commands.
 
 Exit code 0 when everything matches; otherwise 1, with one line per mismatch.
 """
 
+import argparse
 import asyncio
 import json
 import re
@@ -431,9 +427,19 @@ def check_all(release: Release, root: Path = ROOT) -> list[str]:
     return problems
 
 
-def main() -> int:
-    release = asyncio.run(read_release())
-    problems = check_all(release)
+def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
+    parser = argparse.ArgumentParser(prog="python -m tools.check_facts", description=__doc__.split("\n\n")[0])
+    which = parser.add_mutually_exclusive_group()
+    which.add_argument("--pinned", action="store_true", help="check committed pinned snapshots, offline (default)")
+    which.add_argument("--latest", action="store_true", help="check the latest release on PyPI (freshness monitoring)")
+    args = parser.parse_args(argv)
+
+    try:
+        release = asyncio.run(read_release()) if args.latest else load_release(root)
+        problems = check_all(release, root)
+    except (BuildError, OSError, RuntimeError) as error:
+        print(f"tools/check_facts.py stopped:\n{error}", file=sys.stderr)
+        return 1
     if problems:
         print(f"The pages do not match {PACKAGE} {release.version}:")
         for problem in problems:
