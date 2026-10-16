@@ -76,19 +76,6 @@ def check_release(release: Release) -> None:
         raise BuildError("\n".join(problems))
 
 
-AGENT_PROMPT = """Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
-
-1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
-2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: curl -LsSf https://astral.sh/uv/install.sh | sh
-3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
-4. Dodaj serwer do aplikacji, której używam:
-   - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
-   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis "deweloperuch": {"command": "uvx", "args": ["deweloperuch-mcp"]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
-   - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
-   Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
-5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
-6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start."""
-
 AGENT_SECTION = f"""
 <section id="zainstaluj-z-ai" class="wrap agent-install" aria-labelledby="zainstaluj-z-ai-title">
 <div class="agent-card">
@@ -101,5 +88,3 @@ AGENT_SECTION = f"""
 </div>
 </section>
 """
-
-CONFIG_JSON ='{\n  "mcpServers": {\n    "deweloperuch": {\n      "command": "uvx",\n      "args": ["deweloperuch-mcp"]\n    }\n  }\n}'

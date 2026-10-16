@@ -4,11 +4,13 @@ import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from tools.page_config import PACKAGE, SITE
+
 ROOT = Path(__file__).resolve().parent.parent
 SERVER_DIR = "data/server"
-PACKAGE = "deweloperuch-mcp"
-REPO = "https://github.com/MBratkowski/deweloperuch-mcp"
-RELEASES = REPO + "/releases/latest"
+# Compatibility aliases for the synchronization tools; page rendering reads SITE.
+REPO = SITE.repository_url
+RELEASES = SITE.releases_url
 
 
 class BuildError(Exception):

@@ -1,10 +1,12 @@
 """Pure renderers for the documentation and landing source templates."""
 
+import json
 from pathlib import Path
 
-from tools import docs_content as content
-from tools.html_helpers import _lines, e, render_template, prompts_phrase, prompts_sentence_start, term, tools_phrase
-from tools.release import PACKAGE, REPO, RELEASES, Release, normalize_mcp_metadata, schema_types, validate_cli
+from tools import docs_content as content, page_config as config
+from tools.html_helpers import _lines, e, landing_command, render_template, prompts_phrase, prompts_sentence_start, term, tools_phrase
+from tools.page_fragments import page_fragments
+from tools.release import PACKAGE, Release, normalize_mcp_metadata, schema_types, validate_cli
 from tools.update_demo import demo_blocks
 
 
@@ -85,7 +87,7 @@ def steps(release: Release) -> str:
 <p class="step-num">Krok 1</p>
 <h3>Pobierz plik rozszerzenia</h3>
 <p>Otwórz stronę najnowszego wydania i w sekcji „Assets” kliknij plik, którego nazwa kończy się na <code>.mcpb</code>. Zapisze się w folderze Pobrane.</p>
-<p><a class="btn-link" href="{RELEASES}" data-umami-event="docs-open-release">Otwórz stronę wydania →</a></p>
+<p><a class="btn-link" href="{e(config.SITE.releases_url)}" data-umami-event="docs-open-release">Otwórz stronę wydania →</a></p>
 </div>
 </li>
 <li class="step">
@@ -148,14 +150,15 @@ def steps(release: Release) -> str:
 """
 
 
-AGENT_BLOCK = f"""
+def agent_block() -> str:
+    return f"""
 <div class="agent-card agent-card--landing">
 <div class="agent-copy">
 <p class="eyebrow">Na skróty</p>
 <h3>Niech AI zainstaluje to za Ciebie.</h3>
 <p>Masz agenta AI z dostępem do terminala, np. Claude Code? Skopiuj prompt i wklej go agentowi: sprawdzi system, doinstaluje uv i doda serwer do Twojej aplikacji, pytając o zgodę przed zmianą konfiguracji.</p>
 </div>
-{term(content.AGENT_PROMPT, label="Prompt dla agenta AI", prompt=False, event="copy-agent-prompt")}
+{term(config.agent_prompt(), label="Prompt dla agenta AI", prompt=False, event="copy-agent-prompt")}
 </div>
 """
 
@@ -172,7 +175,7 @@ DANE_ROW = (
 
 
 def landing_blocks(release: Release) -> dict[str, str]:
-    """Landing template slots for ``release``, keyed by their unique names."""
+    """Release-dependent landing slots, keyed by their unique names."""
     release = normalize_mcp_metadata(release)
     content.check_release(release)
     groups = {group.key: group for group in content.GROUPS}
@@ -193,7 +196,7 @@ def landing_blocks(release: Release) -> dict[str, str]:
         "personas_prompt_count": prompts_sentence_start(prompts),
         "install_counts": f"{tools_phrase(tools)} i {prompts_phrase(prompts)}",
         "plan_counts": f"{tools_phrase(tools, fact=True)} i {prompts_phrase(prompts, fact=True)}",
-        "agent_prompt": AGENT_BLOCK,
+        "agent_prompt": agent_block(),
     }
     for name, keys in content.DANE_LISTS:
         blocks[name.replace("-", "_")] = _lines([
@@ -204,10 +207,26 @@ def landing_blocks(release: Release) -> dict[str, str]:
     return blocks
 
 
-def render_landing(template: str, release: Release, demo: dict) -> str:
+def render_landing(
+    template: str, release: Release, demo: dict, *, shared_templates: dict[str, str] | None = None,
+) -> str:
     """Render the complete landing template from saved release and demo data."""
+    commands, site = config.COMMANDS, config.SITE
+    server_command = e(json.dumps(commands.server_command))
+    server_args = e(json.dumps(list(commands.server_args), ensure_ascii=False))
     return render_template(
-        template, landing_blocks(release) | demo_blocks(demo),
+        template, landing_blocks(release) | demo_blocks(demo) | page_fragments("landing", shared_templates) | dict(
+            run_server=landing_command(commands.run_server, "copy-hero", hero=True),
+            add_server=landing_command(commands.add_server, "copy-claude"),
+            install_skill=landing_command(commands.install_skill, "copy-skill"),
+            cli_help=landing_command(commands.cli_help, "copy-cli"),
+            server_config_hint=f'# w innych klientach: &quot;command&quot;: {server_command},<br># &quot;args&quot;: {server_args}',
+            version_releases=e(site.releases_url), faq_issues=e(site.repository_url + "/issues"),
+            plan_repo=e(site.repository_url), footer_repo=e(site.repository_url),
+            footer_prompts=e(site.repository_url + "/blob/main/docs/mcp/prompts.md"),
+            footer_changelog=e(site.repository_url + "/blob/main/CHANGELOG.md"),
+            footer_pypi=e(site.pypi_url), footer_issues=e(site.repository_url + "/issues"),
+        ),
         name="tools/templates/landing.html", unique=True,
     )
 
@@ -217,30 +236,33 @@ def cli_table(release: Release) -> str:
     return "".join(f"<tr><td><code>{e(command['usage'])}</code></td><td>{e(command['description'])}</td></tr>" for command in commands)
 
 
-def render_docs(release: Release, template: str | None = None) -> str:
+def render_docs(
+    release: Release, template: str | None = None, *, shared_templates: dict[str, str] | None = None,
+) -> str:
     """Render the docs from the saved release; no subprocess or network access."""
     release = normalize_mcp_metadata(release)
     content.check_release(release)
     if template is None:
         template = (Path(__file__).with_name("templates") / "docs.html").read_text(encoding="utf-8")
     return render_template(template, dict(
-        repo=REPO,
-        releases=RELEASES,
+        repo=e(config.SITE.repository_url),
+        pypi=e(config.SITE.pypi_url),
+        run_server=e(config.COMMANDS.run_server),
         installation_steps=steps(release),
-        agent_section=content.AGENT_SECTION.replace('{term}', term(content.AGENT_PROMPT, label='Prompt dla agenta AI', prompt=False, event='docs-copy-agent-prompt')),
+        agent_section=content.AGENT_SECTION.replace('{term}', term(config.agent_prompt(), label='Prompt dla agenta AI', prompt=False, event='docs-copy-agent-prompt')),
         tool_count=tools_phrase(len(release.tools)),
-        install_uv=term('curl -LsSf https://astral.sh/uv/install.sh | sh'),
-        install_uv_homebrew=term('brew install uv'),
-        check_uv=term('uvx --version'),
-        add_server=term('claude mcp add deweloperuch -- uvx deweloperuch-mcp'),
-        client_config=term(content.CONFIG_JSON, label='claude_desktop_config.json', prompt=False, event='docs-copy-config-json'),
-        install_skill=term('npx skills add MBratkowski/deweloperuch-mcp'),
-        install_skill_cli=term('uvx --from deweloperuch-mcp deweloperuch skill install'),
-        cli_help=term('uvx --from deweloperuch-mcp deweloperuch --help'),
-        cli_install=term('uv tool install deweloperuch-mcp'),
+        install_uv=term(config.COMMANDS.install_uv),
+        install_uv_homebrew=term(config.COMMANDS.install_uv_homebrew),
+        check_uv=term(config.COMMANDS.check_uv),
+        add_server=term(config.COMMANDS.add_server),
+        client_config=term(config.COMMANDS.client_config, label='claude_desktop_config.json', prompt=False, event='docs-copy-config-json'),
+        install_skill=term(config.COMMANDS.install_skill),
+        install_skill_cli=term(config.COMMANDS.install_skill_cli),
+        cli_help=term(config.COMMANDS.cli_help),
+        cli_install=term(config.COMMANDS.cli_install),
         prompts=prompts_section(release),
         tools=tools_section(release),
         cli_table=cli_table(release),
-        stop_status=term('uvx --from deweloperuch-mcp deweloperuch stop status'),
-        stop_clear=term('uvx --from deweloperuch-mcp deweloperuch stop clear'),
-    ), name="tools/templates/docs.html")
+        stop_status=term(config.COMMANDS.stop_status),
+        stop_clear=term(config.COMMANDS.stop_clear),
+    ) | page_fragments("docs", shared_templates), name="tools/templates/docs.html")

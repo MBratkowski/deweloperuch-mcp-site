@@ -191,7 +191,7 @@ def test_docs_build_detects_stale_output(index_html: str, release: Release) -> N
     docs_html = read("docs/index.html")
     assert check_docs_build(docs_html, index_html, release) == []
     assert check_docs_build(docs_html.replace("13 narzędzi", "12 narzędzi", 1), index_html, release)
-    stale = index_html.replace(docs_renderer.AGENT_BLOCK, docs_renderer.AGENT_BLOCK.replace("Na skróty", "Skrót"))
+    stale = index_html.replace(docs_renderer.agent_block(), docs_renderer.agent_block().replace("Na skróty", "Skrót"))
     assert stale != index_html
     assert any("index.html differs" in m for m in check_docs_build(docs_html, stale, release))
     hand_edited = index_html.replace(f">v{release.version}<", f">v{release.version}.1<")
