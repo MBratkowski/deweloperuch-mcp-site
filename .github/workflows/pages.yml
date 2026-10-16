@@ -18,8 +18,14 @@ env:
   SITE: https://mbratkowski.github.io/deweloperuch-mcp-site/
 
 jobs:
+  validate:
+    name: Validate this commit
+    uses: ./.github/workflows/validate.yml
+
   deploy:
     name: Deploy the site files
+    # needs keeps push and manual deployment behind all checks in this run.
+    needs: validate
     runs-on: ubuntu-24.04
     permissions:
       pages: write
@@ -29,6 +35,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
 
       - name: Stage the published files
         run: |
@@ -49,6 +57,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
       - name: Lighthouse
         run: |
           npx --yes @lhci/cli@0.15.1 collect --config=./lighthouserc.json --url="$SITE" --url="${SITE}docs/"

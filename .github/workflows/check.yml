@@ -16,32 +16,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  tests:
-    name: Tests (pytest, Playwright)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.2.0
-      - run: uv sync --locked
-      - run: uv run playwright install --with-deps chromium
-      - run: uv run pytest
-
-  generated:
-    name: Generated files match the pinned release and the demo data
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.2.0
-      - run: uv sync --locked
-      # List MCP metadata and inspect the pinned CLI; neither invokes data callbacks.
-      - run: uv run python -m tools.sync_server --pinned
-      - run: uv run python -m tools.build_docs
-      # Renders the committed data/demo.json; it never captures (tools/capture_demo.py runs only by hand).
-      - run: uv run python -m tools.update_demo
-      - name: Nothing changed
-        run: |
-          git diff --exit-code
-          if [ -n "$(git status --porcelain)" ]; then git status --short; exit 1; fi
+  validate:
+    name: Validate this commit
+    uses: ./.github/workflows/validate.yml
 
   facts:
     name: Facts against the latest release
@@ -53,48 +30,3 @@ jobs:
       # PyPI and package-qualified MCP/CLI metadata; no data tool or command is invoked.
       # A release newer than data/server/version.json fails here until its sync is merged.
       - run: uv run python -m tools.check_facts
-
-  html:
-    name: HTML validation (Nu)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      # Java and Node.js come with the runner.
-      - run: npx --yes --package vnu-jar@26.9.27 vnu --errors-only index.html docs/index.html
-
-  links:
-    name: Link check
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: lycheeverse/lychee-action@v2
-        with:
-          args: --config lychee.toml --no-progress index.html docs/index.html README.md
-          fail: true
-
-  lighthouse:
-    name: Lighthouse (mobile)
-    runs-on: ubuntu-24.04
-    # Measures this commit's own files served locally. The live site is measured by
-    # pages.yml right after each deployment.
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Stage the published files
-        run: |
-          mkdir -p _site/docs
-          cp -R index.html css js assets favicon.png apple-touch-icon.png _site/
-          cp docs/index.html _site/docs/
-
-      - name: Lighthouse
-        run: |
-          npx --yes @lhci/cli@0.15.1 collect --config=./lighthouserc.json --staticDistDir=./_site --url=http://localhost/ --url=http://localhost/docs/
-          npx --yes @lhci/cli@0.15.1 assert --config=./lighthouserc.json
-
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: lighthouse
-          path: .lighthouseci/
-          include-hidden-files: true
-          if-no-files-found: ignore
