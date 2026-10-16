@@ -85,6 +85,7 @@ uv run pytest
 
 - `tests/test_check_facts.py`, `tests/test_build_docs.py`, `tests/test_sync_server.py`, `tests/test_export_cli.py`: the fact check, build and sync against the saved MCP/CLI listings, offline; metadata changes, repeated builds, command order, invalid inputs and callback-free CLI discovery are covered.
 - `tests/test_capture_demo.py`, `tests/test_update_demo.py`: the capture with the CLI replaced by a fake, and the demo window against `data/demo.json`, offline.
+- `tests/test_package_site.py`: the public package against temporary files, including exact contents, excluded repository files, stale-output cleanup and symlink rejection, offline.
 - `tests/e2e/`: both pages in headless Chromium against a local server, offline (the analytics script is stubbed): copy buttons, the demo, no horizontal overflow at 320 and 375 px, focus rings, requests, cookies, links.
 - `uv run python -m tools.check_facts` (or explicit `--pinned`): the page facts, written copy, generated blocks and demo against the committed pinned MCP/CLI snapshots, offline. It never discovers the latest release. `LANDING_NETWORK=1 uv run pytest` additionally checks the pages against metadata inspected from the pinned package and syncs that package into a temporary folder to compare it with `data/server/`.
 - `uv run python -m tools.check_facts --latest`: explicit release-freshness monitoring against the latest deweloperuch-mcp on PyPI. It lists MCP tools and prompts and inspects the CLI without invoking callbacks, so nothing reaches deweloperuch.pl. A release other than the pinned one fails with synchronization commands; a failed latest-release lookup also fails this monitor.
@@ -97,6 +98,26 @@ Release freshness is a separate scheduled/manual concern. `.github/workflows/fre
 ## Publishing
 
 `.github/workflows/pages.yml` runs on every push to `main` and can be started manually. Both paths first call the same `validate.yml` workflow as Check, from the same commit. Every validation checkout and the deployment checkout use the event's immutable `github.sha`; deployment depends on successful validation in that run, so a failed, skipped or cancelled required check blocks publishing and success for another commit cannot authorize it. The Release freshness and Sync workflows report upstream freshness independently; neither is a deployment gate. Pages publishes only the site files (`index.html`, `docs/index.html`, `css/`, `js/`, `assets/`, the icons), then runs a separate Lighthouse job against the live pages.
+
+`tools/package_site.py` is the single packaging definition used by local Lighthouse in `validate.yml` and by Pages deployment. Both run the same dependency-free command against the same commit:
+
+```bash
+python3 -m tools.package_site
+```
+
+The script recreates `_site/` from its explicit `PUBLIC_FILES` and `PUBLIC_DIRECTORIES` allowlists. Lighthouse serves `_site/` and Pages uploads `_site/`; tools, tests, data snapshots, design references, plans and repository metadata stay outside the package. Missing public inputs and symlinks in public paths fail packaging before an existing `_site/` is removed. `_site/` must be a regular directory, and the output location is fixed to prevent cleanup of another path.
+
+To add a page, add its path to `PUBLIC_FILES` in `tools/package_site.py`. Files under `css/`, `js/` and `assets/` are included recursively; add a new public asset directory to `PUBLIC_DIRECTORIES` only when it belongs on the site. Keep private source files outside these public directories. No workflow copy list needs changing. Add a new page URL to the Lighthouse collect commands if it should also be audited.
+
+Verify the package offline, inspect the new path under `_site/`, then serve that directory to check its URL and assets:
+
+```bash
+uv run pytest tests/test_package_site.py
+python3 -m tools.package_site
+python3 -m http.server --directory _site 8000
+```
+
+Open the page at `http://127.0.0.1:8000/<path>`. This previews the same output directory that the Check workflow measures and the Pages workflow publishes. The `lighthouse` job's “Package the public site” step in `validate.yml` and the `deploy` job's matching step in `pages.yml` show the shared command in each path.
 
 ## Licence
 
