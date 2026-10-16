@@ -252,6 +252,7 @@ def render_docs(
         agent_section=content.AGENT_SECTION.replace('{term}', term(config.agent_prompt(), label='Prompt dla agenta AI', prompt=False, event='docs-copy-agent-prompt')),
         tool_count=tools_phrase(len(release.tools)),
         install_uv=term(config.COMMANDS.install_uv),
+        install_uv_windows=term(config.COMMANDS.install_uv_windows, label='PowerShell', prompt=False),
         install_uv_homebrew=term(config.COMMANDS.install_uv_homebrew),
         check_uv=term(config.COMMANDS.check_uv),
         add_server=term(config.COMMANDS.add_server),

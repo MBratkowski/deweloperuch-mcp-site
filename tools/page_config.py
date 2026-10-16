@@ -27,6 +27,7 @@ class InstallationCommands:
     server_command: str = "uvx"
     server_args: tuple[str, ...] = (PACKAGE,)
     install_uv: str = "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    install_uv_windows: str = 'powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"'
     install_uv_homebrew: str = "brew install uv"
     check_uv: str = "uvx --version"
     install_skill: str = "npx skills add MBratkowski/deweloperuch-mcp"
@@ -97,12 +98,12 @@ def agent_prompt() -> str:
     """The same installation instructions in both pages, derived from the commands."""
     return f"""Zainstaluj mi serwer MCP {PACKAGE} (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: {SITE.repository_url}).
 
-1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
-2. Sprawdź, czy mam program uv ({COMMANDS.check_uv}). Jeśli nie, zainstaluj go oficjalnym skryptem: {COMMANDS.install_uv}
+1. Sprawdź system: obsługiwane są macOS, Linux oraz Windows 10 (1903+) i 11. Na Windowsie katalog pamięci podręcznej musi być na lokalnym dysku NTFS.
+2. Sprawdź, czy mam program uv ({COMMANDS.check_uv}). Jeśli nie, zainstaluj go oficjalnym skryptem: na macOS i Linuxie {COMMANDS.install_uv}; na Windowsie w PowerShellu {COMMANDS.install_uv_windows}. Po instalacji otwórz nowy terminal.
 3. Sprawdź, czy serwer się uruchamia: {COMMANDS.run_server} --help
 4. Dodaj serwer do aplikacji, której używam:
    - Claude Code: {COMMANDS.add_server}
-   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis "deweloperuch": {COMMANDS.server_config}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
+   - Claude Desktop: w pliku claude_desktop_config.json (macOS: ~/Library/Application Support/Claude/; Windows: %APPDATA%\\Claude\\) dopisz w sekcji mcpServers wpis "deweloperuch": {COMMANDS.server_config}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku. Jeśli aplikacja nie znajduje uvx, użyj pełnej ścieżki; na Windowsie odczytaj ją przez (Get-Command uvx).Source i zapisz jako poprawny ciąg JSON.
    - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem {COMMANDS.server_command} i argumentem {shlex.join(COMMANDS.server_args)}.
    Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
 5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.

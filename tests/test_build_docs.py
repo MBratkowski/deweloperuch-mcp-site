@@ -521,7 +521,7 @@ def test_page_variants_preserve_canonical_asset_paths_and_analytics(saved: Relea
     pages = build_docs.render_pages(saved)
     expected_events = {
         "index.html": ['nav-github', 'nav-download', 'cta-install', 'copy-hero', 'card-guide', 'copy-claude', 'copy-skill', 'copy-cli', 'copy-agent-prompt', 'cta-guide', 'plan-github'],
-        "docs/index.html": ['docs-nav-download', 'docs-open-release', 'docs-copy-agent-prompt', 'docs-copy-curl-lssf-https-astral-sh-uv-install-sh-sh', 'docs-copy-brew-install-uv', 'docs-copy-uvx-version', 'docs-copy-claude-mcp-add-deweloperuch-uvx-deweloperuch-mcp', 'docs-copy-config-json', 'docs-copy-npx-skills-add-mbratkowski-deweloperuch-mcp', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-skill-ins', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-help', 'docs-copy-uv-tool-install-deweloperuch-mcp', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-stop-stat', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-stop-clea'],
+        "docs/index.html": ['docs-nav-download', 'docs-open-release', 'docs-copy-agent-prompt', 'docs-copy-curl-lssf-https-astral-sh-uv-install-sh-sh', 'docs-copy-brew-install-uv', 'docs-copy-powershell-executionpolicy-bypass-c-irm-https-as', 'docs-copy-uvx-version', 'docs-copy-claude-mcp-add-deweloperuch-uvx-deweloperuch-mcp', 'docs-copy-config-json', 'docs-copy-npx-skills-add-mbratkowski-deweloperuch-mcp', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-skill-ins', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-help', 'docs-copy-uv-tool-install-deweloperuch-mcp', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-stop-stat', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-stop-clea'],
     }
     for path, html in pages.items():
         page = parse(html)

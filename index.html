@@ -21,10 +21,10 @@
 <link rel="preload" href="assets/fonts/poppins-latin-ext-700-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="css/site.css">
 <link rel="stylesheet" href="css/landing.css">
-<script src="js/site.js" defer></script>
+<script src="js/site.js" defer onerror="document.documentElement.setAttribute('data-nav-failed', '')"></script>
 <script defer src="https://cloud.umami.is/script.js" data-website-id="cdcef87a-abd4-4be6-970c-bef26c1152b6" data-domains="mbratkowski.github.io"></script>
 <script type="application/ld+json">
-{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "deweloperuch-mcp", "description": "Serwer MCP z danymi o rynku mieszkań w Polsce: ceny ofertowe deweloperów, ceny transakcyjne z RCN, statystyki GUS i NBP.", "applicationCategory": "DeveloperApplication", "operatingSystem": "macOS, Linux", "license": "https://opensource.org/licenses/MIT", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "PLN"}, "url": "https://mbratkowski.github.io/deweloperuch-mcp-site/", "sameAs": ["https://github.com/MBratkowski/deweloperuch-mcp", "https://pypi.org/project/deweloperuch-mcp/"]}
+{"@context": "https://schema.org", "@type": "SoftwareApplication", "name": "deweloperuch-mcp", "description": "Serwer MCP z danymi o rynku mieszkań w Polsce: ceny ofertowe deweloperów, ceny transakcyjne z RCN, statystyki GUS i NBP.", "applicationCategory": "DeveloperApplication", "operatingSystem": "macOS, Linux, Windows 10 (1903+), Windows 11", "license": "https://opensource.org/licenses/MIT", "offers": {"@type": "Offer", "price": "0", "priceCurrency": "PLN"}, "url": "https://mbratkowski.github.io/deweloperuch-mcp-site/", "sameAs": ["https://github.com/MBratkowski/deweloperuch-mcp", "https://pypi.org/project/deweloperuch-mcp/"]}
 </script>
 </head>
 <body>
@@ -108,7 +108,7 @@ GitHub</a>
 
 
 <div class="hero-copy">
-<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" class="version-pill" data-social-hide="version"><span data-fact="version">v0.1.2</span> · MIT · w oficjalnym MCP Registry</a>
+<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" class="version-pill" data-social-hide="version"><span data-fact="version">v0.1.3</span> · MIT · w oficjalnym MCP Registry</a>
 <h1 class="hero-title" data-social-content="heading">Każdy ruch rynku mieszkań.<br><span class="text-accent">W rozmowie z AI.</span></h1>
 <p class="hero-lead" data-social-content="description">Serwer MCP, który daje Twojemu asystentowi AI ceny ofertowe deweloperów z historią zmian, ceny transakcyjne z rejestru RCN oraz statystyki GUS i NBP. Za darmo i open source.</p>
 <div class="hero-actions" data-social-hide="actions">
@@ -299,7 +299,7 @@ search_offers · <span data-demo-role="chip-state" class="chip-state">gotowe</sp
 <div class="section-heading">
 <p class="eyebrow">Instalacja</p>
 <h2 class="section-title">Działa tam, gdzie już pracujesz.</h2>
-<p class="section-copy">Trzy drogi, te same dane. macOS i Linux; Windows na razie nie jest wspierany.</p>
+<p class="section-copy">Trzy drogi, te same dane. Działa na macOS, Linuxie i Windowsie.</p>
 </div>
 <div class="card-grid">
 
@@ -366,23 +366,23 @@ search_offers · <span data-demo-role="chip-state" class="chip-state">gotowe</sp
 </div>
 <div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Prompt dla agenta AI</em></div><div class="cmd"><pre><span class="cmd-text">Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
 
-1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
-2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: curl -LsSf https://astral.sh/uv/install.sh | sh
+1. Sprawdź system: obsługiwane są macOS, Linux oraz Windows 10 (1903+) i 11. Na Windowsie katalog pamięci podręcznej musi być na lokalnym dysku NTFS.
+2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: na macOS i Linuxie curl -LsSf https://astral.sh/uv/install.sh | sh; na Windowsie w PowerShellu powershell -ExecutionPolicy ByPass -c &quot;irm https://astral.sh/uv/install.ps1 | iex&quot;. Po instalacji otwórz nowy terminal.
 3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
 4. Dodaj serwer do aplikacji, której używam:
    - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
-   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
+   - Claude Desktop: w pliku claude_desktop_config.json (macOS: ~/Library/Application Support/Claude/; Windows: %APPDATA%\Claude\) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku. Jeśli aplikacja nie znajduje uvx, użyj pełnej ścieżki; na Windowsie odczytaj ją przez (Get-Command uvx).Source i zapisz jako poprawny ciąg JSON.
    - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
    Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
 5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
 6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start.</span></pre><button type="button" class="copy" data-command="Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
 
-1. Sprawdź, czy mam macOS albo Linuxa. Windows nie jest obsługiwany: jeśli to Windows, przerwij i powiedz mi o tym.
-2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: curl -LsSf https://astral.sh/uv/install.sh | sh
+1. Sprawdź system: obsługiwane są macOS, Linux oraz Windows 10 (1903+) i 11. Na Windowsie katalog pamięci podręcznej musi być na lokalnym dysku NTFS.
+2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: na macOS i Linuxie curl -LsSf https://astral.sh/uv/install.sh | sh; na Windowsie w PowerShellu powershell -ExecutionPolicy ByPass -c &quot;irm https://astral.sh/uv/install.ps1 | iex&quot;. Po instalacji otwórz nowy terminal.
 3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
 4. Dodaj serwer do aplikacji, której używam:
    - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
-   - Claude Desktop: w pliku claude_desktop_config.json (na macOS w ~/Library/Application Support/Claude/) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku.
+   - Claude Desktop: w pliku claude_desktop_config.json (macOS: ~/Library/Application Support/Claude/; Windows: %APPDATA%\Claude\) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku. Jeśli aplikacja nie znajduje uvx, użyj pełnej ścieżki; na Windowsie odczytaj ją przez (Get-Command uvx).Source i zapisz jako poprawny ciąg JSON.
    - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
    Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
 5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
@@ -428,7 +428,7 @@ search_offers · <span data-demo-role="chip-state" class="chip-state">gotowe</sp
 </details>
 <details>
 <summary>Czy działa na Windowsie?<span aria-hidden="true" class="faq-icon">+</span></summary>
-<p>Jeszcze nie. Obsługiwane są macOS i Linux.</p>
+<p>Tak. Obsługiwane są Windows 10 (1903+) i Windows 11, a także macOS i Linux. Instrukcję dla PowerShella znajdziesz w <a href="docs/#uv">dokumentacji instalacji</a>.</p>
 </details>
 <details>
 <summary>Skąd są dane i jak są świeże?<span aria-hidden="true" class="faq-icon">+</span></summary>

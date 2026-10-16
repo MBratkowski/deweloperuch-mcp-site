@@ -3,7 +3,7 @@
 import sys
 
 import pytest
-from playwright.sync_api import Page, expect
+from playwright.sync_api import Page, Route, expect
 
 from tests.e2e.test_pages import WIDE_ELEMENTS
 
@@ -98,6 +98,40 @@ def test_mobile_header_has_one_compact_control_row(page: Page, page_url: str, wi
     expect(header.get_by_role("button", name="Menu", exact=True)).to_have_attribute("aria-expanded", "false")
     expect(header.locator("#site-navigation")).to_be_hidden()
     expect(header.get_by_role("link", name="GitHub", exact=True)).to_be_hidden()
+
+
+@pytest.mark.parametrize("script_loads", [True, False], ids=["loaded", "failed"])
+def test_mobile_navigation_handles_delayed_script(page: Page, page_url: str, script_loads: bool) -> None:
+    page.set_viewport_size({"width": 412, "height": 823})
+    page.emulate_media(reduced_motion="reduce")
+    pending: list[Route] = []
+    page.route("**/js/site.js", lambda route: pending.append(route))
+    page.goto(page_url, wait_until="commit")
+    page.locator("main").wait_for(state="visible")
+    frame = "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+    page.evaluate(frame)
+    header_before = page.locator(".topbar").bounding_box()
+    main_before = page.locator("main").bounding_box()
+    assert len(pending) == 1
+
+    if not script_loads:
+        pending[0].abort()
+        links = page.locator(".topbar nav a")
+        assert links.count() == 7
+        for link in links.all():
+            expect(link).to_be_visible()
+        expect(page.get_by_role("button", name="Menu", exact=True)).to_be_hidden()
+        return
+
+    pending[0].continue_()
+    expect(page.locator("[data-navigation]")).to_have_attribute("data-nav-ready", "")
+    page.evaluate(frame)
+    header_after = page.locator(".topbar").bounding_box()
+    main_after = page.locator("main").bounding_box()
+
+    assert header_before and header_after and main_before and main_after
+    assert header_after["height"] == pytest.approx(header_before["height"], abs=1)
+    assert main_after["y"] == pytest.approx(main_before["y"], abs=1)
 
 
 def test_mobile_menu_keyboard_and_anchor_navigation(page: Page, page_url: str, browser_name: str) -> None:

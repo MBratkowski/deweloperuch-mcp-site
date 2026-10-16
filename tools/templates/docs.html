@@ -33,7 +33,7 @@ ${nav_actions}
 
 <section id="krok-po-kroku" class="wrap docs-steps" aria-labelledby="krok-po-kroku-title">
 <h2 id="krok-po-kroku-title">Instalacja krok po kroku</h2>
-<p class="section-lead">Dla Claude Desktop na macOS. Linux działa tak samo; Windows nie jest jeszcze obsługiwany.</p>
+<p class="section-lead">Dla Claude Desktop na macOS i Windowsie. Ilustracje pokazują przykładowe okna aplikacji.</p>
 ${installation_steps}
 </section>
 ${agent_section}
@@ -68,7 +68,7 @@ ${agent_section}
 <section id="wymagania">
 <h2>Czego potrzebujesz</h2>
 <ul>
-<li><strong>Komputera z macOS albo Linuxem.</strong> Windows nie jest jeszcze obsługiwany.</li>
+<li><strong>Komputera z macOS, Linuxem albo Windowsem 10 (1903+) lub 11.</strong> Na Windowsie katalog pamięci podręcznej musi być na lokalnym dysku NTFS.</li>
 <li><strong>Asystenta AI, który uruchamia lokalne serwery MCP</strong>, np. aplikacji Claude Desktop albo Claude Code. Asystenci, którzy przyjmują tylko zdalne serwery MCP, na razie z niego nie skorzystają.</li>
 <li><strong>Do instalacji przez terminal: programu uv</strong> (opis niżej). Rozszerzenie dla Claude Desktop go nie wymaga.</li>
 </ul>
@@ -78,10 +78,12 @@ ${agent_section}
 <h2>Program uv</h2>
 <p>uv to darmowy program, który pobiera i uruchamia narzędzia napisane w Pythonie. Nie musisz znać Pythona ani niczego konfigurować: wystarczy zainstalować uv raz. Potem komenda <code>${run_server}</code> sama pobierze i uruchomi serwer.</p>
 <h3>Instalacja uv</h3>
-<p>Otwórz aplikację Terminal (na Macu znajdziesz ją przez Spotlight: <kbd>⌘</kbd>+<kbd>spacja</kbd>, wpisz „Terminal”), wklej tę komendę i naciśnij Enter:</p>
+<p>Na macOS i Linuxie otwórz Terminal (na Macu znajdziesz go przez Spotlight: <kbd>⌘</kbd>+<kbd>spacja</kbd>, wpisz „Terminal”), wklej tę komendę i naciśnij Enter:</p>
 ${install_uv}
 <p>Jeśli masz Homebrew, możesz też użyć:</p>
 ${install_uv_homebrew}
+<p>Na Windowsie otwórz PowerShell i wklej:</p>
+${install_uv_windows}
 <p>Po instalacji zamknij okno terminala i otwórz nowe. Sprawdź, czy wszystko działa:</p>
 ${check_uv}
 <p>Komenda powinna wypisać numer wersji. Jeśli widzisz „command not found”, zajrzyj do <a href="#problemy">rozwiązywania problemów</a>.</p>
@@ -95,6 +97,7 @@ ${add_server}
 <h3>Dowolna aplikacja obsługująca lokalne serwery MCP</h3>
 <p>Dodaj serwer w ustawieniach MCP swojej aplikacji. W Claude Desktop bez rozszerzenia jest to plik <code>claude_desktop_config.json</code>; inne aplikacje przyjmują to samo polecenie i argumenty:</p>
 ${client_config}
+<p>Jeśli aplikacja na Windowsie nie znajduje <code>uvx</code>, odczytaj pełną ścieżkę poleceniem <code>(Get-Command uvx).Source</code> w PowerShellu i wpisz ją w polu <code>command</code>. W JSON każdy ukośnik odwrotny zapisuj podwójnie, np. <code>C:\\<wbr>Users\\<wbr>Jan\\<wbr>.local\\<wbr>bin\\<wbr>uvx.exe</code>.</p>
 <h3>Agent AI w terminalu: skill</h3>
 <p>Skill to gotowa instrukcja dla agenta kodującego (np. Claude Code, Codex, Cursor): podpowiada mu, których komend <code>deweloperuch</code> użyć i jak czytać wyniki. Instalacja wymaga Node.js:</p>
 ${install_skill}
@@ -177,7 +180,7 @@ ${stop_clear}</li>
 <h3>Wyniki są obcięte</h3>
 <p>Serwis pozwala przejrzeć najwyżej 20 stron wyników. Zamiast prosić o kolejne strony, zawęź pytanie: miasto, dzielnica, metraż, budżet.</p>
 <h3>Windows</h3>
-<p>Nie jest jeszcze obsługiwany: współdzielony limit zapytań korzysta z mechanizmu blokad plików, którego Windows nie ma.</p>
+<p>Zainstaluj aktualne wydanie serwera lub rozszerzenia. Wymagany jest Windows 10 (1903+) albo 11 i lokalny dysk NTFS dla katalogu pamięci podręcznej (domyślnie <code>%USERPROFILE%\<wbr>.cache\<wbr>deweloperuch-mcp</code>). Po instalacji uv uruchom ponownie aplikację z asystentem; jeśli nadal nie znajduje <code>uvx</code>, podaj jego pełną ścieżkę w konfiguracji MCP, jak opisano <a href="#inne-aplikacje">wyżej</a>.</p>
 <h3>Nadal nie działa?</h3>
 <p><a href="${repo}/issues">Zgłoś problem na GitHubie</a>. Opisz, jak instalowałeś serwer, w jakiej aplikacji i jaki komunikat widzisz.</p>
 </section>

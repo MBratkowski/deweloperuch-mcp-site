@@ -17,6 +17,6 @@
 ${font_preloads}
 <link rel="stylesheet" href="${asset_prefix}css/site.css">
 <link rel="stylesheet" href="${asset_prefix}css/${stylesheet}">
-<script src="${asset_prefix}js/site.js" defer></script>
+<script src="${asset_prefix}js/site.js" defer onerror="document.documentElement.setAttribute('data-nav-failed', '')"></script>
 <script defer src="${analytics_script_url}" data-website-id="${analytics_website_id}" data-domains="${analytics_domains}"></script>
 ${structured_data}</head>
