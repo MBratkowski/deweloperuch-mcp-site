@@ -16,6 +16,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools.docs_renderer import render_docs, render_landing
+from tools.page_fragments import load_shared_templates
 from tools.release import ROOT, PACKAGE, BuildError, Release, load_release
 from tools.update_demo import DEMO_PATH
 
@@ -37,12 +38,13 @@ def render_pages(release: Release, root: Path = ROOT) -> dict[str, str]:
         raise BuildError(f"{DEMO_PATH}: expected a JSON object")
     landing_template = read_source(root, "tools/templates/landing.html")
     docs_template = read_source(root, "tools/templates/docs.html")
+    shared_templates = load_shared_templates(root)
     try:
-        index = render_landing(landing_template, release, demo)
+        index = render_landing(landing_template, release, demo, shared_templates=shared_templates)
     except (KeyError, TypeError, ValueError, IndexError) as error:
         raise BuildError(f"{DEMO_PATH}: invalid saved demo: {error}") from error
     try:
-        docs = render_docs(release, docs_template)
+        docs = render_docs(release, docs_template, shared_templates=shared_templates)
     except (KeyError, ValueError) as error:
         raise BuildError(f"tools/templates/docs.html: {error}") from error
     return {"index.html": index, "docs/index.html": docs}

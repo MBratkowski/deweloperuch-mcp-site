@@ -50,6 +50,28 @@ COPY_ICON = ('<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"
              '<path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>')
 
 
+def copy_button(command: str, event: str = "", classes: str = "copy") -> str:
+    """Use the same command value for the visible text and clipboard payload."""
+    event = event or "docs-copy-" + re.sub(r"[^a-z0-9]+", "-", command.splitlines()[0].lower()).strip("-")[:48]
+    return (
+        f'<button type="button" class="{e(classes)}" data-command="{e(command)}" data-umami-event="{e(event)}" hidden>'
+        f'{COPY_ICON}<span aria-live="polite">Kopiuj</span></button>'
+    )
+
+
+def landing_command(command: str, event: str, *, hero: bool = False) -> str:
+    """A landing command row or hero pill, retaining their existing CSS variants."""
+    if hero:
+        return (f'<code class="text-primary"><span class="cmd-text">{e(command)}</span></code>\n'
+                + copy_button(command, event, "copy copy--pill"))
+    return (
+        '<div class="command-row">\n'
+        '<code class="command-code"><span aria-hidden="true" class="text-accent">$</span> '
+        f'<span class="cmd-text">{e(command)}</span></code>\n'
+        f'{copy_button(command, event)}\n</div>'
+    )
+
+
 def term(command: str, label: str = "Terminal", prompt: bool = True, event: str = "") -> str:
     """A terminal block with a copy button (js/site.js wires every button.copy)."""
     sign = '<span class="prompt-sign" aria-hidden="true">$</span> ' if prompt else ""
@@ -58,8 +80,7 @@ def term(command: str, label: str = "Terminal", prompt: bool = True, event: str 
         f'<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span>'
         f'<span aria-hidden="true"></span><em>{e(label)}</em></div>'
         f'<div class="cmd"><{tag}>{sign}<span class="cmd-text">{e(command)}</span></{tag}>'
-        f'<button type="button" class="copy" data-command="{e(command)}" data-umami-event="{e(event or "docs-copy-" + re.sub(r"[^a-z0-9]+", "-", command.splitlines()[0].lower()).strip("-")[:48])}" hidden>{COPY_ICON}'
-        f'<span aria-live="polite">Kopiuj</span></button></div></div>'
+        f'{copy_button(command, event)}</div></div>'
     )
 
 

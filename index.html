@@ -87,11 +87,9 @@
 <a href="docs/">Dokumentacja</a>
 </nav>
 <nav aria-label="Pobieranie i kod" class="pill-nav pill-nav--actions">
-<a data-umami-event="nav-github" href="https://github.com/MBratkowski/deweloperuch-mcp" class="nav-github">
-<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"></path></svg>
-GitHub
-</a>
-<a data-umami-event="nav-download" href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" class="pill-strong">Pobierz</a>
+<a data-umami-event="nav-github" class="nav-github" href="https://github.com/MBratkowski/deweloperuch-mcp"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"></path></svg>
+GitHub</a>
+<a href="https://github.com/MBratkowski/deweloperuch-mcp/releases/latest" class="pill-strong" data-umami-event="nav-download">Pobierz</a>
 </nav>
 </header>
 <main id="main">
@@ -110,10 +108,7 @@ GitHub
 <div class="cmd-pill">
 <span class="text-secondary">albo w terminalu:</span>
 <code class="text-primary"><span class="cmd-text">uvx deweloperuch-mcp</span></code>
-<button type="button" class="copy copy--pill" data-command="uvx deweloperuch-mcp" data-umami-event="copy-hero" hidden>
-<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
-<span aria-live="polite">Kopiuj</span>
-</button>
+<button type="button" class="copy copy--pill" data-command="uvx deweloperuch-mcp" data-umami-event="copy-hero" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button>
 </div>
 <p class="hero-note">Nieoficjalny projekt, działa za zgodą autorów deweloperuch.pl.</p>
 </div>
@@ -322,12 +317,9 @@ search_offers · <span data-demo-role="chip-state" class="chip-state">gotowe</sp
 <div class="term-body">
 <div class="command-row">
 <code class="command-code"><span aria-hidden="true" class="text-accent">$</span> <span class="cmd-text">claude mcp add deweloperuch -- uvx deweloperuch-mcp</span></code>
-<button type="button" class="copy" data-command="claude mcp add deweloperuch -- uvx deweloperuch-mcp" data-umami-event="copy-claude" hidden>
-<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
-<span aria-live="polite">Kopiuj</span>
-</button>
+<button type="button" class="copy" data-command="claude mcp add deweloperuch -- uvx deweloperuch-mcp" data-umami-event="copy-claude" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button>
 </div>
-<p class="term-comment term-comment--config"># w innych klientach: "command": "uvx",<br># "args": ["deweloperuch-mcp"]</p>
+<p class="term-comment term-comment--config"># w innych klientach: &quot;command&quot;: &quot;uvx&quot;,<br># &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]</p>
 </div>
 </div>
 <p class="card-note">Potrzebujesz tylko darmowego programu uv, który uruchamia serwer; instalujesz go raz, jedną komendą. Resztę ta komenda pobierze sama przy pierwszym starcie. <a href="docs/#uv" class="text-accent-soft">Jak zainstalować uv</a></p>
@@ -345,18 +337,12 @@ search_offers · <span data-demo-role="chip-state" class="chip-state">gotowe</sp
 <p class="term-comment"># skill dla agenta kodującego</p>
 <div class="command-row">
 <code class="command-code"><span aria-hidden="true" class="text-accent">$</span> <span class="cmd-text">npx skills add MBratkowski/deweloperuch-mcp</span></code>
-<button type="button" class="copy" data-command="npx skills add MBratkowski/deweloperuch-mcp" data-umami-event="copy-skill" hidden>
-<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
-<span aria-live="polite">Kopiuj</span>
-</button>
+<button type="button" class="copy" data-command="npx skills add MBratkowski/deweloperuch-mcp" data-umami-event="copy-skill" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button>
 </div>
 <p class="term-comment term-comment--next"># albo samo CLI</p>
 <div class="command-row">
 <code class="command-code"><span aria-hidden="true" class="text-accent">$</span> <span class="cmd-text">uvx --from deweloperuch-mcp deweloperuch --help</span></code>
-<button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch --help" data-umami-event="copy-cli" hidden>
-<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
-<span aria-live="polite">Kopiuj</span>
-</button>
+<button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch --help" data-umami-event="copy-cli" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button>
 </div>
 </div>
 </div>

@@ -419,3 +419,117 @@ def test_bad_mcp_metadata_stops_before_changing_pages(
     assert snapshot in error and field in error
     assert "sync_server" in error or "support" in error
     assert {name: read(site, name) for name in before} == before
+
+
+def test_shared_commands_update_both_pages_and_copy_payloads(saved: Release, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tools import page_config
+
+    monkeypatch.setattr(page_config, "COMMANDS", dataclasses.replace(
+        page_config.COMMANDS,
+        server_command="uvx-next", server_args=("new-server",),
+        install_skill='npx skills add "owner/new&skill"',
+        cli_help="uvx --from new-cli cli --help",
+    ))
+    pages = build_docs.render_pages(saved)
+    expected = {
+        'claude mcp add deweloperuch -- uvx-next new-server',
+        'npx skills add "owner/new&skill"',
+        'uvx --from new-cli cli --help',
+    }
+    for path, html in pages.items():
+        page = parse(html)
+        commands = {button.attrs["data-command"] for button in page.find_all("button", class_="copy")}
+        assert expected <= commands, path
+        # Each copy target must match the rendered text, including escaped punctuation.
+        for row in page.iter():
+            buttons = [child for child in row.children if not isinstance(child, str) and child.tag == "button" and "copy" in child.attrs.get("class", "").split()]
+            if buttons:
+                [text] = row.find_all(class_="cmd-text")
+                assert text.text() == buttons[0].attrs["data-command"], path
+        [agent] = page.find_all("button", data_umami_event="copy-agent-prompt" if path == "index.html" else "docs-copy-agent-prompt")
+        assert "uvx-next new-server --help" in agent.attrs["data-command"]
+        assert '"command": "uvx-next"' in agent.attrs["data-command"]
+    assert "uvx-next new-server" in parse(pages["docs/index.html"]).text()
+    [config] = parse(pages["docs/index.html"]).find_all("button", data_umami_event="docs-copy-config-json")
+    assert json.loads(config.attrs["data-command"])["mcpServers"]["deweloperuch"] == {
+        "command": "uvx-next", "args": ["new-server"],
+    }
+
+
+def test_shared_site_settings_reach_head_navigation_footer_and_install_steps(
+    saved: Release, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tools import page_config
+
+    monkeypatch.setattr(page_config, "SITE", dataclasses.replace(
+        page_config.SITE,
+        base_url="https://example.invalid/nested/site/",
+        repository_url="https://code.invalid/owner/server",
+        pypi_url="https://packages.invalid/project/server/",
+        analytics_script_url="https://analytics.invalid/script.js",
+        analytics_website_id="new-website-id", analytics_domains="example.invalid",
+    ))
+    for path, html in build_docs.render_pages(saved).items():
+        page = parse(html)
+        expected_url = "https://example.invalid/nested/site/" + ("docs/" if path.startswith("docs/") else "")
+        assert page.find_all("link", rel="canonical")[0].attrs["href"] == expected_url
+        assert page.find_all("meta", property="og:url")[0].attrs["content"] == expected_url
+        assert page.find_all("meta", property="og:image")[0].attrs["content"] == "https://example.invalid/nested/site/assets/og.png"
+        [analytics] = page.find_all("script", src="https://analytics.invalid/script.js")
+        assert analytics.attrs["data-website-id"] == "new-website-id"
+        assert analytics.attrs["data-domains"] == "example.invalid"
+        [header], [footer] = page.find_all("header"), page.find_all("footer")
+        assert header.find_all("a", href="https://code.invalid/owner/server")
+        assert header.find_all("a", href="https://code.invalid/owner/server/releases/latest")
+        assert footer.find_all("a", href="https://code.invalid/owner/server")
+        assert footer.find_all("a", href="https://packages.invalid/project/server/")
+        assert "https://github.com/MBratkowski/deweloperuch-mcp" not in html
+        assert "https://pypi.org/project/deweloperuch-mcp/" not in html
+        if path == "docs/index.html":
+            assert page.find_all("a", href="https://code.invalid/owner/server/releases/latest", data_umami_event="docs-open-release")
+        else:
+            [script] = page.find_all("script", type="application/ld+json")
+            metadata = json.loads("".join(script.children))
+            assert metadata["url"] == expected_url
+            assert metadata["sameAs"] == ["https://code.invalid/owner/server", "https://packages.invalid/project/server/"]
+
+
+@pytest.mark.parametrize("fragment", ["head", "nav_brand", "nav_actions", "footer_notice"])
+def test_shared_fragment_edits_reach_both_pages(site: Path, fragment: str) -> None:
+    source = site / f"tools/templates/shared/{fragment}.html"
+    marker = f"<!-- edited shared {fragment} -->"
+    source.write_text(source.read_text(encoding="utf-8") + marker, encoding="utf-8")
+    build_docs.build(site)
+    for path in ("index.html", "docs/index.html"):
+        assert read(site, path).count(marker) == 1
+
+
+@pytest.mark.parametrize("problem", ["missing", "unknown-slot"])
+def test_bad_shared_fragment_preserves_both_outputs(site: Path, problem: str) -> None:
+    source = site / "tools/templates/shared/head.html"
+    if problem == "missing":
+        source.unlink()
+    else:
+        source.write_text(source.read_text(encoding="utf-8") + "${typo}", encoding="utf-8")
+    before = {path: read(site, path) for path in ("index.html", "docs/index.html")}
+    with pytest.raises(BuildError, match="tools/templates/shared/head.html"):
+        build_docs.build(site)
+    assert {path: read(site, path) for path in before} == before
+
+
+def test_page_variants_preserve_canonical_asset_paths_and_analytics(saved: Release) -> None:
+    pages = build_docs.render_pages(saved)
+    expected_events = {
+        "index.html": ['nav-github', 'nav-download', 'cta-install', 'copy-hero', 'card-guide', 'copy-claude', 'copy-skill', 'copy-cli', 'copy-agent-prompt', 'cta-guide', 'plan-github'],
+        "docs/index.html": ['docs-nav-download', 'docs-open-release', 'docs-copy-agent-prompt', 'docs-copy-curl-lssf-https-astral-sh-uv-install-sh-sh', 'docs-copy-brew-install-uv', 'docs-copy-uvx-version', 'docs-copy-claude-mcp-add-deweloperuch-uvx-deweloperuch-mcp', 'docs-copy-config-json', 'docs-copy-npx-skills-add-mbratkowski-deweloperuch-mcp', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-skill-ins', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-help', 'docs-copy-uv-tool-install-deweloperuch-mcp', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-stop-stat', 'docs-copy-uvx-from-deweloperuch-mcp-deweloperuch-stop-clea'],
+    }
+    for path, html in pages.items():
+        page = parse(html)
+        prefix = "../" if path.startswith("docs/") else ""
+        canonical = "https://mbratkowski.github.io/deweloperuch-mcp-site/" + ("docs/" if prefix else "")
+        assert page.find_all("link", rel="canonical")[0].attrs["href"] == canonical
+        for asset in ("favicon.png", "apple-touch-icon.png", "css/site.css", "css/docs.css" if prefix else "css/landing.css"):
+            assert page.find_all("link", href=prefix + asset)
+        assert page.find_all("script", src=prefix + "js/site.js")
+        assert page.find_all("img", src=prefix + "assets/icon/icon-light.png")
+        assert [node.attrs["data-umami-event"] for node in page.find_all(data_umami_event=None)] == expected_events[path]

@@ -23,7 +23,7 @@ One offline command renders the complete landing page, documentation and saved d
 python3 -m tools.build_docs
 ```
 
-`python3 tools/build_docs.py` is also supported. The build reads only source templates,
+`python3 tools/build_docs.py` is also supported. The build reads only the shared Python configuration, source templates,
 `data/server/` and `data/demo.json`; it never starts the package, captures a demo or makes
 network requests. It renders and validates both pages before writing either one. Repeated
 builds are deterministic, and existing output files are not inputs. Commit regenerated
@@ -31,8 +31,10 @@ builds are deterministic, and existing output files are not inputs. Commit regen
 
 | What to change | Source |
 | --- | --- |
-| Landing copy, static markup, section order, navigation and footer | `tools/templates/landing.html` |
+| Landing copy, static markup, section order and page-specific navigation/footer | `tools/templates/landing.html` |
 | Documentation copy, static markup and section order | `tools/templates/docs.html` |
+| Installation commands, MCP client config, agent prompt, project URLs, analytics and page metadata | `tools/page_config.py` |
+| Common head, navigation brand/actions and footer notice | `tools/templates/shared/`, rendered by `tools/page_fragments.py` |
 | Release-dependent tool groups and editorial copy | `tools/docs_content.py` |
 | Release-dependent HTML fragments and installation illustrations | `tools/docs_renderer.py` |
 | Saved demo markup, formatting and animation hooks | `tools/update_demo.py` |
@@ -41,9 +43,25 @@ builds are deterministic, and existing output files are not inputs. Commit regen
 The templates use Python's standard `string.Template` syntax: `${slot_name}` inserts a
 rendered fragment and `$$` emits a literal dollar sign (for example a terminal prompt).
 Every landing slot must occur exactly once; missing, unknown, malformed or duplicated
-slots stop the build. The landing slots come from `landing_blocks()` in
-`tools/docs_renderer.py` and `demo_blocks()` in `tools/update_demo.py`. Documentation slots
-may repeat, such as the repository URL, but must match the values in `render_docs()`.
+slots stop the build. The landing slots come from `landing_blocks()` and `render_landing()` in
+`tools/docs_renderer.py`, `demo_blocks()` in `tools/update_demo.py`, and shared
+`page_fragments()` in `tools/page_fragments.py`. Documentation and shared-fragment slots
+may repeat, such as the repository URL, but must match their renderer values. Shared
+fragments are loaded from the same source root as both page templates; a missing or invalid
+fragment stops the build before either output is written.
+
+The landing-template work ([#11](https://github.com/MBratkowski/deweloperuch-mcp-site/issues/11))
+established the page source templates and one canonical build. Shared configuration
+([#12](https://github.com/MBratkowski/deweloperuch-mcp-site/issues/12)) extends that build; it
+does not add another page source or build command. `COMMANDS` and `SITE` in
+`tools/page_config.py` are the single source for installation commands and common site
+settings; `PAGES` holds the metadata, stylesheet and font-preload variants. Both pages
+derive command text and clipboard payloads from each command value, including agent
+prompts and MCP client JSON. Edit command values there, never in page templates. Keep
+page-specific section links and footer layouts in their page templates; reuse the shared
+fragments for common content. Asset paths are relative to each page, while canonical and
+social-image URLs use the configured production base URL. Existing analytics event names
+remain attached to their page-specific controls.
 
 Add, remove or move static sections in the appropriate source template, update its
 navigation links and anchor IDs, and rebuild. For a generated landing section, add or remove
@@ -70,7 +88,7 @@ python3 tools/build_docs.py
 ```
 
 - `tools/sync_server.py` writes `data/server/` from the latest release on PyPI (or `tools.sync_server 0.1.2`, or `--pinned` for the one in `version.json`). It only lists the MCP tools and prompts, and runs `tools/export_cli.py` in an isolated environment for `deweloperuch-mcp==<version>` to inspect the CLI's command tree. No tool or CLI command callback is invoked, so nothing reaches deweloperuch.pl. The files are `version.json`, `mcp_tools.json` (including the server's instructions), `mcp_prompts.json` and `cli_commands.json` (version, visible leaf commands, usage and help summaries). CLI commands and JSON keys are sorted, parameter order is preserved, and there are no timestamps or terminal-dependent help layouts.
-- `tools/build_docs.py` renders both complete pages, including the saved demo, from the source templates and committed data. `tools/release.py` loads and validates release snapshots, `tools/docs_content.py` holds editorial groups and copy, `tools/docs_renderer.py` renders the pages, and `tools/html_helpers.py` holds shared HTML and template helpers. The fact check compares the complete published pages with this same build output, including static content.
+- `tools/build_docs.py` renders both complete pages, including the saved demo, from the source templates and committed data. `tools/release.py` loads and validates release snapshots, `tools/docs_content.py` holds editorial groups and copy, `tools/docs_renderer.py` renders the pages using `tools/page_config.py` and `tools/page_fragments.py`, and `tools/html_helpers.py` holds shared HTML and template helpers. The fact check compares the complete published pages with this same build output, including static content.
 - The CLI table comes entirely from `cli_commands.json`, including `stop` and `skill` commands; there is no hand-maintained command list. Missing, malformed, duplicate or version-mismatched CLI metadata stops the build before either page is changed. Tool groups remain editorial: a release with a new or removed MCP tool stops the build with its name and the file to update.
 - `.github/workflows/sync.yml` runs both daily when the latest release on PyPI is not the pinned one, runs the tests and opens or updates a pull request from `sync/deweloperuch-mcp` with their outcome. It never merges. It needs "Allow GitHub Actions to create and approve pull requests" in the repository's Actions settings.
 
