@@ -1,4 +1,4 @@
-// deweloperuch-mcp landing page: copy buttons and the demo conversation.
+// Shared navigation, documentation location, copy buttons and the demo conversation.
 (() => {
   'use strict';
 
@@ -35,6 +35,49 @@
     navigation.setAttribute('data-nav-ready', '');
   }
   document.querySelectorAll('[data-navigation]').forEach(initNavigation);
+
+  function initTableOfContents(toc) {
+    const sections = Array.from(toc.querySelectorAll('a[href^="#"]'), (link) => ({
+      link,
+      section: document.getElementById(link.hash.slice(1)),
+    })).filter((item) => item.section);
+    if (!sections.length) return;
+    let scheduled = false;
+
+    function update() {
+      scheduled = false;
+      // Keep the section being read active until the next one reaches the top area.
+      const readingLine = Math.min(120, window.innerHeight / 4);
+      let current;
+      for (const item of sections) {
+        if (item.section.getBoundingClientRect().top <= readingLine) current = item;
+      }
+      // The final section may be too short to reach the reading line.
+      if (window.scrollY > 0
+          && window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2) {
+        current = sections[sections.length - 1];
+      }
+      for (const item of sections) {
+        if (item === current) item.link.setAttribute('aria-current', 'location');
+        else item.link.removeAttribute('aria-current');
+      }
+    }
+
+    function schedule() {
+      if (scheduled) return;
+      scheduled = true;
+      requestAnimationFrame(update);
+    }
+
+    window.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule);
+    window.addEventListener('hashchange', schedule);
+    window.addEventListener('pageshow', schedule);
+    // Fonts and expanded parameter tables can move sections without a scroll event.
+    if ('ResizeObserver' in window) new ResizeObserver(schedule).observe(document.querySelector('main'));
+    update();
+  }
+  document.querySelectorAll('[data-toc]').forEach(initTableOfContents);
 
   // Copy buttons ship hidden so a page without JS never shows a dead button.
   // writeText runs synchronously inside the click handler (Safari requires it).

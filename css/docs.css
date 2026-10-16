@@ -57,6 +57,7 @@
 .toc-title { margin: 0 0 8px 12px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
 .toc a { padding: 8px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; }
 .toc a:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
+.toc a[aria-current="location"] { color: var(--accent-text); background: rgba(52, 211, 153, 0.10); box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
 .prose { flex: 999 1 600px; min-width: 0; max-width: 840px; }
 .prose > section { padding-top: 40px; margin-top: 40px; border-top: 1px solid var(--border); }
 .prose > section:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
