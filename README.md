@@ -34,11 +34,13 @@ builds are deterministic, and existing output files are not inputs. Commit regen
 | Landing copy, static markup, section order and page-specific navigation/footer | `tools/templates/landing.html` |
 | Documentation copy, static markup and section order | `tools/templates/docs.html` |
 | Installation commands, MCP client config, agent prompt, project URLs, analytics and page metadata | `tools/page_config.py` |
-| Common head, navigation brand/actions and footer notice | `tools/templates/shared/`, rendered by `tools/page_fragments.py` |
+| Common head, navigation brand/menu/actions and footer notice | `tools/templates/shared/`, rendered by `tools/page_fragments.py` |
 | Release-dependent tool groups and editorial copy | `tools/docs_content.py` |
 | Release-dependent HTML fragments and installation illustrations | `tools/docs_renderer.py` |
 | Saved demo markup, formatting and animation hooks | `tools/update_demo.py` |
 | Appearance and responsive rules | `css/site.css`, `css/landing.css`, `css/docs.css` |
+
+The shared header switches to a compact menu at widths up to 760 px. `js/site.js` progressively enhances its native button, keeps `aria-expanded` in sync, and closes the menu on Escape, link activation or a breakpoint change. Without JavaScript every navigation link remains visible. Keep the navigation breakpoint in `css/site.css` and `initNavigation` in sync.
 
 The templates use Python's standard `string.Template` syntax: `${slot_name}` inserts a
 rendered fragment and `$$` emits a literal dollar sign (for example a terminal prompt).

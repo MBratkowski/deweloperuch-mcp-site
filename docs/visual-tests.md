@@ -4,7 +4,7 @@ The default `uv run pytest` runs the offline unit and Chromium behavior suite. I
 
 ## Coverage and determinism
 
-`tests/visual/test_visual.py` compares the entire landing and docs pages at 1440 × 900 (desktop), 768 × 1024 (tablet) and 375 × 812 (mobile), at device scale 1. Separate desktop crops cover install-button hover and keyboard focus, copy-button hover/focus, docs navigation hover and docs copy focus. The numeric install-button hover contrast regression remains in `tests/e2e/test_landing.py`.
+`tests/visual/test_visual.py` compares the entire landing and docs pages at 1440 × 900 (desktop), 768 × 1024 (tablet) and 375 × 812 (mobile), at device scale 1. Separate desktop crops cover install-button hover and keyboard focus, copy-button hover/focus, docs navigation hover and docs copy focus. Mobile header crops also cover the expanded menu on both pages at 375 px. The numeric install-button hover contrast regression remains in `tests/e2e/test_landing.py`.
 
 The pages run on the fixture's local HTTP server. All browser requests are intercepted: local assets pass, Umami receives an empty script, and every other host is blocked and fails the visual fixture. No test captures live apartment data. The committed `data/demo.json` and its generated HTML remain the source of the demo; reduced motion keeps its complete final state. Tests wait for self-hosted Poppins and JetBrains Mono, including Polish glyphs, and decoded images. Reduced motion, disabled screenshot animations, hidden carets, a fixed locale/time zone and a cleared pointer/focus state remove timing differences. Nothing is masked out of the page comparisons.
 

@@ -7,7 +7,7 @@ from tools import page_config as config
 from tools.html_helpers import e, render_template
 from tools.release import ROOT, BuildError
 
-SHARED_FRAGMENTS = ("head", "nav_brand", "nav_actions", "footer_notice")
+SHARED_FRAGMENTS = ("head", "nav_brand", "nav_toggle", "nav_actions", "footer_notice")
 GITHUB_ICON = ('<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
                'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z"></path></svg>')
 
@@ -53,10 +53,11 @@ def page_fragments(page_name: str, templates: dict[str, str] | None = None) -> d
             home_href="#" if landing else e(prefix), asset_prefix=e(prefix),
             image_attributes='class="brand-icon"' if landing else 'width="26" height="30"',
         ),
+        "nav_toggle": {},
         "nav_actions": dict(
             nav_class="pill-nav pill-nav--actions" if landing else "pill-nav",
             nav_label="Pobieranie i kod" if landing else "Linki zewnętrzne",
-            github_attributes='data-umami-event="nav-github" class="nav-github" ' if landing else "",
+            github_attributes='data-umami-event="nav-github" ' if landing else "",
             github_icon=GITHUB_ICON + "\n" if landing else "", repo=e(site.repository_url),
             releases=e(site.releases_url), download_event="nav-download" if landing else "docs-nav-download",
         ),
