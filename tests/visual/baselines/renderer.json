@@ -1,0 +1,7 @@
+{
+  "renderer": "playwright-1.64.0-noble-amd64",
+  "system": "Linux",
+  "machine": "x86_64",
+  "playwright": "1.64.0",
+  "chromium": "156.0.8078.4"
+}
