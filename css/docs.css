@@ -52,8 +52,8 @@
 .mock-lines span { height: 8px; border-radius: 4px; background: rgba(196, 181, 253, 0.22); }
 .mock-lines span:nth-child(2) { width: 85%; } .mock-lines span:nth-child(3) { width: 60%; }
 .agent-install { padding-top: 56px; }
-.docs-layout { display: flex; flex-wrap: wrap; gap: 48px; padding-top: 72px; padding-bottom: 96px; }
-.toc { flex: 1 1 220px; align-self: flex-start; position: sticky; top: 24px; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.docs-layout { container: docs-layout / inline-size; display: flex; flex-wrap: wrap; gap: 48px; padding-top: 72px; padding-bottom: 96px; }
+.toc { flex: 1 1 220px; align-self: flex-start; position: static; top: 24px; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
 .toc-title { margin: 0 0 8px 12px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
 .toc a { padding: 8px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; }
 .toc a:hover { color: var(--text); background: rgba(255, 255, 255, 0.05); }
@@ -90,8 +90,11 @@
 .tool details summary { display: inline-flex; align-items: center; min-height: 44px; cursor: pointer; color: var(--accent-text); font-size: 14px; font-weight: 600; }
 .docs-footer { border-top: 1px solid var(--border); padding: 32px 0 48px; font-size: 13px; color: var(--muted); }
 .docs-footer p { margin: 0 0 8px; }
-@media (max-width: 900px) {
-  .toc { position: static; }
+/* Only pin the TOC while both flex bases and their gap fit beside each other. */
+@container docs-layout (min-width: 868px) {
+  .toc { position: sticky; max-height: calc(100dvh - 48px); overflow-y: auto; overscroll-behavior-y: contain; }
+  /* Keep keyboard focus inside the scrollport, including its first and last links. */
+  .toc a:focus-visible { outline-offset: -2px; }
 }
 @media (max-width: 720px) {
   .docs-hero h1 { font-size: 38px; }
