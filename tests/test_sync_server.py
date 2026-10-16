@@ -14,6 +14,7 @@ from tools.release import BuildError
 
 ROOT = Path(__file__).resolve().parent.parent
 SERVER_FILES = ("version.json", "mcp_tools.json", "mcp_prompts.json", "cli_commands.json")
+PUBLIC_UVX = ["uvx", "--no-config", "--default-index", "https://pypi.org/simple", "--refresh-package", "deweloperuch-mcp"]
 
 
 def committed(name: str) -> str:
@@ -98,7 +99,7 @@ def test_committed_files_are_what_the_sync_writes() -> None:
 
 def test_sync_only_lists_and_reproduces_the_committed_files(tmp_path: Path, fake_client: type[FakeClient], capsys: pytest.CaptureFixture[str]) -> None:
     assert in_thread(lambda: sync_server.main([fake_client.version], root=tmp_path)) == 0
-    assert fake_client.started == [["uvx", f"deweloperuch-mcp=={fake_client.version}"]]
+    assert fake_client.started == [[*PUBLIC_UVX, f"deweloperuch-mcp=={fake_client.version}"]]
     assert fake_client.calls == ["tools/list", "prompts/list"]
     assert {name: (tmp_path / "data/server" / name).read_text(encoding="utf-8") for name in SERVER_FILES} == {
         name: committed(name) for name in SERVER_FILES
@@ -110,13 +111,13 @@ def test_sync_pinned_reads_version_json(tmp_path: Path, fake_client: type[FakeCl
     (tmp_path / "data/server").mkdir(parents=True)
     (tmp_path / "data/server/version.json").write_text(committed("version.json"), encoding="utf-8")
     assert in_thread(lambda: sync_server.main(["--pinned"], root=tmp_path)) == 0
-    assert fake_client.started == [["uvx", f"deweloperuch-mcp=={fake_client.version}"]]
+    assert fake_client.started == [[*PUBLIC_UVX, f"deweloperuch-mcp=={fake_client.version}"]]
 
 
 def test_sync_defaults_to_the_latest_release(tmp_path: Path, fake_client: type[FakeClient], monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sync_server, "latest_version", lambda: fake_client.version)
     assert in_thread(lambda: sync_server.main([], root=tmp_path)) == 0
-    assert fake_client.started == [["uvx", f"deweloperuch-mcp=={fake_client.version}"]]
+    assert fake_client.started == [[*PUBLIC_UVX, f"deweloperuch-mcp=={fake_client.version}"]]
 
 
 def test_sync_refuses_a_server_of_another_version(tmp_path: Path, fake_client: type[FakeClient]) -> None:

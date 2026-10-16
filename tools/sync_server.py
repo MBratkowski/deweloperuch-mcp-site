@@ -27,6 +27,8 @@ from urllib.request import Request, urlopen
 from tools.release import PACKAGE, ROOT, SERVER_DIR, BuildError, Release, pinned_version, validate_cli
 
 PYPI_URL = f"https://pypi.org/pypi/{PACKAGE}/json"
+# Use the same public source as latest_version and revalidate just-published releases.
+UVX_OPTIONS = ("--no-config", "--default-index", "https://pypi.org/simple", "--refresh-package", PACKAGE)
 
 
 def latest_version() -> str:
@@ -37,7 +39,7 @@ def latest_version() -> str:
 
 def read_cli(version: str) -> tuple[dict, ...]:
     """Inspect the pinned CLI in its own environment, without calling a command."""
-    command = ["uvx", "--from", f"{PACKAGE}=={version}", "python", "-I", str(Path(__file__).with_name("export_cli.py"))]
+    command = ["uvx", *UVX_OPTIONS, "--from", f"{PACKAGE}=={version}", "python", "-I", str(Path(__file__).with_name("export_cli.py"))]
     try:
         done = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", timeout=120)
     except subprocess.TimeoutExpired as error:
@@ -58,7 +60,7 @@ async def read_release(version: str | None = None) -> Release:
     from mcp import Client, StdioServerParameters
 
     version = version or latest_version()
-    server = StdioServerParameters(command="uvx", args=[f"{PACKAGE}=={version}"])
+    server = StdioServerParameters(command="uvx", args=[*UVX_OPTIONS, f"{PACKAGE}=={version}"])
     async with Client(server) as client:
         tools, prompts, cursor = [], [], None
         while True:
