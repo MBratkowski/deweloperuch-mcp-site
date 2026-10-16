@@ -4,7 +4,7 @@
         --question "Pokaż mieszkania 30–50 m² we Wrocławiu z największą obniżką ceny." \\
         --area-min 30 --area-max 50
 
-Then run ``python3 -m tools.update_demo``. Run it by hand when the demo should be refreshed,
+Then run ``python3 -m tools.build_docs``. Run it by hand when the demo should be refreshed,
 never in tests or CI and never in a loop: each run sends one request to deweloperuch.pl
 through the package's shared limiter and cache (``uvx --from deweloperuch-mcp==<pinned>
 deweloperuch offers search <city> <filters> --sort biggest_drop --json``, the release pinned in
@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None, root: Path = ROOT, run: Run = subprocess
         return fail(f"The top {TOP} come from fewer than two developers ({', '.join(top) or 'no offers'}). Pick another query")
     (root / DEMO_PATH).write_text(json.dumps(demo, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"{DEMO_PATH} written from 1 request ({demo['result']['total']} offers, top {TOP}: {', '.join(top)}); "
-          "next: python3 -m tools.update_demo")
+          "next: python3 -m tools.build_docs")
     return 0
 
 

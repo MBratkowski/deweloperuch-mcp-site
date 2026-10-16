@@ -1,6 +1,8 @@
 import dataclasses
 import json
 import shutil
+import socket
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -8,13 +10,12 @@ import pytest
 from tools import build_docs, docs_content, html_helpers
 from tools.release import BuildError, Release, load_release, pinned_version
 from tools.docs_content import Group
-from tools.html_helpers import fill_blocks
 from tools.docs_renderer import render_docs, render_landing
 from tools.check_facts import check_all, parse, read_page_facts, read_written_facts, squash
 from tools.sync_server import write
 
 ROOT = Path(__file__).resolve().parent.parent
-SITE_FILES = ("index.html", "docs/index.html", "data/demo.json", "data/server")
+SITE_FILES = ("index.html", "docs/index.html", "data/demo.json", "data/server", "tools/templates")
 
 NEW_TOOL = {
     "name": "search_parcels",
@@ -62,7 +63,7 @@ def parcels_group(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_committed_pages_are_the_build_output(saved: Release) -> None:
     assert render_docs(saved) == read(ROOT, "docs/index.html")
-    assert render_landing(read(ROOT, "index.html"), saved) == read(ROOT, "index.html")
+    assert render_landing(read(ROOT, "tools/templates/landing.html"), saved, json.loads(read(ROOT, "data/demo.json"))) == read(ROOT, "index.html")
 
 
 def test_building_twice_changes_nothing(site: Path) -> None:
@@ -126,7 +127,7 @@ def test_a_new_tool_stops_the_build_with_its_name(site: Path, saved: Release, ca
     with pytest.raises(BuildError, match="search_parcels"):
         render_docs(release)
     with pytest.raises(BuildError, match="search_parcels"):
-        render_landing(read(ROOT, "index.html"), release)
+        render_landing(read(ROOT, "tools/templates/landing.html"), release, json.loads(read(ROOT, "data/demo.json")))
 
     write(release, site)
     assert build_docs.main(site) == 1
@@ -145,7 +146,7 @@ def test_a_removed_tool_stops_the_build_with_its_name(saved: Release) -> None:
 def test_a_missing_demo_prompt_stops_the_build(saved: Release) -> None:
     release = dataclasses.replace(saved, prompts=tuple(p for p in saved.prompts if p["name"] != docs_content.DEMO_PROMPT))
     with pytest.raises(BuildError, match="DEMO_PROMPT"):
-        render_landing(read(ROOT, "index.html"), release)
+        render_landing(read(ROOT, "tools/templates/landing.html"), release, json.loads(read(ROOT, "data/demo.json")))
 
 
 def test_a_tool_in_two_groups_stops_the_build(saved: Release, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -155,15 +156,26 @@ def test_a_tool_in_two_groups_stops_the_build(saved: Release, monkeypatch: pytes
         render_docs(saved)
 
 
-def test_missing_markers_stop_the_build(saved: Release) -> None:
-    index = read(ROOT, "index.html").replace("<!-- hero-version:start -->", "")
-    with pytest.raises(BuildError, match="hero-version"):
-        render_landing(index, saved)
-
-
-def test_fill_blocks_fills_every_occurrence_and_only_named_blocks() -> None:
-    page = "<!-- a:start -->1<!-- a:end --> <!-- demo:start -->x <!-- a:start -->2<!-- a:end --><!-- demo:end -->"
-    assert fill_blocks(page, {"a": "9"}) == "<!-- a:start -->9<!-- a:end --> <!-- demo:start -->x <!-- a:start -->9<!-- a:end --><!-- demo:end -->"
+@pytest.mark.parametrize(
+    "change, problem",
+    [
+        (lambda page: page.replace("${hero_version}", ""), "missing.*hero_version"),
+        (lambda page: page.replace("${hero_version}", "${hero_version}${hero_version}"), "duplicate.*hero_version"),
+        (lambda page: page + "${typo}", "unknown.*typo"),
+        (lambda page: page + "${}", "invalid placeholder"),
+    ],
+)
+def test_invalid_landing_slots_stop_before_changing_pages(
+    site: Path, change, problem: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    template = site / "tools/templates/landing.html"
+    template.write_text(change(template.read_text(encoding="utf-8")), encoding="utf-8")
+    before = {name: read(site, name) for name in ("index.html", "docs/index.html")}
+    with pytest.raises(BuildError, match=problem):
+        build_docs.build(site)
+    assert build_docs.main(site) == 1
+    assert "tools/templates/landing.html" in capsys.readouterr().err
+    assert {name: read(site, name) for name in before} == before
 
 
 @pytest.mark.parametrize(
@@ -247,6 +259,69 @@ def test_bad_cli_snapshot_stops_before_changing_pages(site: Path, problem: str, 
     assert {name: read(site, name) for name in before} == before
 
 
+def test_build_recreates_both_pages_without_existing_output(site: Path) -> None:
+    (site / "index.html").unlink()
+    (site / "docs/index.html").unlink()
+    build_docs.build(site)
+    assert read(site, "index.html") == read(ROOT, "index.html")
+    assert read(site, "docs/index.html") == read(ROOT, "docs/index.html")
+
+
+def test_build_discards_edits_to_published_static_content(site: Path) -> None:
+    page = read(site, "index.html")
+    assert "Nieoficjalny projekt społeczności" in page
+    (site / "index.html").write_text(page.replace("Nieoficjalny projekt społeczności", "Edited output"))
+    build_docs.build(site)
+    assert read(site, "index.html") == read(ROOT, "index.html")
+
+
+def test_one_build_renders_the_saved_demo(site: Path) -> None:
+    demo = json.loads(read(site, "data/demo.json"))
+    demo["question"] = "Zapisane pytanie bez nowego pobierania danych."
+    demo["rows"][0]["price"] = 123456.0
+    (site / "data/demo.json").write_text(json.dumps(demo), encoding="utf-8")
+    build_docs.build(site)
+    page = read(site, "index.html")
+    assert demo["question"] in page
+    assert "123 456 zł" in page
+
+
+def test_source_template_edits_reach_both_outputs(site: Path) -> None:
+    for name in ("landing", "docs"):
+        template = site / f"tools/templates/{name}.html"
+        template.write_text(template.read_text(encoding="utf-8").replace("</main>", "<p>Source addition</p></main>"), encoding="utf-8")
+    build_docs.build(site)
+    assert "<p>Source addition</p>" in read(site, "index.html")
+    assert "<p>Source addition</p>" in read(site, "docs/index.html")
+
+
+@pytest.mark.parametrize("contents", [None, "{", "[]"])
+def test_missing_or_malformed_saved_demo_preserves_outputs(
+    site: Path, contents: str | None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = site / "data/demo.json"
+    if contents is None:
+        path.unlink()
+    else:
+        path.write_text(contents, encoding="utf-8")
+    before = {name: read(site, name) for name in ("index.html", "docs/index.html")}
+    assert build_docs.main(site) == 1
+    assert "data/demo.json" in capsys.readouterr().err
+    assert {name: read(site, name) for name in before} == before
+
+
+def test_build_is_offline_and_never_starts_capture_or_sync(site: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def forbidden(*args, **kwargs):
+        pytest.fail("The page build must not use sockets or subprocesses")
+
+    monkeypatch.setattr(socket, "socket", forbidden)
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    monkeypatch.setattr(subprocess, "Popen", forbidden)
+    build_docs.build(site)
+    assert read(site, "index.html") == read(ROOT, "index.html")
+    assert read(site, "docs/index.html") == read(ROOT, "docs/index.html")
+
+
 @pytest.mark.parametrize("missing", [True, False], ids=["omitted", "null"])
 def test_optional_mcp_display_metadata_is_normalized(site: Path, saved: Release, missing: bool) -> None:
     tools = json.loads(json.dumps(saved.tools))
@@ -265,7 +340,7 @@ def test_optional_mcp_display_metadata_is_normalized(site: Path, saved: Release,
     assert f'<h4>{tool["name"]}</h4>' in docs
     assert f'<h3>{prompt["name"]}</h3>' in docs
     assert "None" not in docs
-    assert f'data-prompt="{prompt["name"]}"' in render_landing(read(ROOT, "index.html"), release)
+    assert f'data-prompt="{prompt["name"]}"' in render_landing(read(ROOT, "tools/templates/landing.html"), release, json.loads(read(ROOT, "data/demo.json")))
     write(release, site)
     assert load_release(site) == release
     assert build_docs.main(site) == 0

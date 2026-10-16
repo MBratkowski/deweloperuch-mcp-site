@@ -9,7 +9,7 @@ package. The explicit --latest mode reads PyPI and inspects that release over st
 (``uvx deweloperuch-mcp==<version>``), using only ``tools/list``, ``prompts/list`` and
 callback-free CLI metadata inspection. Neither mode reaches deweloperuch.pl.
 
-Checks the version, marked and written page facts, MCP/CLI snapshots, generated
+Checks the version, marked and written page facts, MCP/CLI snapshots, complete page
 output of tools/build_docs.py, and the demo block against data/demo.json. Latest
 mode also reports a release newer than the pin, with synchronization commands.
 
@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 
-from tools import docs_content, docs_renderer
+from tools import build_docs, docs_content, docs_renderer
 from tools.release import ROOT, PACKAGE, BuildError, Release, load_release
 from tools.sync_server import read_release
 from tools.update_demo import format_area, format_change, format_date, format_pln, group_thousands
@@ -327,17 +327,18 @@ def compare_pinned(pinned: str, release: Release) -> list[str]:
 # Generated parts against tools/build_docs.py.
 
 
-def check_docs_build(docs_html: str, index_html: str, saved: Release) -> list[str]:
+def check_docs_build(docs_html: str, index_html: str, saved: Release, root: Path = ROOT) -> list[str]:
     """Both pages against what tools/build_docs.py builds from ``saved`` (data/server/)."""
     try:
-        docs, index = docs_renderer.render_docs(saved), docs_renderer.render_landing(index_html, saved)
+        pages = build_docs.render_pages(saved, root)
+        docs, index = pages["docs/index.html"], pages["index.html"]
     except BuildError as error:
         return [f"tools/build_docs.py stops: {line}" for line in str(error).splitlines()]
     problems = []
     if docs_html != docs:
         problems.append("docs/index.html differs from tools/build_docs.py output; run python3 tools/build_docs.py")
     if index_html != index:
-        problems.append("index.html: the generated blocks differ from tools/build_docs.py output; run python3 tools/build_docs.py")
+        problems.append("index.html differs from tools/build_docs.py output; run python3 tools/build_docs.py")
     return problems
 
 
@@ -422,7 +423,7 @@ def check_all(release: Release, root: Path = ROOT) -> list[str]:
     problems += cli_problems
     if cli_problems:
         problems.append(f"  {SYNC_COMMANDS.format(version=release.version)}")
-    problems += check_docs_build(docs_html, index_html, saved)
+    problems += check_docs_build(docs_html, index_html, saved, root)
     problems += check_demo(index_html, json.loads(read("data/demo.json")))
     return problems
 

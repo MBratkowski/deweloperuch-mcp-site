@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 from tools.check_facts import check_demo, parse, squash
-from tools.update_demo import format_area, format_change, format_date, format_pln, main, render
+from tools.docs_renderer import render_landing
+from tools.release import load_release
+from tools.update_demo import format_area, format_change, format_date, format_pln, main
 
 ROOT = Path(__file__).resolve().parent.parent
 KRAKOW = {
@@ -41,6 +43,10 @@ def committed_demo() -> dict:
     return json.loads(read("data/demo.json"))
 
 
+def render(demo: dict) -> str:
+    return render_landing(read("tools/templates/landing.html"), load_release(), demo)
+
+
 def answer(page: str) -> str:
     return squash(parse(page).find_all(data_step="answer")[0].text())
 
@@ -56,15 +62,15 @@ def test_polish_formatting() -> None:
 
 
 def test_committed_demo_is_the_render_of_its_data() -> None:
-    assert render(read("index.html"), committed_demo()) == read("index.html")
+    assert render(committed_demo()) == read("index.html")
 
 
 def test_a_new_capture_passes_the_fact_check() -> None:
-    assert check_demo(render(read("index.html"), KRAKOW), KRAKOW) == []
+    assert check_demo(render(KRAKOW), KRAKOW) == []
 
 
 def test_a_new_capture_names_its_city_and_first_offer() -> None:
-    page = render(read("index.html"), KRAKOW)
+    page = render(KRAKOW)
     assert answer(page) == "W Krakowie są 2 582 pasujące oferty. Trzy z największą obniżką od pierwszej ceny:"
     assert squash(parse(page).find_all(class_="composer-text")[0].text()) == "Pokaż historię ceny lokalu A3/13…"
     assert "Dom &amp; Ogród · Pierwszy S.A." in page
@@ -84,32 +90,42 @@ def test_the_answer_agrees_with_its_counts(total: int, rows: int, wanted: str) -
     demo = committed_demo()
     demo["result"]["total"] = total
     demo["rows"] = (demo["rows"] * 5)[:rows]
-    assert wanted in answer(render(read("index.html"), demo))
+    assert wanted in answer(render(demo))
 
 
-def test_main_writes_the_page_from_the_data(tmp_path: Path) -> None:
-    (tmp_path / "data").mkdir()
-    shutil.copy(ROOT / "index.html", tmp_path / "index.html")
-    (tmp_path / "data/demo.json").write_text(json.dumps(KRAKOW, ensure_ascii=False), encoding="utf-8")
-    assert main(tmp_path) == 0
-    assert check_demo(read("index.html", tmp_path), KRAKOW) == []
+@pytest.fixture
+def site(tmp_path: Path) -> Path:
+    for name in ("index.html", "docs/index.html", "data/demo.json", "data/server", "tools/templates"):
+        source, target = ROOT / name, tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy(source, target)
+    return tmp_path
 
 
-def test_main_stops_on_a_page_without_the_markers(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    (tmp_path / "data").mkdir()
-    (tmp_path / "index.html").write_text("<p>no demo</p>", encoding="utf-8")
-    shutil.copy(ROOT / "data/demo.json", tmp_path / "data/demo.json")
-    assert main(tmp_path) == 1
-    assert read("index.html", tmp_path) == "<p>no demo</p>"
-    assert "demo-chat" in capsys.readouterr().err
+def test_compatibility_command_builds_both_pages_from_saved_data(site: Path) -> None:
+    (site / "data/demo.json").write_text(json.dumps(KRAKOW, ensure_ascii=False), encoding="utf-8")
+    (site / "docs/index.html").write_text("stale output", encoding="utf-8")
+    assert main(site) == 0
+    assert check_demo(read("index.html", site), KRAKOW) == []
+    assert read("docs/index.html", site) == read("docs/index.html")
 
 
-def test_main_stops_on_data_sorted_otherwise(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    (tmp_path / "data").mkdir()
-    shutil.copy(ROOT / "index.html", tmp_path / "index.html")
+def test_main_stops_on_a_template_without_slots(site: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (site / "tools/templates/landing.html").write_text("<p>no slots</p>", encoding="utf-8")
+    assert main(site) == 1
+    assert read("index.html", site) == read("index.html")
+    assert read("docs/index.html", site) == read("docs/index.html")
+    assert "demo_chat" in capsys.readouterr().err
+
+
+def test_main_stops_on_data_sorted_otherwise(site: Path, capsys: pytest.CaptureFixture[str]) -> None:
     demo = committed_demo()
     demo["inspector_args"]["sort"] = "price_per_m2_asc"
-    (tmp_path / "data/demo.json").write_text(json.dumps(demo, ensure_ascii=False), encoding="utf-8")
-    assert main(tmp_path) == 1
-    assert read("index.html", tmp_path) == read("index.html")
+    (site / "data/demo.json").write_text(json.dumps(demo, ensure_ascii=False), encoding="utf-8")
+    assert main(site) == 1
+    assert read("index.html", site) == read("index.html")
+    assert read("docs/index.html", site) == read("docs/index.html")
     assert "biggest_drop" in capsys.readouterr().err
