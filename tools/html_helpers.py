@@ -1,7 +1,9 @@
-"""Small pure HTML, marker and Polish-number helpers shared by the renderers."""
+"""Small pure HTML, template and Polish-number helpers shared by the renderers."""
 
 import html
 import re
+from collections import Counter
+from string import Template
 
 from tools.release import BuildError
 
@@ -62,22 +64,31 @@ def term(command: str, label: str = "Terminal", prompt: bool = True, event: str 
 
 
 def _lines(lines: list[str]) -> str:
-    """A block of whole lines: the markers stay on lines of their own."""
+    """A fragment of whole lines, with its surrounding newlines preserved."""
     return "\n" + "\n".join(lines) + "\n"
 
 
-def fill_blocks(page: str, blocks: dict[str, str]) -> str:
-    """``page`` with the text between every ``<!-- name:start -->`` and ``<!-- name:end -->`` of a
-    name in ``blocks`` replaced by ``blocks[name]``. Each name must be on the page."""
-    found = set()
+def render_template(source: str, values: dict[str, str], *, name: str, unique: bool = False) -> str:
+    """Substitute named slots, rejecting invalid, unknown or missing slots.
 
-    def fill(match: re.Match) -> str:
-        name = match.group(1)
-        found.add(name)
-        return f"<!-- {name}:start -->{blocks[name]}<!-- {name}:end -->"
-
-    names = "|".join(re.escape(name) for name in blocks)
-    page = re.sub(rf"<!-- ({names}):start -->.*?<!-- \1:end -->", fill, page, flags=re.DOTALL)
-    if missing := sorted(blocks.keys() - found):
-        raise BuildError(f"index.html lacks the <!-- name:start --> and <!-- name:end --> markers of: {', '.join(missing)}")
-    return page
+    Landing slots are unique so accidentally duplicating a section fails the build.
+    Use ``$$`` for a literal dollar sign, as in ``string.Template``.
+    """
+    template = Template(source)
+    if not template.is_valid():
+        raise BuildError(f"{name}: invalid placeholder; use ${{slot_name}} or $$ for a literal dollar")
+    slots = Counter(
+        match.group("named") or match.group("braced")
+        for match in template.pattern.finditer(source)
+        if match.group("named") or match.group("braced")
+    )
+    problems = []
+    if missing := sorted(values.keys() - slots.keys()):
+        problems.append(f"missing slots: {', '.join(missing)}")
+    if unknown := sorted(slots.keys() - values.keys()):
+        problems.append(f"unknown slots: {', '.join(unknown)}")
+    if unique and (duplicates := sorted(slot for slot, count in slots.items() if count > 1)):
+        problems.append(f"duplicate slots: {', '.join(duplicates)}")
+    if problems:
+        raise BuildError(f"{name}: {'; '.join(problems)}")
+    return template.substitute(values)

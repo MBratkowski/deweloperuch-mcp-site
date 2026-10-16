@@ -193,10 +193,12 @@ def test_docs_build_detects_stale_output(index_html: str, release: Release) -> N
     assert check_docs_build(docs_html.replace("13 narzędzi", "12 narzędzi", 1), index_html, release)
     stale = index_html.replace(docs_renderer.AGENT_BLOCK, docs_renderer.AGENT_BLOCK.replace("Na skróty", "Skrót"))
     assert stale != index_html
-    assert any("generated blocks" in m for m in check_docs_build(docs_html, stale, release))
+    assert any("index.html differs" in m for m in check_docs_build(docs_html, stale, release))
     hand_edited = index_html.replace(f">v{release.version}<", f">v{release.version}.1<")
     assert hand_edited != index_html
-    assert any("generated blocks" in m for m in check_docs_build(docs_html, hand_edited, release))
+    assert any("index.html differs" in m for m in check_docs_build(docs_html, hand_edited, release))
+    static_edit = index_html.replace("Nieoficjalny projekt społeczności", "Edited output")
+    assert any("index.html differs" in m for m in check_docs_build(docs_html, static_edit, release))
 
 
 def test_docs_build_reports_what_stops_the_build(index_html: str, release: Release) -> None:

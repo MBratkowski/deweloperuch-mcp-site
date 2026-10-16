@@ -1,11 +1,11 @@
-"""Pure renderers for the documentation page and the landing's generated blocks."""
+"""Pure renderers for the documentation and landing source templates."""
 
 from pathlib import Path
-from string import Template
 
 from tools import docs_content as content
-from tools.html_helpers import _lines, e, fill_blocks, prompts_phrase, prompts_sentence_start, term, tools_phrase
+from tools.html_helpers import _lines, e, render_template, prompts_phrase, prompts_sentence_start, term, tools_phrase
 from tools.release import PACKAGE, REPO, RELEASES, Release, normalize_mcp_metadata, schema_types, validate_cli
+from tools.update_demo import demo_blocks
 
 
 def schema_type(prop: dict) -> str:
@@ -172,31 +172,31 @@ DANE_ROW = (
 
 
 def landing_blocks(release: Release) -> dict[str, str]:
-    """The generated parts of index.html for ``release``, by marker name."""
+    """Landing template slots for ``release``, keyed by their unique names."""
     release = normalize_mcp_metadata(release)
     content.check_release(release)
     groups = {group.key: group for group in content.GROUPS}
     tools, prompts = len(release.tools), len(release.prompts)
     blocks = {
-        "hero-version": f'<span data-fact="version">v{e(release.version)}</span>',
-        "demo-tool-count": tools_phrase(tools, fact=True),
-        "demo-prompts": _lines([
+        "hero_version": f'<span data-fact="version">v{e(release.version)}</span>',
+        "demo_tool_count": tools_phrase(tools, fact=True),
+        "demo_prompts": _lines([
             SIDEBAR_PROMPT.format(
                 title=e(p.get("title") or p["name"]),
                 active=" is-active" if p["name"] == content.DEMO_PROMPT else "",
             )
             for p in release.prompts
         ]),
-        "demo-tool-groups": _lines([
+        "demo_tool_groups": _lines([
             SIDEBAR_GROUP.format(label=e(g.short_label), key=g.key, count=len(g.tools)) for g in content.GROUPS
         ]),
-        "personas-prompt-count": prompts_sentence_start(prompts),
-        "install-counts": f"{tools_phrase(tools)} i {prompts_phrase(prompts)}",
-        "plan-counts": f"{tools_phrase(tools, fact=True)} i {prompts_phrase(prompts, fact=True)}",
-        "agent-prompt": AGENT_BLOCK,
+        "personas_prompt_count": prompts_sentence_start(prompts),
+        "install_counts": f"{tools_phrase(tools)} i {prompts_phrase(prompts)}",
+        "plan_counts": f"{tools_phrase(tools, fact=True)} i {prompts_phrase(prompts, fact=True)}",
+        "agent_prompt": AGENT_BLOCK,
     }
     for name, keys in content.DANE_LISTS:
-        blocks[name] = _lines([
+        blocks[name.replace("-", "_")] = _lines([
             DANE_ROW.format(key=key, names=e(" · ".join(names)), text=e(text))
             for key in keys
             for names, text in groups[key].rows
@@ -204,9 +204,12 @@ def landing_blocks(release: Release) -> dict[str, str]:
     return blocks
 
 
-def render_landing(index: str, release: Release) -> str:
-    """``index`` (index.html) with its generated parts for ``release``."""
-    return fill_blocks(index, landing_blocks(release))
+def render_landing(template: str, release: Release, demo: dict) -> str:
+    """Render the complete landing template from saved release and demo data."""
+    return render_template(
+        template, landing_blocks(release) | demo_blocks(demo),
+        name="tools/templates/landing.html", unique=True,
+    )
 
 
 def cli_table(release: Release) -> str:
@@ -214,12 +217,13 @@ def cli_table(release: Release) -> str:
     return "".join(f"<tr><td><code>{e(command['usage'])}</code></td><td>{e(command['description'])}</td></tr>" for command in commands)
 
 
-def render_docs(release: Release) -> str:
+def render_docs(release: Release, template: str | None = None) -> str:
     """Render the docs from the saved release; no subprocess or network access."""
     release = normalize_mcp_metadata(release)
     content.check_release(release)
-    template = Template((Path(__file__).with_name("templates") / "docs.html").read_text(encoding="utf-8"))
-    return template.substitute(
+    if template is None:
+        template = (Path(__file__).with_name("templates") / "docs.html").read_text(encoding="utf-8")
+    return render_template(template, dict(
         repo=REPO,
         releases=RELEASES,
         installation_steps=steps(release),
@@ -239,4 +243,4 @@ def render_docs(release: Release) -> str:
         cli_table=cli_table(release),
         stop_status=term('uvx --from deweloperuch-mcp deweloperuch stop status'),
         stop_clear=term('uvx --from deweloperuch-mcp deweloperuch stop clear'),
-    )
+    ), name="tools/templates/docs.html")

@@ -2,7 +2,7 @@
 
 The landing page of [deweloperuch-mcp](https://github.com/MBratkowski/deweloperuch-mcp), an MCP server and CLI over the public data of deweloperuch.pl. Live at https://mbratkowski.github.io/deweloperuch-mcp-site/.
 
-- Static landing page and documentation: `index.html`, `docs/index.html`, `css/`, `js/site.js`. No frontend build step or framework; the only third-party requests are Umami analytics.
+- Static landing page and documentation: `index.html`, `docs/index.html`, `css/`, `js/site.js`. No frontend framework; both HTML pages are generated offline with Python; the only third-party requests are Umami analytics.
 - Design: the approved Claude Design artboard, exported to `docs/design/noc.dc.html`. Spec and plan: `docs/superpowers/`.
 - Fonts: Poppins and JetBrains Mono from Fontsource 5.3.0, self-hosted in `assets/fonts/` under the SIL Open Font License (`OFL-*.txt`).
 - Demo data: `data/demo.json`, captured on 2026-10-16 with the package CLI (`deweloperuch offers search wroclaw --area-min 40 --area-max 55 --sort biggest_drop --json`), one request through the package's shared limiter; see [Demo data](#demo-data).
@@ -15,6 +15,42 @@ python3 -m http.server 8000
 
 Then open http://127.0.0.1:8000/.
 
+## Build and edit pages
+
+One offline command renders the complete landing page, documentation and saved demo:
+
+```bash
+python3 -m tools.build_docs
+```
+
+`python3 tools/build_docs.py` is also supported. The build reads only source templates,
+`data/server/` and `data/demo.json`; it never starts the package, captures a demo or makes
+network requests. It renders and validates both pages before writing either one. Repeated
+builds are deterministic, and existing output files are not inputs. Commit regenerated
+`index.html` and `docs/index.html` with source changes; never edit those outputs by hand.
+
+| What to change | Source |
+| --- | --- |
+| Landing copy, static markup, section order, navigation and footer | `tools/templates/landing.html` |
+| Documentation copy, static markup and section order | `tools/templates/docs.html` |
+| Release-dependent tool groups and editorial copy | `tools/docs_content.py` |
+| Release-dependent HTML fragments and installation illustrations | `tools/docs_renderer.py` |
+| Saved demo markup, formatting and animation hooks | `tools/update_demo.py` |
+| Appearance and responsive rules | `css/site.css`, `css/landing.css`, `css/docs.css` |
+
+The templates use Python's standard `string.Template` syntax: `${slot_name}` inserts a
+rendered fragment and `$$` emits a literal dollar sign (for example a terminal prompt).
+Every landing slot must occur exactly once; missing, unknown, malformed or duplicated
+slots stop the build. The landing slots come from `landing_blocks()` in
+`tools/docs_renderer.py` and `demo_blocks()` in `tools/update_demo.py`. Documentation slots
+may repeat, such as the repository URL, but must match the values in `render_docs()`.
+
+Add, remove or move static sections in the appropriate source template, update its
+navigation links and anchor IDs, and rebuild. For a generated landing section, add or remove
+its slot and renderer entry together; changing just one fails validation. Preserve the
+[demo animation hooks](#demo-animation-hooks) and accessibility attributes when moving demo
+markup. Run the offline tests after regenerating both pages.
+
 ## Styles
 
 - `css/site.css` owns the self-hosted fonts, design tokens, accessibility defaults and shared components: the page container, navigation, terminal, copy button and agent card.
@@ -22,7 +58,7 @@ Then open http://127.0.0.1:8000/.
 - Reuse component classes (`wrap`, `card`, `section-heading`, `term`, `copy`) and explicit variants (`button--primary`, `term--compact`). Use `:root` tokens for shared colours, fonts and container dimensions. The `theme-offers`, `theme-rcn`, `theme-official` and `theme-helpers` classes set `--theme` and `--theme-text`; generators select a theme by the metadata's group key, without storing CSS colours in Python.
 - `--content-width` caps the complete `.wrap` box, including both `--page-gutter` insets. Headers, sections and footer containers share that box on both pages; variants override only their own vertical spacing. Component interiors (cards, demo chat and installation illustrations), text measure caps and the demo window's narrower cap are independent dimensions, even when their values match a page token. Keep those local values literal.
 - Paragraph context defaults use `:where(...)` to keep their specificity at zero. Component classes such as `step-num`, `mock-title` and `eyebrow` take precedence regardless of source order; keep component typography on those classes.
-- Keep presentation in CSS, including generated HTML. Change `tools/docs_renderer.py`, `tools/templates/docs.html` or `tools/update_demo.py`, then regenerate the affected blocks with the commands below. The original artboard in `docs/design/` is an archived reference.
+- Keep presentation in CSS, including generated HTML. Edit the source files listed above, then run the offline build. The original artboard in `docs/design/` is an archived reference.
 
 ## Server data
 
@@ -34,7 +70,7 @@ python3 tools/build_docs.py
 ```
 
 - `tools/sync_server.py` writes `data/server/` from the latest release on PyPI (or `tools.sync_server 0.1.2`, or `--pinned` for the one in `version.json`). It only lists the MCP tools and prompts, and runs `tools/export_cli.py` in an isolated environment for `deweloperuch-mcp==<version>` to inspect the CLI's command tree. No tool or CLI command callback is invoked, so nothing reaches deweloperuch.pl. The files are `version.json`, `mcp_tools.json` (including the server's instructions), `mcp_prompts.json` and `cli_commands.json` (version, visible leaf commands, usage and help summaries). CLI commands and JSON keys are sorted, parameter order is preserved, and there are no timestamps or terminal-dependent help layouts.
-- `tools/build_docs.py` only coordinates reading, rendering and writing `docs/index.html` and the blocks of `index.html` between `<!-- name:start -->` and `<!-- name:end -->` markers; do not edit generated HTML by hand. `tools/release.py` loads and validates snapshots, `tools/docs_content.py` holds editorial groups and copy, `tools/docs_renderer.py` renders the pages with `tools/templates/docs.html`, and `tools/html_helpers.py` holds helpers shared with the demo renderer.
+- `tools/build_docs.py` renders both complete pages, including the saved demo, from the source templates and committed data. `tools/release.py` loads and validates release snapshots, `tools/docs_content.py` holds editorial groups and copy, `tools/docs_renderer.py` renders the pages, and `tools/html_helpers.py` holds shared HTML and template helpers. The fact check compares the complete published pages with this same build output, including static content.
 - The CLI table comes entirely from `cli_commands.json`, including `stop` and `skill` commands; there is no hand-maintained command list. Missing, malformed, duplicate or version-mismatched CLI metadata stops the build before either page is changed. Tool groups remain editorial: a release with a new or removed MCP tool stops the build with its name and the file to update.
 - `.github/workflows/sync.yml` runs both daily when the latest release on PyPI is not the pinned one, runs the tests and opens or updates a pull request from `sync/deweloperuch-mcp` with their outcome. It never merges. It needs "Allow GitHub Actions to create and approve pull requests" in the repository's Actions settings.
 
@@ -45,11 +81,11 @@ The demo window on the landing page is rendered from `data/demo.json`, one real 
 ```bash
 uv run python -m tools.capture_demo wroclaw --city-locative "we Wrocławiu" \
   --question "Pokaż mieszkania 40–55 m² we Wrocławiu z największą obniżką ceny." --area-min 40 --area-max 55
-python3 -m tools.update_demo
+python3 -m tools.build_docs
 ```
 
 - `tools/capture_demo.py` sends one request to deweloperuch.pl through the pinned release's CLI and its shared limiter (`uvx --from deweloperuch-mcp==<pinned> deweloperuch offers search … --sort biggest_drop --json`). Run it by hand only, never in tests or CI, and never in a loop. It writes nothing when the CLI fails, when an offer shown lacks an area, a price or a drop from the first price, or when the top 3 offers come from fewer than two developers (pick another query); on STOP (exit code 3) stop and report. The question and the city in the locative are written by hand and must say what the filters do.
-- `tools/update_demo.py` writes the blocks of `index.html` between `<!-- demo-title:start -->`, `<!-- demo-chat:start -->`, `<!-- demo-call:start -->` and their end markers; do not edit those by hand. CI renders the committed `data/demo.json` and fails on any difference.
+- `tools/update_demo.py` supplies the demo title, conversation and call-inspector slots to the offline build. CI renders the committed `data/demo.json` as part of the full page build and fails on any difference. The old `python3 -m tools.update_demo` command remains a compatibility alias for that same full build.
 
 ## Demo animation hooks
 
@@ -89,11 +125,11 @@ uv run pytest
 - `tests/test_package_site.py`: the public package against temporary files, including exact contents, excluded repository files, stale-output cleanup and symlink rejection, offline.
 - `tests/e2e/`: both pages in headless Chromium against a local server, offline (the analytics script is stubbed): copy buttons, the demo, no horizontal overflow at 320 and 375 px, focus rings, requests, cookies, links.
 - `tests/visual/`: maintained Linux Chromium full-page and hover/focus image comparisons. The default test command deselects the `visual` marker; the explicit CI visual job always runs it and fails on missing baselines. See [Visual and browser regression tests](docs/visual-tests.md) for the renderer, inspection and deliberate updates.
-- `uv run python -m tools.check_facts` (or explicit `--pinned`): the page facts, written copy, generated blocks and demo against the committed pinned MCP/CLI snapshots, offline. It never discovers the latest release. `LANDING_NETWORK=1 uv run pytest` additionally checks the pages against metadata inspected from the pinned package and syncs that package into a temporary folder to compare it with `data/server/`.
+- `uv run python -m tools.check_facts` (or explicit `--pinned`): the page facts, written copy, complete generated pages and demo against the committed pinned MCP/CLI snapshots, offline. It never discovers the latest release. `LANDING_NETWORK=1 uv run pytest` additionally checks the pages against metadata inspected from the pinned package and syncs that package into a temporary folder to compare it with `data/server/`.
 - `uv run python -m tools.check_facts --latest`: explicit release-freshness monitoring against the latest deweloperuch-mcp on PyPI. It lists MCP tools and prompts and inspects the CLI without invoking callbacks, so nothing reaches deweloperuch.pl. A release other than the pinned one fails with synchronization commands; a failed latest-release lookup also fails this monitor.
 - `uv run python -m tools.render_images`: renders `favicon.png`, `apple-touch-icon.png` and `assets/og.png`.
 
-CI (`.github/workflows/check.yml`, on every push, pull request and manual run) calls the reusable `validate.yml` workflow for the tests, the offline pinned fact check, a guard that syncs the pinned release, builds the pages, renders the demo and fails on any difference from the commit, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). No validation job resolves the latest deweloperuch-mcp release. Local Lighthouse measures each commit's own files; `pages.yml` measures the live site after every deployment.
+CI (`.github/workflows/check.yml`, on every push, pull request and manual run) calls the reusable `validate.yml` workflow for the tests, the offline pinned fact check, a guard that syncs the pinned release, builds both complete pages including the saved demo and fails on any difference from the commit, the Nu HTML validator, a link check (`lychee.toml`; deweloperuch.pl is never requested) and Lighthouse (`lighthouserc.json`, mobile: accessibility 100, best practices ≥ 95, performance ≥ 90). No validation job resolves the latest deweloperuch-mcp release. Local Lighthouse measures each commit's own files; `pages.yml` measures the live site after every deployment.
 
 Release freshness is a separate scheduled/manual concern. `.github/workflows/freshness.yml` runs `tools.check_facts --latest` every Monday and on manual dispatch, leaves a red workflow status for stale metadata or lookup failures, and records the result in the Actions job summary. `.github/workflows/sync.yml` independently discovers the latest release daily or manually, reports a stale pin with a warning and summary, and opens or updates the synchronization PR as described above. A new upstream release or unavailable latest-version lookup does not fail Check or block publication of otherwise valid pinned inputs.
 

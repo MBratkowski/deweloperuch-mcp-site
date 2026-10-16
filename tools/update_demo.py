@@ -1,13 +1,8 @@
-"""Render data/demo.json into the demo window of index.html.
+"""Pure saved-demo rendering and number formatting for the offline page build.
 
-    python3 -m tools.update_demo
-
-Writes the blocks between ``<!-- demo-title:start -->``, ``<!-- demo-chat:start -->`` and
-``<!-- demo-call:start -->`` and their ``:end`` markers: the window title, the conversation
-(question, tool chip, answer, table, source line with the capture date, composer) and the
-call inspector. The rest of the window is hand-written, except the sidebar's prompts and
-tool groups, which tools/build_docs.py writes. data/demo.json comes from
-tools/capture_demo.py; run this after each capture. CI fails when the page and the data differ.
+``python3 -m tools.update_demo`` remains a compatibility alias for the complete
+``python3 -m tools.build_docs`` build. Capture is separate: tools/capture_demo.py
+is manual and rate-limited; rendering only reads committed data.
 """
 
 import html
@@ -18,7 +13,7 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from tools.html_helpers import NUMBER_WORDS, _lines, fill_blocks, plural
+from tools.html_helpers import NUMBER_WORDS, _lines, plural
 from tools.release import ROOT, BuildError
 
 DEMO_PATH = "data/demo.json"
@@ -132,7 +127,7 @@ def short_list_url(url: str) -> str:
 
 
 def demo_blocks(demo: dict) -> dict[str, str]:
-    """The generated parts of the demo window for ``demo`` (data/demo.json), by marker name."""
+    """The three landing template slots for a saved capture; no I/O or requests."""
     if (sort := demo["inspector_args"].get("sort")) != SORT:
         raise BuildError(f"{DEMO_PATH} is sorted by {sort!r}; the window's copy is written for {SORT!r}: capture again")
     result = demo["result"]
@@ -164,27 +159,17 @@ def demo_blocks(demo: dict) -> dict[str, str]:
         field("result", "list_url", short_list_url(result["list_url"])),
     ]
     return {
-        "demo-title": f"Mieszkania {e(demo['city_locative'])}",
-        "demo-chat": chat,
-        "demo-call": _lines(call),
+        "demo_title": f"Mieszkania {e(demo['city_locative'])}",
+        "demo_chat": chat,
+        "demo_call": _lines(call),
     }
 
 
-def render(index: str, demo: dict) -> str:
-    """``index`` (index.html) with its demo window rendered from ``demo``."""
-    return fill_blocks(index, demo_blocks(demo))
-
-
 def main(root: Path = ROOT) -> int:
-    demo = json.loads((root / DEMO_PATH).read_text(encoding="utf-8"))
-    try:
-        index = render((root / "index.html").read_text(encoding="utf-8"), demo)
-    except BuildError as error:
-        print(f"tools/update_demo.py stopped:\n{error}", file=sys.stderr)
-        return 1
-    (root / "index.html").write_text(index, encoding="utf-8")
-    print(f"index.html: the demo window rendered from {DEMO_PATH} (captured {demo['captured_at']}, {len(demo['rows'])} rows)")
-    return 0
+    """Compatibility entry point: use the same complete offline build."""
+    from tools.build_docs import main as build_main
+
+    return build_main(root)
 
 
 if __name__ == "__main__":
