@@ -49,6 +49,29 @@ python3 -m tools.update_demo
 - `tools/capture_demo.py` sends one request to deweloperuch.pl through the pinned release's CLI and its shared limiter (`uvx --from deweloperuch-mcp==<pinned> deweloperuch offers search … --sort biggest_drop --json`). Run it by hand only, never in tests or CI, and never in a loop. It writes nothing when the CLI fails, when an offer shown lacks an area, a price or a drop from the first price, or when the top 3 offers come from fewer than two developers (pick another query); on STOP (exit code 3) stop and report. The question and the city in the locative are written by hand and must say what the filters do.
 - `tools/update_demo.py` writes the blocks of `index.html` between `<!-- demo-title:start -->`, `<!-- demo-chat:start -->`, `<!-- demo-call:start -->` and their end markers; do not edit those by hand. CI renders the committed `data/demo.json` and fails on any difference.
 
+## Demo animation hooks
+
+The HTML contains the complete, readable conversation. `js/site.js` enhances it only when
+motion is allowed and `IntersectionObserver` is available. Keep these behavior hooks when
+changing presentation classes or moving the markup into a template:
+
+- `#demo` is the animation root. Its `data-demo` state ships as `final`; JavaScript uses
+  `ready`, `playing` and `done`. Only `ready` and `playing` hide unrevealed content.
+- Exactly one element inside the root has each `data-demo-role`: `composer`, `chip-state`
+  and `chip-dot`. The composer needs a nonempty `data-question` and final placeholder text;
+  the status needs its completed text. Those shipped texts are restored on completion.
+- `data-step` marks reveal phases: `question`, `chip`, `arg`, `result`, `answer`, `table`,
+  `row` and `source`. Every group needs at least one element. JavaScript adds `data-shown`
+  as each step appears. The renderer in `tools/update_demo.py` owns these hooks.
+- `is-typing` and `is-busy` are temporary presentation states on the composer and dot;
+  their CSS animations run only while the root is `playing`. Other CSS classes are visual
+  and are never used to locate animation elements.
+
+Initialization validates the contract before hiding content. Playback checks it after each
+wait. A missing/changed hook or an initialization/playback exception returns the root to
+`final`, restores the available shipped text, removes typing/busy indicators, and disconnects
+the observer. No JavaScript and reduced motion keep the shipped final state.
+
 ## Checks
 
 The checks use [uv](https://docs.astral.sh/uv/) (Python ≥ 3.12):
