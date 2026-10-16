@@ -67,35 +67,33 @@ def answer(demo: dict) -> str:
     )
 
 
-CELL = "padding: 10px 12px; border-top: 1px solid #241D33"
-NUMBER_CELL = CELL + "; text-align: right; white-space: nowrap"
 ROW = (
     '<tr data-step="row">'
-    f"<td style=\"{CELL}; font-family: 'JetBrains Mono', monospace; font-size: 12px; white-space: nowrap\">{{name}}</td>"
-    f'<td style="{CELL}">{{investment}} · {{developer}}</td>'
-    f'<td style="{NUMBER_CELL}">{{area}}</td>'
-    f'<td style="{NUMBER_CELL}">{{price}}</td>'
-    f'<td style="{NUMBER_CELL}; color: #C4B5FD; font-weight: 600">{{change}}</td>'
+    '<td>{name}</td>'
+    '<td>{investment} · {developer}</td>'
+    '<td class="numeric">{area}</td>'
+    '<td class="numeric">{price}</td>'
+    '<td class="offer-change numeric">{change}</td>'
     "</tr>"
 )
 
 CHAT = """
-<p data-step="question" style="margin: 0; align-self: flex-end; max-width: 80%; padding: 9px 14px; border-radius: 16px 16px 5px 16px; background: #2A2140">{question}</p>
-<p data-step="chip" style="margin: 0; align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.10); font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #A7A1B8">
-<span class="chip-dot" aria-hidden="true" style="width: 6px; height: 6px; border-radius: 50%; background: #34D399"></span>
+<p data-step="question" class="chat-question">{question}</p>
+<p data-step="chip" class="tool-chip">
+<span class="chip-dot status-dot" aria-hidden="true"></span>
 {tool} · <span class="chip-state">gotowe</span>
 </p>
-<p data-step="answer" style="margin: 0">{answer}</p>
-<div data-step="table" style="border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08)">
-<div style="overflow-x: auto" tabindex="0" role="region" aria-label="Tabela ofert">
-<table style="width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums">
+<p data-step="answer" class="chat-answer">{answer}</p>
+<div data-step="table" class="offers-table-frame">
+<div tabindex="0" role="region" aria-label="Tabela ofert" class="scroll-region">
+<table class="offers-table">
 <thead>
-<tr style="background: #1A1426; text-align: left; font-size: 11px; color: #A7A1B8">
-<th scope="col" style="padding: 8px 12px; font-weight: 600">Lokal</th>
-<th scope="col" style="padding: 8px 12px; font-weight: 600">Inwestycja · deweloper</th>
-<th scope="col" style="padding: 8px 12px; font-weight: 600; text-align: right">Metraż</th>
-<th scope="col" style="padding: 8px 12px; font-weight: 600; text-align: right">Cena</th>
-<th scope="col" style="padding: 8px 12px; font-weight: 600; text-align: right">Obniżka</th>
+<tr>
+<th scope="col">Lokal</th>
+<th scope="col">Inwestycja · deweloper</th>
+<th scope="col" class="numeric">Metraż</th>
+<th scope="col" class="numeric">Cena</th>
+<th scope="col" class="numeric">Obniżka</th>
 </tr>
 </thead>
 <tbody>
@@ -104,27 +102,27 @@ CHAT = """
 </table>
 </div>
 </div>
-<p data-step="source" style="margin: 0; font-size: 12px; color: #A7A1B8">Ceny ofertowe z deweloperuch.pl, stan na {date}. <a href="{list_url}" style="color: #C4B5FD">Otwórz pełną listę</a></p>
-<div style="display: flex; align-items: center; gap: 10px; margin-top: 6px; padding: 6px 6px 6px 14px; border-radius: 12px; background: #1A1426; border: 1px solid rgba(255,255,255,0.08)">
-<span class="composer-text" data-question="{question}" style="flex: 1; color: #A7A1B8; font-size: 13px">Pokaż historię ceny lokalu {first}…</span>
-<span aria-hidden="true" style="flex: none; width: 44px; height: 44px; border-radius: 9px; background: #34D399; color: #052E21; display: inline-flex; align-items: center; justify-content: center">
+<p data-step="source" class="chat-source">Ceny ofertowe z deweloperuch.pl, stan na {date}. <a href="{list_url}" class="text-offers">Otwórz pełną listę</a></p>
+<div class="composer">
+<span class="composer-text" data-question="{question}">Pokaż historię ceny lokalu {first}…</span>
+<span aria-hidden="true" class="composer-send">
 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"></path><path d="M5 12l7-7 7 7"></path></svg>
 </span>
 </div>
 """
 
 FIELD = (
-    '<p data-step="{step}" style="margin: 0; display: flex; gap: 14px"><span style="color: #A7A1B8; min-width: 84px">{name}</span>'
-    '<span style="color: {color}; overflow-wrap: anywhere">{value}</span></p>'
+    '<p data-step="{step}" class="inspector-field"><span class="inspector-key">{name}</span>'
+    '<span class="inspector-value {kind}">{value}</span></p>'
 )
-TOOL = '<p style="margin: 0; font-size: 13px; color: #F1EEF7">{tool}</p>'
-RESULT_HEADING = '<p style="margin: 6px 0 0; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #A7A1B8">Wynik</p>'
+TOOL = '<p class="inspector-tool">{tool}</p>'
+RESULT_HEADING = '<p class="inspector-label">Wynik</p>'
 
 
 def field(step: str, name: str, value: object) -> str:
     """One inspector line, its value as JSON and coloured by type: strings green, booleans blue, numbers purple."""
-    color = "#6EE7B7" if isinstance(value, str) else "#7DD3FC" if isinstance(value, bool) else "#C4B5FD"
-    return FIELD.format(step=step, name=e(name), color=color, value=e(json.dumps(value, ensure_ascii=False)))
+    kind = "text-accent-soft" if isinstance(value, str) else "text-official" if isinstance(value, bool) else "text-offers"
+    return FIELD.format(step=step, name=e(name), kind=kind, value=e(json.dumps(value, ensure_ascii=False)))
 
 
 def short_list_url(url: str) -> str:
