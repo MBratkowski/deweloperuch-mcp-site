@@ -50,62 +50,103 @@
   const demo = document.getElementById('demo');
   if (!demo || reduceMotion || !('IntersectionObserver' in window)) return;
 
-  const composer = demo.querySelector('.composer-text');
-  const chipState = demo.querySelector('.chip-state');
-  const chipDot = demo.querySelector('.chip-dot');
-  const placeholder = composer.textContent;
-  const question = composer.dataset.question;
-  const steps = (name) => Array.from(demo.querySelectorAll(`[data-step="${name}"]`));
+  // Behavior hooks are documented in README.md; visual classes are free to change.
+  const roles = ['composer', 'chip-state', 'chip-dot'];
+  const hooks = roles.map((role) => demo.querySelector(`[data-demo-role="${role}"]`));
+  const [composer, chipState, chipDot] = hooks;
+  const placeholder = composer?.textContent;
+  const question = composer?.dataset.question;
+  const completedState = chipState?.textContent;
+  const phases = ['question', 'chip', 'arg', 'result', 'answer', 'table', 'row', 'source'];
+  const groups = Object.fromEntries(phases.map((name) => [name,
+    Array.from(demo.querySelectorAll(`[data-step="${name}"]`))]));
   const show = (el) => el.setAttribute('data-shown', '');
-  // A hidden tab throttles timers: when the tab is hidden mid-animation, finish at once
-  // instead of stalling half-way. Hiding the tab before the demo starts changes nothing.
+  let observer;
   let playing = false;
   let skip = false;
-  document.addEventListener('visibilitychange', () => { if (document.hidden && playing) skip = true; });
-  const wait = (ms) => (skip ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms)));
 
-  demo.dataset.demo = 'ready';
-  composer.textContent = '';
-
-  async function play() {
-    playing = true;
-    demo.dataset.demo = 'playing';
-    composer.classList.add('is-typing');
-    for (let i = 1; i <= question.length && !skip; i += 1) {
-      composer.textContent = question.slice(0, i);
-      await wait(1000 / 30);
+  function validate() {
+    const validHooks = roles.every((role, index) => {
+      const found = demo.querySelectorAll(`[data-demo-role="${role}"]`);
+      return found.length === 1 && found[0] === hooks[index];
+    });
+    const validSteps = phases.every((name) => groups[name].length > 0
+      && groups[name].every((el) => demo.contains(el) && el.dataset.step === name));
+    if (!validHooks || !validSteps || !question?.trim() || !placeholder?.trim()
+        || !completedState?.trim() || composer.dataset.question !== question) {
+      throw new Error('The demo animation contract is incomplete or changed');
     }
-    await wait(300);
-    composer.classList.remove('is-typing');
-    composer.textContent = '';
-    steps('question').forEach(show);
-    await wait(400);
-    chipState.textContent = 'w toku';
-    chipDot.classList.add('is-busy');
-    steps('chip').forEach(show);
-    for (const el of steps('arg')) { await wait(80); show(el); }
-    await wait(900);
-    chipState.textContent = 'gotowe';
-    chipDot.classList.remove('is-busy');
-    for (const el of steps('result')) { await wait(80); show(el); }
-    await wait(300);
-    steps('answer').forEach(show);
-    steps('table').forEach(show);
-    for (const el of steps('row')) { await wait(120); show(el); }
-    await wait(200);
-    steps('source').forEach(show);
-    composer.textContent = placeholder;
-    demo.dataset.demo = 'done';
-    playing = false;
   }
 
-  const observer = new IntersectionObserver((entries) => {
-    const seen = entries.some((entry) => entry.isIntersecting
-      && (entry.intersectionRatio >= 0.4 || entry.intersectionRect.height >= window.innerHeight * 0.5));
-    if (seen) {
-      observer.disconnect();
-      play();
+  // Reveal via the root state first: recovery never depends on the failed reveal step.
+  function finish(state) {
+    demo.dataset.demo = state;
+    playing = false;
+    if (composer) {
+      composer.textContent = placeholder;
+      composer.classList.remove('is-typing');
     }
-  }, { threshold: [0, 0.1, 0.2, 0.3, 0.4] });
-  observer.observe(demo);
+    if (chipState) chipState.textContent = completedState;
+    if (chipDot) chipDot.classList.remove('is-busy');
+    observer?.disconnect();
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+  }
+
+  // Hidden tabs throttle timers. Finish the active sequence without further delays.
+  function onVisibilityChange() { if (document.hidden && playing) skip = true; }
+  async function wait(ms) {
+    if (!skip) await new Promise((resolve) => setTimeout(resolve, ms));
+    validate();
+  }
+
+  async function play() {
+    try {
+      observer.disconnect();
+      validate();
+      playing = true;
+      demo.dataset.demo = 'playing';
+      composer.classList.add('is-typing');
+      for (let i = 1; i <= question.length && !skip; i += 1) {
+        composer.textContent = question.slice(0, i);
+        await wait(1000 / 30);
+      }
+      await wait(300);
+      composer.classList.remove('is-typing');
+      composer.textContent = '';
+      groups.question.forEach(show);
+      await wait(400);
+      chipState.textContent = 'w toku';
+      chipDot.classList.add('is-busy');
+      groups.chip.forEach(show);
+      for (const el of groups.arg) { await wait(80); show(el); }
+      await wait(900);
+      chipState.textContent = completedState;
+      chipDot.classList.remove('is-busy');
+      for (const el of groups.result) { await wait(80); show(el); }
+      await wait(300);
+      groups.answer.forEach(show);
+      groups.table.forEach(show);
+      for (const el of groups.row) { await wait(120); show(el); }
+      await wait(200);
+      groups.source.forEach(show);
+      finish('done');
+    } catch {
+      finish('final');
+    }
+  }
+
+  try {
+    validate();
+    observer = new IntersectionObserver((entries) => {
+      const seen = entries.some((entry) => entry.isIntersecting
+        && (entry.intersectionRatio >= 0.4 || entry.intersectionRect.height >= window.innerHeight * 0.5));
+      if (seen && !playing) play();
+    }, { threshold: [0, 0.1, 0.2, 0.3, 0.4] });
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    composer.textContent = '';
+    demo.dataset.demo = 'ready';
+    observer.observe(demo);
+  } catch {
+    finish('final');
+  }
 })();
