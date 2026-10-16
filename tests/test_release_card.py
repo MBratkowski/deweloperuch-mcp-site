@@ -31,7 +31,7 @@ def test_command_exports_a_release_png_from_unicode_path(tmp_path: Path, card_da
     source.write_text(json.dumps(card_data, ensure_ascii=False), encoding="utf-8")
     output = tmp_path / "grafiki" / "release.png"
     done = subprocess.run(
-        [sys.executable, "-m", "tools.render_release", str(source), "--output", str(output)],
+        [sys.executable, "-m", "tools.render_release", str(source), "--expect-version", "0.1.3", "--output", str(output)],
         cwd=ROOT, capture_output=True, text=True, timeout=60,
     )
     assert done.returncode == 0, done.stderr
@@ -39,6 +39,20 @@ def test_command_exports_a_release_png_from_unicode_path(tmp_path: Path, card_da
         assert image.format == "PNG"
         assert image.size == (1200, 630)
         assert len(image.convert("RGB").getcolors(1200 * 630)) > 100
+
+
+def test_release_version_mismatch_does_not_replace_an_export(tmp_path: Path, card_data: dict) -> None:
+    source = tmp_path / "release.json"
+    source.write_text(json.dumps(card_data), encoding="utf-8")
+    output = tmp_path / "keep.png"
+    output.write_bytes(b"previous export")
+    done = subprocess.run(
+        [sys.executable, "-m", "tools.render_release", str(source), "--expect-version", "0.1.4", "--output", str(output)],
+        cwd=ROOT, capture_output=True, text=True, timeout=60,
+    )
+    assert done.returncode == 1
+    assert "expected 0.1.4, got 0.1.3" in done.stderr
+    assert output.read_bytes() == b"previous export"
 
 
 @pytest.mark.parametrize("field,value", [

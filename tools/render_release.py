@@ -158,10 +158,13 @@ def render_image(card: dict, output: Path, root: Path = ROOT) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("release", type=Path, help="JSON file: version, date, headline and changes")
+    parser.add_argument("--expect-version", help="Refuse metadata for a different release version (without v)")
     parser.add_argument("--output", type=Path, help="PNG destination (default: exports/release-v<VERSION>.png)")
     args = parser.parse_args(argv)
     try:
         card = validate_card(json.loads(args.release.read_text(encoding="utf-8")))
+        if args.expect_version is not None and card["version"] != args.expect_version:
+            raise ReleaseCardError(f'version: expected {args.expect_version}, got {card["version"]}')
         output = args.output or ROOT / "exports" / f'release-v{card["version"]}.png'
         render_image(card, output)
     except (OSError, ValueError, KeyError, PlaywrightError) as error:

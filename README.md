@@ -189,6 +189,8 @@ uv run python -m tools.render_release data/releases/0.1.3.json --output announce
 ```
 
 The default output is `exports/release-v0.1.3.png` (ignored by Git).
+Automated release callers can pass `--expect-version 0.1.3` to reject metadata
+for a different version before rendering or overwriting an existing PNG.
 For the next release, copy [data/releases/0.1.3.json](data/releases/0.1.3.json)
 and edit `version` (without `v`), `date` (`YYYY-MM-DD`), `headline` and `changes`.
 Each change has a `type` (`added`, `changed` or `fixed`), `title` and
