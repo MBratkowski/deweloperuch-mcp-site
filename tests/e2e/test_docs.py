@@ -59,19 +59,44 @@ def test_toc_tracks_direct_links(
     expect(current).to_have_attribute("href", f"#{section}")
 
 
-def test_toc_tracks_anchor_navigation_and_history(page: Page, site_url: str) -> None:
+@pytest.mark.parametrize("motion", ["reduce", "no-preference"])
+def test_toc_tracks_anchor_navigation_and_history(page: Page, site_url: str, motion: str) -> None:
+    page.emulate_media(reduced_motion=motion)
     page.goto(site_url + "docs/#jak-to-dziala")
+    page.evaluate("document.fonts.ready")
     toc = page.get_by_role("navigation", name="Spis treści")
     current = toc.locator('a[aria-current="location"]')
-    expect(current).to_have_attribute("href", "#jak-to-dziala")
+
+    def expect_section(fragment: str) -> None:
+        expect(page).to_have_url(site_url + f"docs/#{fragment}")
+        # aria-current changes within the reading area, before smooth scrolling ends.
+        # Wait for the native anchor and a stable frame before history saves its offset.
+        settled = page.wait_for_function(
+            """state => {
+                const y = window.scrollY;
+                const stable = state.previousY === y;
+                state.previousY = y;
+                return stable && Math.abs(document.getElementById(state.id).getBoundingClientRect().top) <= 1;
+            }""",
+            arg={"id": fragment, "previousY": None},
+            polling="raf",
+            timeout=5000,
+        )
+        assert settled.json_value() is True
+        expect(current).to_have_count(1)
+        expect(current).to_have_attribute("href", f"#{fragment}")
+
+    expect_section("jak-to-dziala")
+    initial_history_length = page.evaluate("history.length")
     toc.get_by_role("link", name="Komendy w terminalu").click()
-    expect(page).to_have_url(site_url + "docs/#cli")
-    expect(current).to_have_count(1)
-    expect(current).to_have_attribute("href", "#cli")
-    page.go_back()
-    expect(current).to_have_attribute("href", "#jak-to-dziala")
-    page.go_forward()
-    expect(current).to_have_attribute("href", "#cli")
+    expect_section("cli")
+    assert page.evaluate("history.length") == initial_history_length + 1
+    for _ in range(3):
+        page.go_back()
+        expect_section("jak-to-dziala")
+        page.go_forward()
+        expect_section("cli")
+        assert page.evaluate("history.length") == initial_history_length + 1
 
 
 def test_current_toc_link_is_visually_distinct(page: Page, site_url: str) -> None:
