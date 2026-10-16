@@ -75,11 +75,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Stage the published files
-        run: |
-          mkdir -p _site/docs
-          cp -R index.html css js assets favicon.png apple-touch-icon.png _site/
-          cp docs/index.html _site/docs/
+      - name: Package the public site
+        run: python3 -m tools.package_site
 
       - name: Lighthouse
         run: |
