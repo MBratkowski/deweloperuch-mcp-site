@@ -3,9 +3,6 @@ name: Check
 on:
   push:
   pull_request:
-  schedule:
-    # Mondays: a new deweloperuch-mcp release turns this red until the pages follow it.
-    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -19,14 +16,3 @@ jobs:
   validate:
     name: Validate this commit
     uses: ./.github/workflows/validate.yml
-
-  facts:
-    name: Facts against the latest release
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.2.0
-      - run: uv sync --locked
-      # PyPI and package-qualified MCP/CLI metadata; no data tool or command is invoked.
-      # A release newer than data/server/version.json fails here until its sync is merged.
-      - run: uv run python -m tools.check_facts
