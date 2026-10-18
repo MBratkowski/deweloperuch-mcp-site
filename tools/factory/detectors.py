@@ -143,3 +143,76 @@ OVERLAPS = """() => {""" + DESCRIBE + """
   window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
   return out.slice(0, 5);
 }"""
+
+# Visible interactive elements smaller than `min` x `min` CSS px, or smaller than `navMin`
+# inside the site navigation (WCAG 2.5.8 plus the mobile navigation rule). The argument is
+# the array `[min, navMin]` because `page.evaluate` passes a single value. Text links that sit
+# inside a sentence (a link in a paragraph or list item that has other text) are exempt.
+TARGET_SIZES = """([min, navMin]) => {""" + DESCRIBE + """
+  const INTERACTIVE = 'a[href], button, summary, select, textarea, input:not([type="hidden"]), [role="button"], [role="link"]';
+  const inline = (el) => {
+    if (el.tagName !== 'A') return false;
+    const parent = el.parentElement;
+    if (!parent || !['P', 'LI'].includes(parent.tagName)) return false;
+    return parent.textContent.replace(el.textContent, '').trim().length > 0;
+  };
+  return Array.from(document.querySelectorAll(INTERACTIVE))
+    .filter(e => e.checkVisibility() && !e.closest('[aria-hidden="true"]') && !e.disabled && !inline(e))
+    .flatMap(e => {
+      const required = e.closest('#site-navigation') ? navMin : min;
+      const rect = e.getBoundingClientRect();
+      if (rect.width >= required - 0.5 && rect.height >= required - 0.5) return [];
+      return [{
+        selector: describe(e),
+        measurement: `${Math.round(rect.width)}x${Math.round(rect.height)} < ${required}x${required}`,
+        box: boxOf(e),
+      }];
+    });
+}"""
+
+# A focused element that a sticky or fixed box (a header, a banner) covers at its centre,
+# after the browser has scrolled it into view on focus.
+FOCUS_OBSCURED = """() => {""" + DESCRIBE + """
+  const FOCUSABLE = 'a[href], button, summary, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
+  const scrollX = window.scrollX, scrollY = window.scrollY;
+  const problems = [];
+  for (const el of document.querySelectorAll(FOCUSABLE)) {
+    if (el.hidden || el.disabled || !el.checkVisibility()) continue;
+    el.focus();
+    if (document.activeElement !== el) continue;
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) continue;
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || hit === el || el.contains(hit) || hit.contains(el)) continue;
+    for (let node = hit; node && node !== document.documentElement; node = node.parentElement) {
+      if (['sticky', 'fixed'].includes(getComputedStyle(node).position) && !node.contains(el)) {
+        problems.push({ selector: describe(el), measurement: `covered by ${describe(node)}`, box: boxOf(el) });
+        break;
+      }
+    }
+  }
+  window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
+  return problems;
+}"""
+
+# Scrolling boxes (overflow auto or scroll, content larger than the box) that a keyboard user
+# cannot scroll: neither the box nor anything inside it is focusable.
+SCROLL_UNREACHABLE = """() => {""" + DESCRIBE + """
+  const FOCUSABLE = 'a[href], button, summary, input:not([type="hidden"]), select, textarea, iframe, [contenteditable], [tabindex]:not([tabindex="-1"])';
+  const scrolls = (value) => value === 'auto' || value === 'scroll';
+  return Array.from(document.querySelectorAll('body *'))
+    .filter(e => e.checkVisibility() && !e.closest('[aria-hidden="true"]'))
+    .filter(e => {
+      const style = getComputedStyle(e);
+      const x = scrolls(style.overflowX) && e.scrollWidth > e.clientWidth + 1;
+      const y = scrolls(style.overflowY) && e.scrollHeight > e.clientHeight + 1;
+      return x || y;
+    })
+    .filter(e => !e.matches(FOCUSABLE) && !(e.tabIndex >= 0) && !e.querySelector(FOCUSABLE))
+    .map(e => ({
+      selector: describe(e),
+      measurement: `scroll ${e.scrollWidth}x${e.scrollHeight} > client ${e.clientWidth}x${e.clientHeight}, not focusable`,
+      box: boxOf(e),
+    }));
+}"""
