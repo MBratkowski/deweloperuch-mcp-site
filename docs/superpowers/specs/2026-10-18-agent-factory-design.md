@@ -159,7 +159,7 @@ The JavaScript of `WIDE_ELEMENTS` and `FOCUS_PROBLEMS` moves to `tools/factory/d
 
 ### Fingerprints and dedup
 
-A fingerprint is a short hash of the check id, the page, the normalised selector (no `nth-child` indices, no generated ids), the set of engines and the width range. Findings that differ only in adjacent widths merge into one ("320–414 px, WebKit"), so one defect is one issue.
+A fingerprint is a short hash of the check id, the page, the mode, the normalised selector (no `nth-child` indices, no generated ids), the set of engines and the width bands the finding covers (up to 720 px, 721–760 px, from 761 px: the stylesheet's breakpoints). Bands rather than the exact range keep the fingerprint stable when a defect's edge moves by one matrix width. Findings that differ only in adjacent widths merge into one ("320–414 px, WebKit"), so one defect is one issue, and the issue shows the exact range.
 
 Each factory issue carries `<!-- factory:fp=<fingerprint> -->` and the finding as JSON in a hidden block. Before filing, QA searches open and closed issues for the fingerprint:
 
