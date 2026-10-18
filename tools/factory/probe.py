@@ -42,6 +42,8 @@ class RequestLog:
     failed: list[str] = field(default_factory=list)
     bad_status: list[str] = field(default_factory=list)  # "STATUS URL" of same-host responses >= 400
     critical: list[str] = field(default_factory=list)  # stylesheet, script or font that failed
+    aborted: list[str] = field(default_factory=list)  # URLs the guard aborted itself
+    images: set[str] = field(default_factory=set)  # URLs requested as images (the images check owns them)
 
 
 @dataclass
@@ -66,23 +68,24 @@ def guard_requests(context: BrowserContext, site_host: str) -> RequestLog:
     """Let through only the site's own host, stub Umami with an empty script, abort the rest."""
     log = RequestLog()
     allowed = LOCAL_HOSTS if site_host in LOCAL_HOSTS else frozenset({site_host})
-    aborted: set[str] = set()
 
     def handle(route: Route) -> None:
         url = route.request.url
         host = urlparse(url).hostname or ""
         log.hosts.append(host)
+        if route.request.resource_type == "image":
+            log.images.add(url)
         if host in allowed:
             route.continue_()
         elif host in ANALYTICS_HOSTS:
             route.fulfill(status=200, content_type="text/javascript", body="")
         else:
             log.blocked.append(host)
-            aborted.add(url)
+            log.aborted.append(url)
             route.abort()
 
     def on_failed(request: Request) -> None:
-        if request.url in aborted:
+        if request.url in log.aborted:
             return
         log.failed.append(request.url)
         if (urlparse(request.url).hostname or "") in allowed and request.resource_type in CRITICAL_RESOURCES:
@@ -115,7 +118,7 @@ def open_cell(browser: Browser, target: Target, cell: Cell, path: str) -> PageRu
         requests = guard_requests(context, urlparse(url).hostname or "")
         page = context.new_page()
         console: list[str] = []
-        page.on("console", lambda m: m.type == "error" and console.append(m.text))
+        page.on("console", lambda m: _on_console(m, console, requests))
         page.on("pageerror", lambda e: console.append(str(e)))
         try:
             response = page.goto(url, wait_until="load", timeout=NAVIGATION_TIMEOUT_MS)
@@ -134,6 +137,17 @@ def open_cell(browser: Browser, target: Target, cell: Cell, path: str) -> PageRu
     except BaseException:
         context.close()
         raise
+
+
+def _on_console(message: ConsoleMessage, console: list[str], requests: RequestLog) -> None:
+    if message.type != "error":
+        return
+    # The browser's own "Failed to load resource" line for a request the guard aborted is not a page defect.
+    if message.text.startswith("Failed to load resource") and (
+        message.location.get("url", "") in requests.aborted
+    ):
+        return
+    console.append(message.text)
 
 
 def _open_menu(page: Page, url: str) -> None:

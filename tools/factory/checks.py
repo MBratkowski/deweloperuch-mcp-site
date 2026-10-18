@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlparse
+
+from playwright.sync_api import Error as PlaywrightError
 
 from tools.factory.config import load_config
 from tools.factory.detectors import (
+    BROKEN_IMAGES,
+    DEAD_ANCHORS,
     CLIPPED_TEXT,
     FOCUS_OBSCURED,
     FOCUS_PROBLEMS,
@@ -107,6 +112,63 @@ def focus(run: PageRun) -> list[Finding]:
     return _findings(run, "focus", problems)
 
 
+MESSAGE_LENGTH = 200
+SETTLE_TIMEOUT_MS = 3_000
+NO_BOX = [0, 0, 0, 0]
+
+
+def _distinct(items: list[tuple[str, str]]) -> list[dict]:
+    seen: dict[tuple[str, str], None] = dict.fromkeys(items)
+    return [{"selector": sel, "measurement": text, "box": NO_BOX} for sel, text in seen]
+
+
+def _settle(run: PageRun) -> None:
+    """Let requests started by scripts at load time finish, so the request log is complete."""
+    try:
+        run.page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
+    except PlaywrightError:
+        pass  # a page that never goes idle is judged on what it has logged so far
+
+
+def console(run: PageRun) -> list[Finding]:
+    _settle(run)
+    messages = [("script", " ".join(m.split())[:MESSAGE_LENGTH]) for m in run.console]
+    return _findings(run, "console", _distinct(messages))
+
+
+def network(run: PageRun) -> list[Finding]:
+    _settle(run)
+    log = run.requests
+    items = [(host, f"blocked third-party host {host}") for host in log.blocked]
+    for url in log.failed:
+        if url not in log.images and url not in log.aborted:
+            items.append((urlparse(url).path, f"failed {url}"))
+    for entry in log.bad_status:
+        status, _, url = entry.partition(" ")
+        if url not in log.images:
+            items.append((urlparse(url).path, f"{status} {urlparse(url).path}"))
+    return _findings(run, "network", _distinct(items))
+
+
+def anchors(run: PageRun) -> list[Finding]:
+    pages: dict[str, str] = {}
+    dead = []
+    for item in run.page.evaluate(DEAD_ANCHORS):
+        path = item.get("path")
+        if path:
+            if path not in pages:
+                response = run.page.request.get(path)
+                pages[path] = response.text() if response.ok else ""
+            if f'id="{item["fragment"]}"' in pages[path]:
+                continue
+        dead.append(item)
+    return _findings(run, "anchors", dead)
+
+
+def images(run: PageRun) -> list[Finding]:
+    return _findings(run, "images", run.page.evaluate(BROKEN_IMAGES))
+
+
 CHECKS: dict[str, Callable[[PageRun], list[Finding]]] = {
     "overflow": overflow,
     "clipped-text": clipped_text,
@@ -114,4 +176,8 @@ CHECKS: dict[str, Callable[[PageRun], list[Finding]]] = {
     "axe": axe,
     "target-size": target_size,
     "focus": focus,
+    "console": console,
+    "network": network,
+    "anchors": anchors,
+    "images": images,
 }

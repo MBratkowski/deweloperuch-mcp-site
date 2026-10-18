@@ -246,3 +246,34 @@ SCROLL_CLEANUP = """() => {
   document.querySelectorAll('[data-factory-scroll]').forEach(e => e.removeAttribute('data-factory-scroll'));
   document.querySelectorAll('[data-factory-sentinel]').forEach(e => e.remove());
 }"""
+
+# In-page links whose `#id` target is missing, and links to another page of the same site with
+# a fragment: those come back as `{selector, measurement, box, path, fragment}` and the check
+# looks the fragment up in the other page's HTML. An empty `#` and `#top` pointing at an
+# existing id are fine.
+DEAD_ANCHORS = """() => {""" + DESCRIBE + """
+  const out = [];
+  for (const a of document.querySelectorAll('a[href]')) {
+    const url = new URL(a.href, document.baseURI);
+    if (url.origin !== location.origin || !url.hash || url.hash === '#') continue;
+    const fragment = decodeURIComponent(url.hash.slice(1));
+    const base = { selector: describe(a), box: boxOf(a), fragment };
+    if (url.pathname === location.pathname) {
+      if (!document.getElementById(fragment)) out.push({ ...base, measurement: `no element with id ${fragment}` });
+    } else {
+      out.push({ ...base, measurement: `no element with id ${fragment} in ${url.pathname}`, path: url.origin + url.pathname });
+    }
+  }
+  return out;
+}"""
+
+# Images that finished loading (or failing) with no pixels.
+BROKEN_IMAGES = """() => {""" + DESCRIBE + """
+  return Array.from(document.querySelectorAll('img'))
+    .filter(img => img.complete && img.naturalWidth === 0 && img.currentSrc !== '')
+    .map(img => ({
+      selector: describe(img),
+      measurement: `broken image ${img.getAttribute('src') ?? ''}`.slice(0, 120),
+      box: boxOf(img),
+    }));
+}"""
