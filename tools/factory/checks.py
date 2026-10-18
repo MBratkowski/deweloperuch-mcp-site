@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -15,6 +15,7 @@ from tools.factory.detectors import (
     CLIPPED_TEXT,
     FOCUS_OBSCURED,
     FOCUS_PROBLEMS,
+    LANDMARK_BOXES,
     OVERLAPS,
     SCROLL_CLEANUP,
     SCROLL_REACHED,
@@ -23,7 +24,7 @@ from tools.factory.detectors import (
     TARGET_SIZES,
     WIDE_ELEMENTS,
 )
-from tools.factory.findings import Finding
+from tools.factory.findings import Cell, Finding
 from tools.factory.probe import PageRun
 
 MAX_FINDINGS = 5
@@ -167,6 +168,50 @@ def anchors(run: PageRun) -> list[Finding]:
 
 def images(run: PageRun) -> list[Finding]:
     return _findings(run, "images", run.page.evaluate(BROKEN_IMAGES))
+
+
+Box = tuple[float, float, float, float]
+# Landmarks whose vertical position is compared too; lower down, content above shifts `y`.
+_COMPARE_Y = ("header", "nav")
+
+
+def landmark_boxes(run: PageRun) -> dict[str, Box]:
+    """Boxes of the landmarks and headings of one cell, for engine_diff."""
+    return {key: tuple(box) for key, box in run.page.evaluate(LANDMARK_BOXES).items()}
+
+
+def _compares_y(selector: str) -> bool:
+    return selector.rsplit(" > ", 1)[-1].split("#")[0].split(".")[0] in _COMPARE_Y
+
+
+def engine_diff(boxes: Mapping[Cell, Mapping[str, Box]], threshold: float) -> list[Finding]:
+    """Compare each engine with Chromium at the same page, width and mode.
+
+    x and width are compared for every landmark, y for header and nav. A key missing in
+    one of the engines is not a finding. The finding belongs to the differing engine.
+    """
+    findings: list[Finding] = []
+    for cell, theirs in boxes.items():
+        if cell.engine == "chromium":
+            continue
+        reference = boxes.get(Cell(cell.page, "chromium", cell.width, cell.height, cell.mode))
+        if reference is None:
+            continue
+        for selector, box in theirs.items():
+            base = reference.get(selector)
+            if base is None:
+                continue
+            dx, dw = box[0] - base[0], box[2] - base[2]
+            dy = box[1] - base[1] if _compares_y(selector) else 0
+            if max(abs(dx), abs(dw), abs(dy)) <= threshold:
+                continue
+            parts = [f"dx={dx:g}", f"dw={dw:g}"]
+            if _compares_y(selector):
+                parts.append(f"dy={dy:g}")
+            findings.append(
+                Finding("engine-diff", cell, selector, f"{', '.join(parts)} vs chromium", tuple(box))
+            )
+    return findings
 
 
 CHECKS: dict[str, Callable[[PageRun], list[Finding]]] = {

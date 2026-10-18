@@ -277,3 +277,16 @@ BROKEN_IMAGES = """() => {""" + DESCRIBE + """
       box: boxOf(img),
     }));
 }"""
+
+# Boxes of the landmarks and headings, keyed by their `describe()` path, which names the same
+# element in every engine. Only visible elements count; when two elements share a path the
+# first in document order wins.
+LANDMARK_BOXES = """() => {""" + DESCRIBE + """
+  const out = {};
+  for (const el of document.querySelectorAll('header, nav, main, footer, section[id], h1, h2')) {
+    if (!el.checkVisibility()) continue;
+    const key = describe(el);
+    if (!(key in out)) out[key] = boxOf(el);
+  }
+  return out;
+}"""
