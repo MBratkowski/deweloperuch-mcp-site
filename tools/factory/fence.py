@@ -1,40 +1,55 @@
-"""Deterministic checks on the diff between two commits: paths, size, weakened tests, copy.
+"""Deterministic checks on the diff between two commits: paths, size, tests and copy.
 
 Pure git subprocesses: it reads the diff and file contents with `git diff` and `git show` and
-never checks out or executes anything from the commits. Reasons are short and stable, and never
-carry file contents.
+never checks out, imports or executes anything from the commits (Python is only parsed with
+`ast`). Reasons are short and stable, and never carry file contents.
+
+Two kinds of reasons (Ruling R37, an allow-list for tests/):
+- hard reasons (`ok` is False): forbidden or unexpected paths, test infrastructure, weakened
+  tests, size and the copy guard;
+- review reasons (`review`, `needs_human`): existing files under tests/ may only gain lines;
+  any removed or changed line asks for a human.
 
 Command line: `python -m tools.factory.fence --base SHA --head SHA [--repo PATH]` prints the
-report as JSON and exits 0 when ok, 1 when not, 2 on git errors.
+report as JSON. Exit codes: 0 ok and nothing to review, 1 not ok, 2 errors (git or
+configuration), 3 ok but review reasons exist.
 """
 
 from __future__ import annotations
 
 import argparse
+import ast
 import difflib
 import json
 import re
 import subprocess
 import sys
-from dataclasses import asdict, dataclass
+from collections import Counter
+from dataclasses import asdict, dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
 
-from tools.factory.config import Fence, Limits, load_config
+from tools.factory.config import ConfigError, Fence, Limits, load_config
 
 POLISH_LETTERS = "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ"
 COMPARISON = "tests/visual/comparison.py"
 PAGES = ("index.html", "docs/index.html")
 TEXT_ATTRIBUTES = ("alt", "aria-label", "title", "placeholder")
-SKIP_MARKERS = (
-    "@pytest.mark.skip",
-    "@pytest.mark.skipif",
-    "@pytest.mark.xfail",
-    "pytest.skip(",
-    "pytest.xfail(",
+INLINE_TAGS = frozenset(
+    "a abbr b bdi bdo cite code data dfn del em i ins kbd mark q s small span strong sub sup "
+    "time u var wbr".split()
 )
-_JS_STRING = re.compile(r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`", re.DOTALL)
-_NUMBER = re.compile(r"\d+(?:\.\d+)?")
+MARKUP_MARKERS = ("<script", "</script", "<style", "<textarea", "<![cdata[")
+INFRASTRUCTURE_NAMES = ("pytest.ini", "tox.ini", "setup.cfg", ".gitattributes")
+SYMLINK, GITLINK = "120000", "160000"
+SUSPICIOUS_ADDED = re.compile(
+    r"mark\.(skip|skipif|xfail|network|visual|multi_engine)"
+    r"|\b(skip|xfail|importorskip)\s*\("
+    r"|pytestmark|__test__|add_marker|applymarker|pytest_collection_modifyitems"
+)
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
+_CSS_CONTENT = re.compile(r"content\s*:\s*(\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*')")
+_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
 
 
 class GitError(RuntimeError):
@@ -49,6 +64,8 @@ class Change:
     added: int
     deleted: int
     binary: bool
+    old_mode: str = ""
+    new_mode: str = ""
 
 
 @dataclass(frozen=True)
@@ -57,6 +74,11 @@ class FenceReport:
     reasons: list[str]
     changed_lines: int
     copy_changed: bool
+    review: list[str] = field(default_factory=list)
+
+    @property
+    def needs_human(self) -> bool:
+        return bool(self.review)
 
 
 def _git(repo: Path, *args: str) -> bytes:
@@ -93,7 +115,7 @@ def changes(repo: Path, base: str, head: str) -> list[Change]:
     _check_rev(head)
     common = ("diff", "-M", "--no-ext-diff", "--no-textconv", "-z")
     numstat = _git(repo, *common, "--numstat", base, head, "--").decode("utf-8", "replace")
-    status = _git(repo, *common, "--name-status", base, head, "--").decode("utf-8", "replace")
+    raw = _git(repo, *common, "--raw", base, head, "--").decode("utf-8", "replace")
 
     counts: dict[str, tuple[int, int, bool]] = {}
     tokens = numstat.split("\0")
@@ -110,10 +132,11 @@ def changes(repo: Path, base: str, head: str) -> list[Change]:
         counts[path] = (0 if binary else int(added), 0 if binary else int(deleted), binary)
 
     result: list[Change] = []
-    tokens = status.split("\0")
+    tokens = raw.split("\0")
     i = 0
-    while i < len(tokens) and tokens[i]:
-        code = tokens[i][0]
+    while i < len(tokens) and tokens[i].startswith(":"):
+        old_mode, new_mode, _, _, status = tokens[i][1:].split(" ")
+        code = status[0]
         if code in "RC":
             old, path = tokens[i + 1], tokens[i + 2]
             i += 3
@@ -121,7 +144,7 @@ def changes(repo: Path, base: str, head: str) -> list[Change]:
             old, path = None, tokens[i + 1]
             i += 2
         added, deleted, binary = counts.get(path, (0, 0, False))
-        result.append(Change(path, old, code, added, deleted, binary))
+        result.append(Change(path, old, code, added, deleted, binary, old_mode, new_mode))
     return result
 
 
@@ -136,134 +159,313 @@ def _any(path: str, patterns: tuple[str, ...]) -> bool:
     return any(matches(path, pattern) for pattern in patterns)
 
 
+# --- copy guard -------------------------------------------------------------------------
+
+
 class _TextCollector(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
+        self.text: list[str] = []
+        self.attributes: list[str] = []
         self._skip = 0
-
-    def _add(self, text: str | None) -> None:
-        normalised = " ".join((text or "").split())
-        if normalised:
-            self.parts.append(normalised)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in ("script", "style"):
             self._skip += 1
             return
-        values = dict(attrs)
-        for name in TEXT_ATTRIBUTES:
-            self._add(values.get(name))
+        if tag not in INLINE_TAGS:
+            self.text.append(" ")
+        for name, value in attrs:
+            if name in TEXT_ATTRIBUTES:
+                self._attribute(name, value)
         if tag == "meta":
-            key = values.get("property") or ""
-            if values.get("name") == "description" or key.startswith("og:"):
-                self._add(values.get("content"))
+            names = {(n, (v or "").lower()) for n, v in attrs}
+            og = any(n == "property" and (v or "").startswith("og:") for n, v in attrs)
+            if ("name", "description") in names or og:
+                for name, value in attrs:
+                    if name == "content":
+                        self._attribute("meta", value)
+
+    def _attribute(self, name: str, value: str | None) -> None:
+        normalised = " ".join((value or "").split())
+        if normalised:
+            self.attributes.append(f"{name}={normalised}")
 
     def handle_endtag(self, tag: str) -> None:
         if tag in ("script", "style") and self._skip:
             self._skip -= 1
+        elif tag not in INLINE_TAGS:
+            self.text.append(" ")
 
     def handle_data(self, data: str) -> None:
         if not self._skip:
-            self._add(data)
+            self.text.append(data)
 
 
 def visible_text(html: str) -> list[str]:
-    """Text nodes and copy-bearing attributes of a page, whitespace-normalised."""
+    """The whitespace-normalised visible text, then every copy attribute in document order.
+
+    The text nodes are joined, so wrapping words in an inline element is not a change; every
+    occurrence of an attribute counts, duplicates included.
+    """
     collector = _TextCollector()
     collector.feed(html)
     collector.close()
-    return collector.parts
+    joined = " ".join("".join(collector.text).split())
+    return [joined, *collector.attributes]
 
 
-def js_polish_strings(source: str) -> set[str]:
-    """String literals in `source` that contain a Polish letter."""
-    return {
-        match.group(0)
-        for match in _JS_STRING.finditer(source)
-        if any(letter in match.group(0) for letter in POLISH_LETTERS)
-    }
+def _markup_counts(html: str) -> list[int]:
+    lowered = html.lower()
+    return [lowered.count(marker) for marker in MARKUP_MARKERS]
 
 
-def _largest_number(lines: list[str]) -> float | None:
-    numbers = [float(n) for line in lines for n in _NUMBER.findall(line)]
-    return max(numbers) if numbers else None
-
-
-def _weakened_in(old: str, new: str, path: str) -> list[str]:
-    found: list[str] = []
-    old_lines = old.splitlines()
-    new_lines = new.splitlines()
-    new_stripped = {line.strip() for line in new_lines}
-    if any(
-        line.strip().startswith("assert ") and line.strip() not in new_stripped
-        for line in old_lines
-    ):
-        found.append(f"{path}: assertion removed or changed")
-
-    old_counts: dict[str, int] = {}
-    for line in old_lines:
-        old_counts[line.strip()] = old_counts.get(line.strip(), 0) + 1
-    seen: dict[str, int] = {}
-    for line in new_lines:
-        text = line.strip()
-        seen[text] = seen.get(text, 0) + 1
-        if seen[text] > old_counts.get(text, 0) and any(m in text for m in SKIP_MARKERS):
-            found.append(f"{path}: skip or xfail added")
-            break
-
-    removed: list[str] = []
-    added: list[str] = []
-    for line in difflib.unified_diff(old_lines, new_lines, lineterm="", n=0):
-        if line.startswith(("---", "+++")) or "timeout" not in line.lower():
+def _decode_escapes(body: str) -> str:
+    out: list[str] = []
+    i = 0
+    while i < len(body):
+        char = body[i]
+        if char != "\\" or i + 1 >= len(body):
+            out.append(char)
+            i += 1
             continue
-        if line.startswith("-"):
-            removed.append(line[1:])
-        elif line.startswith("+"):
-            added.append(line[1:])
-    before, after = _largest_number(removed), _largest_number(added)
-    if before is not None and after is not None and after > before:
-        found.append(f"{path}: timeout raised")
+        nxt = body[i + 1]
+        if nxt == "u" and body[i + 2 : i + 3] == "{":
+            end = body.find("}", i + 3)
+            digits = body[i + 3 : end] if end != -1 else ""
+            if end != -1 and re.fullmatch(r"[0-9a-fA-F]{1,6}", digits) and int(digits, 16) < 0x110000:
+                out.append(chr(int(digits, 16)))
+                i = end + 1
+                continue
+        elif nxt == "u" and re.fullmatch(r"[0-9a-fA-F]{4}", body[i + 2 : i + 6]):
+            out.append(chr(int(body[i + 2 : i + 6], 16)))
+            i += 6
+            continue
+        elif nxt == "x" and re.fullmatch(r"[0-9a-fA-F]{2}", body[i + 2 : i + 4]):
+            out.append(chr(int(body[i + 2 : i + 4], 16)))
+            i += 4
+            continue
+        out.append(_ESCAPES.get(nxt, nxt))
+        i += 2
+    return "".join(out)
+
+
+def _js_literals(source: str) -> list[str]:
+    """Decoded bodies of every string literal in `source`, outside comments."""
+    found: list[str] = []
+    i, n = 0, len(source)
+    while i < n:
+        char = source[i]
+        pair = source[i : i + 2]
+        if pair == "//":
+            end = source.find("\n", i)
+            i = n if end == -1 else end
+        elif pair == "/*":
+            end = source.find("*/", i + 2)
+            i = n if end == -1 else end + 2
+        elif char in "\"'`":
+            j = i + 1
+            while j < n and source[j] != char and (char == "`" or source[j] != "\n"):
+                j += 2 if source[j] == "\\" else 1
+            found.append(_decode_escapes(source[i + 1 : j]))
+            i = j + 1
+        else:
+            i += 1
     return found
 
 
-def _weakened(repo: Path, base: str, head: str, files: list[Change]) -> list[str]:
-    found: list[str] = []
-    for change in files:
-        source = change.old_path or change.path
-        in_tests = source.startswith("tests/")
-        if COMPARISON in (change.path, change.old_path):
-            found.append(f"{COMPARISON}: changed")
-        if not in_tests or change.status == "A":
-            continue
-        if change.status == "D":
-            found.append(f"{source}: test file deleted")
-            continue
-        found += _weakened_in(
-            _show(repo, base, source), _show(repo, head, change.path), change.path
-        )
-    return found
+def js_polish_strings(source: str) -> Counter[str]:
+    """Multiset of the copy-like string literals in `source`.
+
+    A literal counts when it holds a Polish letter or a space, or starts with an uppercase
+    letter; comments are ignored and escapes decoded.
+    """
+    return Counter(
+        body
+        for body in _js_literals(source)
+        if any(letter in body for letter in POLISH_LETTERS)
+        or " " in body
+        or body[:1].isupper()
+    )
 
 
-def weakened_tests(repo: Path, base: str, head: str) -> list[str]:
-    """Ways in which the diff weakens existing tests, as short descriptions."""
-    return _weakened(repo, base, head, changes(repo, base, head))
+def _css_contents(source: str) -> Counter[str]:
+    return Counter(_CSS_CONTENT.findall(_CSS_COMMENT.sub("", source)))
 
 
 def _copy_changed(repo: Path, base: str, head: str, files: list[Change]) -> bool:
     for change in files:
         source = change.old_path or change.path
-        if change.path in PAGES or source in PAGES:
-            old = visible_text(_show(repo, base, source))
-            new = visible_text(_show(repo, head, change.path))
-            if old != new:
+        names = {change.path, source}
+        old_text = new_text = ""
+        if names & set(PAGES):
+            old_text, new_text = _show(repo, base, source), _show(repo, head, change.path)
+            if visible_text(old_text) != visible_text(new_text):
                 return True
-        elif change.path.startswith("js/") or source.startswith("js/"):
+            if _markup_counts(old_text) != _markup_counts(new_text):
+                return True
+        elif any(name.startswith("js/") for name in names):
             if js_polish_strings(_show(repo, base, source)) != js_polish_strings(
                 _show(repo, head, change.path)
             ):
                 return True
+        elif any(name.startswith("css/") and name.endswith(".css") for name in names):
+            if _css_contents(_show(repo, base, source)) != _css_contents(
+                _show(repo, head, change.path)
+            ):
+                return True
     return False
+
+
+# --- tests ------------------------------------------------------------------------------
+
+
+def _added_lines(old: str, new: str) -> list[str]:
+    return [
+        line[1:]
+        for line in difflib.unified_diff(old.splitlines(), new.splitlines(), lineterm="", n=0)
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+
+
+def _skeleton(source: str) -> dict[str, tuple[int, int, str]] | None:
+    """Per function and class: (definitions, early exits, decorators), or None on a syntax error.
+
+    The key is the qualified name. An early exit is a `return` or an `if False:`/`if 0:` block.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    result: dict[str, tuple[int, int, str]] = {}
+
+    def exits(node: ast.AST) -> int:
+        count = 0
+        stack = list(ast.iter_child_nodes(node))
+        while stack:
+            child = stack.pop()
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                continue
+            if isinstance(child, ast.Return):
+                count += 1
+            elif (
+                isinstance(child, (ast.If, ast.While))
+                and isinstance(child.test, ast.Constant)
+                and not child.test.value
+            ):
+                count += 1
+            stack.extend(ast.iter_child_nodes(child))
+        return count
+
+    def visit(body: list[ast.stmt], prefix: str) -> None:
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                name = prefix + node.name
+                definitions, _, _ = result.get(name, (0, 0, ""))
+                decorators = "|".join(ast.dump(d) for d in node.decorator_list)
+                result[name] = (definitions + 1, exits(node), decorators)
+                visit(node.body, name + ".")
+            elif isinstance(node, (ast.If, ast.Try, ast.With, ast.For, ast.While)):
+                visit(node.body, prefix)
+
+    visit(tree.body, "")
+    return result
+
+
+def _is_test_name(qualified: str) -> bool:
+    return any(part.startswith(("test", "Test")) for part in qualified.split("."))
+
+
+def _weakened_python(old: str, new: str, path: str) -> list[str]:
+    after = _skeleton(new)
+    if after is None:
+        return [f"{path}: does not parse"]
+    before = _skeleton(old)
+    if before is None:
+        return []
+    found: list[str] = []
+    for name, (definitions, exits, decorators) in before.items():
+        if name not in after:
+            if _is_test_name(name):
+                found.append(f"{path}: test removed")
+            continue
+        new_definitions, new_exits, new_decorators = after[name]
+        if new_definitions > definitions:
+            found.append(f"{path}: definition repeated")
+        if new_exits > exits:
+            found.append(f"{path}: early exit added")
+        if new_decorators != decorators:
+            found.append(f"{path}: decorators changed")
+    return list(dict.fromkeys(found))
+
+
+def _is_test_module(path: str) -> bool:
+    return path.startswith("tests/") and path.endswith(".py")
+
+
+def _new_test_path(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    if path.startswith("tests/visual/baselines/") and path.endswith(".png"):
+        return True
+    return path.startswith("tests/") and name.startswith("test_") and name.endswith(".py")
+
+
+def _weakened(repo: Path, base: str, head: str, files: list[Change]) -> list[str]:
+    found: list[str] = []
+    for change in files:
+        if COMPARISON in (change.path, change.old_path):
+            found.append(f"{COMPARISON}: changed")
+        if change.status != "M" or not _is_test_module(change.path) or change.binary:
+            continue
+        old, new = _show(repo, base, change.path), _show(repo, head, change.path)
+        if any(SUSPICIOUS_ADDED.search(line) for line in _added_lines(old, new)):
+            found.append(f"{change.path}: skip, marker or collection change added")
+        found += _weakened_python(old, new, change.path)
+    return found
+
+
+def weakened_tests(repo: Path, base: str, head: str) -> list[str]:
+    """Hard ways in which the diff weakens existing tests, as short descriptions."""
+    return _weakened(repo, base, head, changes(repo, base, head))
+
+
+def _structure(change: Change) -> list[str]:
+    """Hard reasons that depend on the shape of one change, not on its content."""
+    reasons: list[str] = []
+    paths = [p for p in dict.fromkeys((change.old_path, change.path)) if p]
+    for path in paths:
+        name = path.rsplit("/", 1)[-1]
+        if any(ord(c) < 32 or ord(c) == 127 for c in path) or "<!--" in path:
+            reasons.append("invalid path")
+        if "__pycache__/" in path or path.endswith(".pyc"):
+            reasons.append(f"test infrastructure: {path}")
+        if name == "conftest.py" or name in INFRASTRUCTURE_NAMES:
+            reasons.append(f"test infrastructure: {path}")
+    if change.path.endswith("/__init__.py") or change.path == "__init__.py":
+        if change.status in "ACR":
+            reasons.append(f"test infrastructure: {change.path}")
+    if SYMLINK in (change.old_mode, change.new_mode) or GITLINK in (
+        change.old_mode,
+        change.new_mode,
+    ):
+        reasons.append(f"symlink or submodule: {change.path}")
+    if change.binary and not change.path.endswith(".png"):
+        reasons.append(f"binary file: {change.path}")
+    if change.status == "R" and any(_is_test_module(p) for p in paths):
+        reasons.append(f"test file renamed: {change.old_path}")
+    if change.status in "ACR" and change.path.startswith("tests/") and not _new_test_path(change.path):
+        reasons.append(f"test file not allowed: {change.path}")
+    return reasons
+
+
+def _review(change: Change) -> list[str]:
+    """Soft reasons: an existing file under tests/ lost or changed lines."""
+    source = change.old_path or change.path
+    if not source.startswith("tests/"):
+        return []
+    if change.status in "DR" or (change.status == "M" and not change.binary and change.deleted):
+        return [f"existing tests changed: {source}"]
+    return []
 
 
 def check_fence(
@@ -271,6 +473,7 @@ def check_fence(
 ) -> FenceReport:
     files = changes(repo, base, head)
     reasons: list[str] = []
+    review: list[str] = []
 
     def add(reason: str) -> None:
         if reason not in reasons:
@@ -282,6 +485,11 @@ def check_fence(
                 add(f"forbidden path: {path}")
             elif not _any(path, fence.allowed):
                 add(f"outside the allowed paths: {path}")
+        for reason in _structure(change):
+            add(reason)
+        for reason in _review(change):
+            if reason not in review:
+                review.append(reason)
 
     changed_lines = sum(
         c.added + c.deleted
@@ -301,7 +509,7 @@ def check_fence(
     if copy_changed:
         add("copy")
 
-    return FenceReport(not reasons, reasons, changed_lines, copy_changed)
+    return FenceReport(not reasons, reasons, changed_lines, copy_changed, review)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -310,14 +518,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--head", required=True)
     parser.add_argument("--repo", type=Path, default=Path("."))
     args = parser.parse_args(argv)
-    config = load_config()
     try:
+        config = load_config()
         report = check_fence(args.repo, args.base, args.head, config.fence, config.limits)
-    except GitError as error:
+    except (GitError, ConfigError) as error:
         print(f"fence: {error}", file=sys.stderr)
         return 2
-    print(json.dumps(asdict(report), indent=2))
-    return 0 if report.ok else 1
+    print(json.dumps({**asdict(report), "needs_human": report.needs_human}, indent=2))
+    if not report.ok:
+        return 1
+    return 3 if report.needs_human else 0
 
 
 if __name__ == "__main__":
