@@ -50,3 +50,13 @@ def test_images_finds_broken_image(browser, fixtures_url, probe_cell) -> None:
 def test_clean_page_yields_nothing(browser, fixtures_url, probe_cell) -> None:
     for check in RUNTIME:
         assert _check(browser, fixtures_url, probe_cell("clean", 375), "clean/index.html", check) == [], check
+
+
+def test_console_leaves_resource_failures_to_other_checks(browser, fixtures_url, probe_cell) -> None:
+    cell = probe_cell("p", 375)
+    assert _check(browser, fixtures_url, cell, "probe/missing-image.html", "console") == []
+    assert [f.selector.split(" > ")[-1] for f in _check(browser, fixtures_url, cell, "probe/missing-image.html", "images")] == ["img"]
+    assert _check(browser, fixtures_url, cell, "canary/fetch-404.html", "console") == []
+    found = _check(browser, fixtures_url, cell, "canary/fetch-404.html", "network")
+    assert [f.selector for f in found] == ["/canary/missing.json"]
+    assert found[0].measurement.startswith("404 ")

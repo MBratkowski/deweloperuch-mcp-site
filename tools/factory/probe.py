@@ -118,7 +118,7 @@ def open_cell(browser: Browser, target: Target, cell: Cell, path: str) -> PageRu
         requests = guard_requests(context, urlparse(url).hostname or "")
         page = context.new_page()
         console: list[str] = []
-        page.on("console", lambda m: _on_console(m, console, requests))
+        page.on("console", lambda m: _on_console(m, console))
         page.on("pageerror", lambda e: console.append(str(e)))
         try:
             response = page.goto(url, wait_until="load", timeout=NAVIGATION_TIMEOUT_MS)
@@ -139,15 +139,10 @@ def open_cell(browser: Browser, target: Target, cell: Cell, path: str) -> PageRu
         raise
 
 
-def _on_console(message: ConsoleMessage, console: list[str], requests: RequestLog) -> None:
-    if message.type != "error":
-        return
-    # The browser's own "Failed to load resource" line for a request the guard aborted is not a page defect.
-    if message.text.startswith("Failed to load resource") and (
-        message.location.get("url", "") in requests.aborted
-    ):
-        return
-    console.append(message.text)
+def _on_console(message: ConsoleMessage, console: list[str]) -> None:
+    # The browser's "Failed to load resource" lines belong to the network and images checks.
+    if message.type == "error" and not message.text.startswith("Failed to load resource"):
+        console.append(message.text)
 
 
 def _open_menu(page: Page, url: str) -> None:
