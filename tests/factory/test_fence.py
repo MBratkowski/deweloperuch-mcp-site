@@ -313,6 +313,117 @@ def test_control_character_path_is_hard(tmp_path: Path) -> None:
     assert hard(report, "invalid path")
 
 
+MODULE = (
+    "import pytest\nfrom tests.helpers import expect\n\nLIMIT = 5\n\n"
+    "def helper(x):\n    return x\n\n"
+    "def test_head(page):\n    expect(page).to_be_ok()\n    assert LIMIT\n"
+)
+CONFTEST = "import pytest\n\n@pytest.fixture\ndef assert_visual():\n    return 1\n"
+
+
+def module_check(tmp_path: Path, head: str, base: str | None = MODULE, extra=None):
+    """A diff of tests/visual/test_a.py (or a new module when base is None)."""
+    files = {"css/a.css": "a\n"}
+    if base is not None:
+        files["tests/visual/test_a.py"] = base
+    # conftest files are shared, so seed one in both commits through the base files
+    files["tests/visual/conftest.py"] = CONFTEST
+    return check(tmp_path, files, {"tests/visual/test_a.py": head, **(extra or {})})
+
+
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "print('x')",
+        "pytest_plugins = ['evil']",
+        "pytest_plugins = ['evil']\n",
+        "import os\nos.environ['A'] = '1'",
+        "_c.compare_image = None",
+        "del test_head",
+        "test_head = lambda page: None",
+        "test_head.__code__ = helper.__code__",
+        "if True:\n    pass",
+        "try:\n    pass\nexcept Exception:\n    pass",
+        "with open('x'):\n    pass",
+        "for i in range(1):\n    pass",
+        "def pytest_runtest_call(item):\n    pass",
+        "def pytest_collection_modifyitems(items):\n    del items[:]",
+        "@pytest.fixture\ndef assert_visual():\n    return None",
+        "def assert_visual():\n    return None",
+        "def expect(page):\n    return None",
+        "def helper(x):\n    return None",
+        "LIMIT_2 = compute()",
+        "LIMIT = 6",
+        "from tests.helpers import expect",
+        "from tests.visual.thing import *",
+        "__test__ = False",
+        "@pytest.mark.skip\ndef test_other():\n    pass",
+        "def test_other():\n    raise pytest.skip.Exception('x')",
+        "def test_other():\n    import unittest\n    raise unittest.SkipTest('x')",
+        "def test_other():\n    getattr(object, 'a' + 'b')",
+        "def test_other():\n    eval('1')",
+        "def test_other():\n    import tests.visual.conftest as c\n    c.compare_image = None",
+    ],
+)
+def test_added_code_in_existing_test_module_is_hard(tmp_path: Path, addition: str) -> None:
+    head = MODULE + "\n" + addition + "\n"
+    if "_c." in addition:
+        head = "import tests.visual.conftest as _c\n" + head
+    report = module_check(tmp_path, head)
+    assert not report.ok, report.reasons
+
+
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "print('x')",
+        "pytest_plugins = ['evil']",
+        "import tests.visual.conftest as _c\n_c.compare_image = None",
+        "def pytest_runtest_call(item):\n    pass",
+        "@pytest.fixture\ndef assert_visual():\n    return None",
+        "def test_other():\n    import tests.visual.conftest as c\n    c.compare_image = None",
+        "def test_other():\n    getattr(object, 'a' + 'b')",
+        "if True:\n    pass",
+    ],
+)
+def test_new_test_module_is_scanned(tmp_path: Path, addition: str) -> None:
+    head = "import pytest\n\ndef test_new(page):\n    assert page\n\n" + addition + "\n"
+    report = module_check(tmp_path, head, base=None)
+    assert not report.ok, report.reasons
+
+
+def test_inserted_raise_in_existing_test_is_hard(tmp_path: Path) -> None:
+    head = MODULE.replace("    assert LIMIT\n", "    raise SystemExit\n    assert LIMIT\n")
+    assert not module_check(tmp_path, head).ok
+
+
+def test_early_exit_inside_else_or_except_is_hard(tmp_path: Path) -> None:
+    base = "def test_x():\n    try:\n        pass\n    except Exception:\n        pass\n    else:\n        assert 1\n"
+    head = base.replace("        assert 1\n", "        return\n        assert 1\n")
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head})
+    assert hard(report, "early exit")
+
+
+def test_legitimate_new_module_is_ok(tmp_path: Path) -> None:
+    head = (
+        '"""Tests for the thing."""\n'
+        "import pytest\nfrom tests.helpers import expect\n\n"
+        "LIMIT = 5\nNAMES = ['a', 'b']\n\n"
+        "def _helper(x):\n    return x\n\n"
+        "class TestThing:\n    def test_a(self, assert_visual):\n        assert assert_visual\n\n"
+        "@pytest.mark.parametrize('n', [1, 2])\n"
+        "def test_new(page, assert_visual, n):\n    expect(page).to_be_ok()\n    assert n\n"
+    )
+    report = module_check(tmp_path, head, base=None)
+    assert report.ok and not report.needs_human, report.reasons
+
+
+def test_adding_a_test_to_an_existing_module_with_fixtures_is_ok(tmp_path: Path) -> None:
+    head = MODULE + "\n\ndef test_new(page, assert_visual):\n    assert assert_visual\n"
+    report = module_check(tmp_path, head)
+    assert report.ok and not report.needs_human, report.reasons
+
+
 PAGE = '<html><head><title>T</title><meta name="description" content="Opis"></head><body><p>Cześć   świecie</p><img src="a.png" alt="Logo"><script>var x = "zażółć";</script></body></html>'
 
 
@@ -368,6 +479,27 @@ def test_added_script_or_style_or_textarea_is_copy(tmp_path: Path) -> None:
         assert check(tmp_path / str(i), {"index.html": PAGE}, {"index.html": head}).copy_changed
 
 
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "<!-->Nowy tekst<!-- -->",
+        "<!--->Nowy tekst-->",
+        "<!-- x --!>",
+        '<input value="Nowe">',
+        '<meta name="twitter:title" content="Nowe">',
+    ],
+)
+def test_hidden_or_extra_copy_is_seen(tmp_path: Path, extra: str) -> None:
+    head = PAGE.replace("</body>", extra + "</body>")
+    assert check(tmp_path, {"index.html": PAGE}, {"index.html": head}).copy_changed
+
+
+def test_reused_script_end_tag_is_seen(tmp_path: Path) -> None:
+    base = PAGE.replace("</body>", "<script>1</script></body>")
+    head = PAGE.replace("</body>", "<script>1</script x><script>2</script></body>")
+    assert check(tmp_path, {"index.html": base}, {"index.html": head}).copy_changed
+
+
 def test_markup_only_page_change_keeps_copy(tmp_path: Path) -> None:
     report = check(tmp_path, {"index.html": PAGE}, {"index.html": PAGE.replace("<p>", '<p class="x">')})
     assert report.ok and not report.copy_changed
@@ -416,7 +548,7 @@ def test_size_limits(tmp_path: Path) -> None:
 
 
 def test_generated_files_do_not_count(tmp_path: Path) -> None:
-    body = "<html><body><p>x</p>\n" + "<!-- c -->\n" * 400 + "</body></html>\n"
+    body = "<html><body><p>x</p>\n" + "<div></div>\n" * 400 + "</body></html>\n"
     report = check(
         tmp_path,
         {"index.html": "<html><body><p>x</p></body></html>\n", "css/a.css": "a{}\n"},

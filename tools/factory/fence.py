@@ -34,18 +34,26 @@ from tools.factory.config import ConfigError, Fence, Limits, load_config
 POLISH_LETTERS = "ąćęłńóśźżĄĆĘŁŃÓŚŹŻ"
 COMPARISON = "tests/visual/comparison.py"
 PAGES = ("index.html", "docs/index.html")
-TEXT_ATTRIBUTES = ("alt", "aria-label", "title", "placeholder")
+TEXT_ATTRIBUTES = ("alt", "aria-label", "title", "placeholder", "value")
 INLINE_TAGS = frozenset(
     "a abbr b bdi bdo cite code data dfn del em i ins kbd mark q s small span strong sub sup "
     "time u var wbr".split()
 )
-MARKUP_MARKERS = ("<script", "</script", "<style", "<textarea", "<![cdata[")
+MARKUP_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"<script\b", r"</script\b", r"<style\b", r"</style\b", r"<textarea\b",
+        r"<!--", r"-->", r"--!>", r"<!\[CDATA\[",
+    )
+)
+DYNAMIC_CALLS = frozenset("eval exec compile __import__ globals locals vars setattr delattr".split())
 INFRASTRUCTURE_NAMES = ("pytest.ini", "tox.ini", "setup.cfg", ".gitattributes")
 SYMLINK, GITLINK = "120000", "160000"
 SUSPICIOUS_ADDED = re.compile(
     r"mark\.(skip|skipif|xfail|network|visual|multi_engine)"
     r"|\b(skip|xfail|importorskip)\s*\("
     r"|pytestmark|__test__|add_marker|applymarker|pytest_collection_modifyitems"
+    r"|SkipTest|skip\.Exception"
 )
 _CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _CSS_CONTENT = re.compile(r"content\s*:\s*(\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*')")
@@ -181,7 +189,8 @@ class _TextCollector(HTMLParser):
         if tag == "meta":
             names = {(n, (v or "").lower()) for n, v in attrs}
             og = any(n == "property" and (v or "").startswith("og:") for n, v in attrs)
-            if ("name", "description") in names or og:
+            twitter = any(n == "name" and (v or "").lower().startswith("twitter:") for n, v in attrs)
+            if ("name", "description") in names or og or twitter:
                 for name, value in attrs:
                     if name == "content":
                         self._attribute("meta", value)
@@ -216,8 +225,7 @@ def visible_text(html: str) -> list[str]:
 
 
 def _markup_counts(html: str) -> list[int]:
-    lowered = html.lower()
-    return [lowered.count(marker) for marker in MARKUP_MARKERS]
+    return [len(pattern.findall(html)) for pattern in MARKUP_PATTERNS]
 
 
 def _decode_escapes(body: str) -> str:
@@ -328,15 +336,31 @@ def _added_lines(old: str, new: str) -> list[str]:
     ]
 
 
-def _skeleton(source: str) -> dict[str, tuple[int, int, str]] | None:
-    """Per function and class: (definitions, early exits, decorators), or None on a syntax error.
+def _blocks(node: ast.AST) -> list[list[ast.stmt]]:
+    """Every statement list directly inside a compound statement (else, except, finally, case)."""
+    blocks: list[list[ast.stmt]] = []
+    for name in ("body", "orelse", "finalbody"):
+        block = getattr(node, name, None)
+        if isinstance(block, list):
+            blocks.append(block)
+    blocks += [handler.body for handler in getattr(node, "handlers", [])]
+    blocks += [case.body for case in getattr(node, "cases", [])]
+    return blocks
 
-    The key is the qualified name. An early exit is a `return` or an `if False:`/`if 0:` block.
-    """
+
+def _parse(source: str) -> ast.Module | None:
     try:
-        tree = ast.parse(source)
+        return ast.parse(source)
     except (SyntaxError, ValueError, RecursionError):
         return None
+
+
+def _skeleton(tree: ast.Module) -> dict[str, tuple[int, int, str]]:
+    """Per function and class: (definitions, early exits, decorators).
+
+    The key is the qualified name. An early exit is a `return`, a `raise` or an
+    `if False:`/`if 0:` block. Definitions inside any compound statement are found.
+    """
     result: dict[str, tuple[int, int, str]] = {}
 
     def exits(node: ast.AST) -> int:
@@ -346,7 +370,7 @@ def _skeleton(source: str) -> dict[str, tuple[int, int, str]] | None:
             child = stack.pop()
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
-            if isinstance(child, ast.Return):
+            if isinstance(child, (ast.Return, ast.Raise)):
                 count += 1
             elif (
                 isinstance(child, (ast.If, ast.While))
@@ -365,8 +389,9 @@ def _skeleton(source: str) -> dict[str, tuple[int, int, str]] | None:
                 decorators = "|".join(ast.dump(d) for d in node.decorator_list)
                 result[name] = (definitions + 1, exits(node), decorators)
                 visit(node.body, name + ".")
-            elif isinstance(node, (ast.If, ast.Try, ast.With, ast.For, ast.While)):
-                visit(node.body, prefix)
+            else:
+                for block in _blocks(node):
+                    visit(block, prefix)
 
     visit(tree.body, "")
     return result
@@ -376,27 +401,171 @@ def _is_test_name(qualified: str) -> bool:
     return any(part.startswith(("test", "Test")) for part in qualified.split("."))
 
 
-def _weakened_python(old: str, new: str, path: str) -> list[str]:
-    after = _skeleton(new)
-    if after is None:
-        return [f"{path}: does not parse"]
-    before = _skeleton(old)
-    if before is None:
-        return []
-    found: list[str] = []
-    for name, (definitions, exits, decorators) in before.items():
-        if name not in after:
-            if _is_test_name(name):
-                found.append(f"{path}: test removed")
+def _bound_names(stmt: ast.stmt) -> list[str]:
+    if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+        return [(a.asname or a.name.split(".")[0]) for a in stmt.names]
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [stmt.name]
+    if isinstance(stmt, ast.Assign):
+        return [t.id for t in stmt.targets if isinstance(t, ast.Name)]
+    if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+        return [stmt.target.id]
+    return []
+
+
+def _literal(node: ast.expr | None) -> bool:
+    if node is None:
+        return False
+    try:
+        ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False
+    return True
+
+
+def _top_level_problem(stmt: ast.stmt) -> str | None:
+    """What is not allowed about an added top-level statement of a test module, or None."""
+    if isinstance(stmt, ast.ImportFrom) and any(a.name == "*" for a in stmt.names):
+        return "star import"
+    if isinstance(stmt, (ast.Import, ast.ImportFrom, ast.ClassDef)):
+        return None
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return "hook function" if stmt.name.startswith("pytest_") else None
+    if isinstance(stmt, ast.Assign):
+        plain = all(isinstance(t, ast.Name) for t in stmt.targets)
+        if plain and _literal(stmt.value):
+            if any(n.startswith(("pytest_", "__")) for n in _bound_names(stmt)):
+                return "reserved name"
+            return None
+        return "assignment"
+    if isinstance(stmt, ast.AnnAssign):
+        if isinstance(stmt.target, ast.Name) and _literal(stmt.value):
+            return None
+        return "assignment"
+    if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(
+        stmt.value.value, str
+    ):
+        return None
+    return type(stmt).__name__
+
+
+def _hazards(tree: ast.Module, names: set[str], tests: set[str]) -> Counter[str]:
+    """Counts of constructs that can rewire other tests from inside a function body."""
+    imported = {
+        (a.asname or a.name.split(".")[0])
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for a in node.names
+    }
+    bound = names | imported
+    counts: Counter[str] = Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if node.id in tests:
+                counts["a test name is rebound or deleted"] += 1
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in DYNAMIC_CALLS:
+                counts["dynamic code or attribute access"] += 1
+            elif node.func.id == "getattr" and not (
+                len(node.args) > 1
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            ):
+                counts["dynamic code or attribute access"] += 1
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = list(node.targets)
+        elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
+            targets = [node.target]
+        elif isinstance(node, ast.Delete):
+            targets = list(node.targets)
+        for target in targets:
+            while isinstance(target, (ast.Attribute, ast.Subscript)):
+                target = target.value
+                if isinstance(target, ast.Name) and target.id in bound:
+                    counts["a module attribute is assigned"] += 1
+    return counts
+
+
+def _top_names(tree: ast.Module) -> set[str]:
+    return {name for stmt in tree.body for name in _bound_names(stmt)}
+
+
+def _conftest_fixtures(repo: Path, head: str) -> set[str]:
+    """Names of the fixtures defined in every conftest.py of the head tree."""
+    listing = _git(repo, "ls-tree", "-r", "--name-only", "-z", head).decode("utf-8", "replace")
+    names: set[str] = set()
+    for path in listing.split("\0"):
+        if path.rsplit("/", 1)[-1] != "conftest.py":
             continue
-        new_definitions, new_exits, new_decorators = after[name]
-        if new_definitions > definitions:
-            found.append(f"{path}: definition repeated")
-        if new_exits > exits:
-            found.append(f"{path}: early exit added")
-        if new_decorators != decorators:
-            found.append(f"{path}: decorators changed")
-    return list(dict.fromkeys(found))
+        tree = _parse(_show(repo, head, path))
+        if tree is None:
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+                "fixture" in ast.dump(d) for d in node.decorator_list
+            ):
+                names.add(node.name)
+    return names
+
+
+def _module_findings(
+    old: str, new: str, path: str, fixtures: set[str]
+) -> tuple[list[str], list[str]]:
+    """(infrastructure reasons, weakened-test details) for one new or changed test module."""
+    after = _parse(new)
+    if after is None:
+        return [], [f"{path}: does not parse"]
+    before = _parse(old) if old else ast.Module(body=[], type_ignores=[])
+    if before is None:
+        return [], []
+    infra: list[str] = []
+    weak: list[str] = []
+
+    base_bound = _top_names(before)
+    base_defs = Counter(
+        s.name for s in before.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    )
+    head_defs = Counter(
+        s.name for s in after.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    )
+    seen = Counter(ast.dump(stmt) for stmt in before.body)
+    for stmt in after.body:
+        dump = ast.dump(stmt)
+        if seen[dump] > 0:
+            seen[dump] -= 1
+            continue
+        problem = _top_level_problem(stmt)
+        if problem:
+            infra.append(f"{path}: {problem} at the top level")
+        in_place = isinstance(
+            stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        ) and stmt.name in base_defs and head_defs[stmt.name] <= base_defs[stmt.name]
+        if not in_place and any(n in base_bound or n in fixtures for n in _bound_names(stmt)):
+            infra.append(f"{path}: rebinds an existing name")
+
+    tests = {n for n in base_defs if _is_test_name(n)}
+    names = base_bound | _top_names(after)
+    old_hazards, new_hazards = _hazards(before, names, tests), _hazards(after, names, tests)
+    for kind, count in new_hazards.items():
+        if count > old_hazards[kind]:
+            weak.append(f"{path}: {kind}")
+
+    if old:
+        old_skeleton, new_skeleton = _skeleton(before), _skeleton(after)
+        for name, (definitions, exits, decorators) in old_skeleton.items():
+            if name not in new_skeleton:
+                if _is_test_name(name):
+                    weak.append(f"{path}: test removed")
+                continue
+            new_definitions, new_exits, new_decorators = new_skeleton[name]
+            if new_definitions > definitions:
+                weak.append(f"{path}: definition repeated")
+            if new_exits > exits:
+                weak.append(f"{path}: early exit added")
+            if new_decorators != decorators:
+                weak.append(f"{path}: decorators changed")
+    return list(dict.fromkeys(infra)), list(dict.fromkeys(weak))
 
 
 def _is_test_module(path: str) -> bool:
@@ -410,23 +579,35 @@ def _new_test_path(path: str) -> bool:
     return path.startswith("tests/") and name.startswith("test_") and name.endswith(".py")
 
 
-def _weakened(repo: Path, base: str, head: str, files: list[Change]) -> list[str]:
-    found: list[str] = []
+def _test_findings(
+    repo: Path, base: str, head: str, files: list[Change]
+) -> tuple[list[str], list[str]]:
+    """(infrastructure reasons, weakened-test details) for the test modules in the diff."""
+    infra: list[str] = []
+    weak: list[str] = []
+    fixtures: set[str] | None = None
     for change in files:
         if COMPARISON in (change.path, change.old_path):
-            found.append(f"{COMPARISON}: changed")
-        if change.status != "M" or not _is_test_module(change.path) or change.binary:
+            weak.append(f"{COMPARISON}: changed")
+        if change.status not in "AM" or not _is_test_module(change.path) or change.binary:
             continue
-        old, new = _show(repo, base, change.path), _show(repo, head, change.path)
-        if any(SUSPICIOUS_ADDED.search(line) for line in _added_lines(old, new)):
-            found.append(f"{change.path}: skip, marker or collection change added")
-        found += _weakened_python(old, new, change.path)
-    return found
+        old = _show(repo, base, change.path) if change.status == "M" else ""
+        new = _show(repo, head, change.path)
+        if change.status == "M" and any(
+            SUSPICIOUS_ADDED.search(line) for line in _added_lines(old, new)
+        ):
+            weak.append(f"{change.path}: skip, marker or collection change added")
+        if fixtures is None:
+            fixtures = _conftest_fixtures(repo, head)
+        found_infra, found_weak = _module_findings(old, new, change.path, fixtures)
+        infra += found_infra
+        weak += found_weak
+    return infra, weak
 
 
 def weakened_tests(repo: Path, base: str, head: str) -> list[str]:
     """Hard ways in which the diff weakens existing tests, as short descriptions."""
-    return _weakened(repo, base, head, changes(repo, base, head))
+    return _test_findings(repo, base, head, changes(repo, base, head))[1]
 
 
 def _structure(change: Change) -> list[str]:
@@ -499,7 +680,9 @@ def check_fence(
     if changed_lines > limits.max_changed_lines:
         add("size")
 
-    weakened = _weakened(repo, base, head, files)
+    infra, weakened = _test_findings(repo, base, head, files)
+    for reason in infra:
+        add(f"test infrastructure: {reason}")
     if weakened:
         add("weakened tests")
         for detail in weakened:
