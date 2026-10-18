@@ -16,13 +16,31 @@ def schema_type(prop: dict) -> str:
     return " albo ".join(names.get(t, t) for t in types if t and t != "null") or "—"
 
 
+# Reference tables (tool parameters, prompt fields, CLI commands) stack their rows on phones (css/docs.css).
+REF_TABLE = '<div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table class="ref-table">'
+
+
+def ref_head(*columns: str) -> str:
+    cells = "".join(f'<th scope="col">{e(column)}</th>' for column in columns)
+    return f'<thead><tr>{cells}</tr></thead>'
+
+
+def ref_name(name: str, required: bool = False) -> str:
+    badge = ' <span class="req">wymagany</span>' if required else ""
+    return f'<td class="ref-name"><code>{e(name)}</code>{badge}</td>'
+
+
+def ref_cell(text: str, kind: str) -> str:
+    return f'<td class="ref-{kind}">{e(text)}</td>'
+
+
 def tool_card(tool: dict) -> str:
     lead = tool["description"].split("\n\n")[0]
     props = tool["inputSchema"].get("properties", {})
     required = set(tool["inputSchema"].get("required") or [])
     rows = "".join(
-        f'<tr><td><code>{e(name)}</code>{" <span class=\"req\">wymagany</span>" if name in required else ""}</td>'
-        f"<td>{e(schema_type(p))}</td><td>{e(p.get('description', ''))}</td></tr>"
+        f'<tr>{ref_name(name, name in required)}'
+        f"{ref_cell(schema_type(p), 'type')}{ref_cell(p.get('description', ''), 'desc')}</tr>"
         for name, p in props.items()
     )
     return (
@@ -30,8 +48,8 @@ def tool_card(tool: dict) -> str:
         f'<div class="tool-head"><h4>{e(tool.get("title") or tool["name"])}</h4>'
         f'<code class="tool-identifier">{e(tool["name"])}</code></div>'
         f"<p>{e(lead)}</p>"
-        f'<details><summary>Parametry ({len(props)})</summary><div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table>'
-        f'<thead><tr><th scope="col">Parametr</th><th scope="col">Typ</th><th scope="col">Opis</th></tr></thead>'
+        f"<details><summary>Parametry ({len(props)})</summary>{REF_TABLE}"
+        f'{ref_head("Parametr", "Typ", "Opis")}'
         f"<tbody>{rows}</tbody></table></div></details></article>"
     )
 
@@ -52,14 +70,13 @@ def prompts_section(release: Release) -> str:
     cards = []
     for p in release.prompts:
         rows = "".join(
-            f'<tr><td><code>{e(a["name"])}</code>{" <span class=\"req\">wymagany</span>" if a.get("required") else ""}</td>'
-            f"<td>{e(a.get('description', ''))}</td></tr>"
+            f'<tr>{ref_name(a["name"], bool(a.get("required")))}{ref_cell(a.get("description", ""), "desc")}</tr>'
             for a in p.get("arguments", [])
         )
         cards.append(
             f'<article class="tool"><div class="tool-head"><h3>{e(p["title"])}</h3><code>{e(p["name"])}</code></div>'
-            f'<p>{e(p["description"])}</p><div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table><thead><tr><th scope="col">Pole</th>'
-            f'<th scope="col">Co wpisać</th></tr></thead><tbody>{rows}</tbody></table></div></article>'
+            f'<p>{e(p["description"])}</p>{REF_TABLE}{ref_head("Pole", "Co wpisać")}'
+            f"<tbody>{rows}</tbody></table></div></article>"
         )
     return "".join(cards)
 
@@ -233,7 +250,7 @@ def render_landing(
 
 def cli_table(release: Release) -> str:
     commands = validate_cli({"version": release.version, "commands": list(release.cli_commands)}, release.version)
-    return "".join(f"<tr><td><code>{e(command['usage'])}</code></td><td>{e(command['description'])}</td></tr>" for command in commands)
+    return "".join(f'<tr>{ref_name(command["usage"])}{ref_cell(command["description"], "desc")}</tr>' for command in commands)
 
 
 def render_docs(

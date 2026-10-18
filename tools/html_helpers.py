@@ -59,15 +59,30 @@ def copy_button(command: str, event: str = "", classes: str = "copy") -> str:
     )
 
 
+# A command-line option such as "--", "--from" or "-c": a token that starts with a hyphen.
+OPTION = re.compile(r"(?<!\S)-\S*")
+
+
+def command_text(command: str) -> str:
+    """The visible command as phones should wrap it: options stay whole (browsers break "--"
+    between its hyphens) and paths and URLs may break after a slash. The added <span> and
+    <wbr> carry no text, so the copied and selected command is unchanged. A multi-line block
+    (an agent prompt, JSON) wraps like prose instead, moving a whole URL to the next line."""
+    if "\n" in command:
+        return f'<span class="cmd-text">{e(command)}</span>'
+    text = OPTION.sub(lambda option: f'<span class="cmd-option">{option.group()}</span>', e(command).replace("/", "/<wbr>"))
+    return f'<span class="cmd-text">{text}</span>'
+
+
 def landing_command(command: str, event: str, *, hero: bool = False) -> str:
     """A landing command row or hero pill, retaining their existing CSS variants."""
     if hero:
-        return (f'<code class="text-primary"><span class="cmd-text">{e(command)}</span></code>\n'
+        return (f'<code class="text-primary">{command_text(command)}</code>\n'
                 + copy_button(command, event, "copy copy--pill"))
     return (
         '<div class="command-row">\n'
         '<code class="command-code"><span aria-hidden="true" class="text-accent">$</span> '
-        f'<span class="cmd-text">{e(command)}</span></code>\n'
+        f'{command_text(command)}</code>\n'
         f'{copy_button(command, event)}\n</div>'
     )
 
@@ -79,7 +94,7 @@ def term(command: str, label: str = "Terminal", prompt: bool = True, event: str 
     return (
         f'<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span>'
         f'<span aria-hidden="true"></span><em>{e(label)}</em></div>'
-        f'<div class="cmd"><{tag}>{sign}<span class="cmd-text">{e(command)}</span></{tag}>'
+        f'<div class="cmd"><{tag}>{sign}{command_text(command)}</{tag}>'
         f'{copy_button(command, event)}</div></div>'
     )
 

@@ -202,6 +202,19 @@ def test_marked_counts() -> None:
     assert html_helpers.prompts_phrase(4, fact=True) == '<span data-fact="prompt-count">4</span> gotowe prompty'
 
 
+def test_command_text_keeps_options_whole_and_may_break_after_slashes() -> None:
+    assert html_helpers.command_text("npx skills add owner/repo -- uvx --from a&b") == (
+        '<span class="cmd-text">npx skills add owner/<wbr>repo <span class="cmd-option">--</span> uvx '
+        '<span class="cmd-option">--from</span> a&amp;b</span>'
+    )
+
+
+def test_command_text_leaves_multiline_blocks_to_wrap_as_text() -> None:
+    """An agent prompt or JSON wraps like prose: a URL moves to the next line whole instead of breaking at a slash."""
+    block = 'See https://example.com/a\n- step: run "uvx --help"'
+    assert html_helpers.command_text(block) == '<span class="cmd-text">See https://example.com/a\n- step: run &quot;uvx --help&quot;</span>'
+
+
 def cli_snapshot(site: Path, commands: list[dict], version: str | None = None) -> None:
     (site / "data/server/cli_commands.json").write_text(
         json.dumps({"version": version if version is not None else pinned_version(site), "commands": commands}), encoding="utf-8"

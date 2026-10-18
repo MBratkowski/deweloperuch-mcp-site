@@ -82,6 +82,8 @@
 .prose td { padding: 10px 12px; border-top: 1px solid var(--table-border); vertical-align: top; color: var(--text-2); line-height: 1.55; }
 .prose td code { white-space: nowrap; }
 .req { display: inline-block; margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: rgba(52, 211, 153, 0.14); color: var(--accent-text); font-size: 11px; }
+/* The badge belongs to its name: never wrap it under the name with a stray indent. */
+.ref-name { white-space: nowrap; }
 .group { margin-top: 28px; }
 .group > p { color: var(--muted); }
 .tool { margin: 14px 0; padding: 20px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); }
@@ -103,6 +105,20 @@
   .mock-arrow { display: none; }
   .mock-pair { flex-direction: column; }
   .mock-pair .mock-window { width: 100%; }
+  /* Phones stack each reference row: name, badge and type on one line, the description under them.
+     The header stays for screen readers. Chromium and Firefox keep the table semantics under flex
+     rows; Safari may read them as plain text (WebKit bug 257458), and ARIA roles that would fix it
+     are not valid on table rows and cells. */
+  .ref-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .ref-table, .ref-table tbody { display: block; }
+  .ref-table tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 10px 12px; border-top: 1px solid var(--table-border); }
+  .ref-table tbody tr:first-child { border-top: 0; }
+  .prose .ref-table td { padding: 0; border-top: 0; }
+  .ref-table .ref-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; white-space: normal; }
+  .prose .ref-table .ref-name code { white-space: normal; overflow-wrap: break-word; }
+  .ref-table .req { margin-left: 0; }
+  .ref-table .ref-type { color: var(--muted); font-size: 13px; }
+  .ref-table .ref-desc { flex-basis: 100%; }
 }
 
 .tool-head .tool-identifier { color: var(--theme); }

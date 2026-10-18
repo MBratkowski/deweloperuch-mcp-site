@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from playwright.sync_api import Page
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -134,3 +135,19 @@ def test_demo_finishes_at_once_when_the_tab_is_hidden(page: Page, site_url: str,
     )
     page.wait_for_selector("#demo[data-demo=done]", state="attached", timeout=1000)
     assert page.locator("#demo").inner_text() == final_text(new_context, site_url)
+
+
+@pytest.mark.parametrize("width", [320, 375, 768, 1024, 1440])
+def test_hero_skyline_never_cuts_a_crane(new_context, site_url: str, width: int) -> None:
+    """Narrow screens crop the skyline; each crane is either whole in view or out of it, and one always shows."""
+    phone = width < 768
+    page = new_context(viewport={"width": width, "height": 900}, is_mobile=phone, has_touch=phone).new_page()
+    page.goto(site_url)
+    cranes = page.locator(".hero-art .crane").evaluate_all(
+        "cranes => cranes.map((crane) => { const box = crane.getBoundingClientRect(); return [box.left, box.right]; })"
+    )
+    assert len(cranes) == 2
+    whole = [left >= -1 and right <= width + 1 for left, right in cranes]
+    gone = [right <= 0 or left >= width for left, right in cranes]
+    assert all(w or g for w, g in zip(whole, gone)), cranes
+    assert any(whole), cranes

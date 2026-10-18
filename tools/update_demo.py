@@ -64,10 +64,10 @@ def answer(demo: dict) -> str:
 
 ROW = (
     '<tr data-step="row">'
-    '<td>{name}</td>'
-    '<td>{investment} · {developer}</td>'
-    '<td class="numeric">{area}</td>'
-    '<td class="numeric">{price}</td>'
+    '<td class="offer-name">{name}</td>'
+    '<td class="offer-investment">{investment} · {developer}</td>'
+    '<td class="offer-area numeric">{area}</td>'
+    '<td class="offer-price numeric">{price}</td>'
     '<td class="offer-change numeric">{change}</td>'
     "</tr>"
 )
