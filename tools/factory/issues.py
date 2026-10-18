@@ -221,7 +221,10 @@ def load_drafts(data: Any) -> tuple[list[Draft], list[Suggestion], list[Dropped]
         path = f"dropped[{i}]"
         item = _object(value, path, DROPPED_FIELDS)
         dropped.append(
-            Dropped(*(_text(item[f], f"{path}.{f}") for f in DROPPED_FIELDS))
+            Dropped(
+                _fingerprint(item["fingerprint"], f"{path}.fingerprint"),
+                _text(item["reason"], f"{path}.reason"),
+            )
         )
     return drafts, suggestions, dropped
 

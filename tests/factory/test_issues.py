@@ -390,3 +390,12 @@ def test_code_fence_outgrows_backticks_in_content() -> None:
         draft, WHERE, {"measure.py": SCRIPT_URL}, "cmd", script_source=source
     )
     assert f"``````python\n{source}\n``````" in body
+
+
+@pytest.mark.parametrize("fingerprint", ["zzz", "ZZZZZZZZZZZZ", "cccccccccccc\n", ""])
+def test_load_drafts_rejects_malformed_dropped_fingerprint(fingerprint: str) -> None:
+    data = payload()
+    data["dropped"] = [{"fingerprint": fingerprint, "reason": "noise"}]
+    with pytest.raises(DraftError) as caught:
+        load_drafts(data)
+    assert caught.value.path == "dropped[0].fingerprint"
