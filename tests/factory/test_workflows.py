@@ -218,6 +218,18 @@ def test_check_job_holds_only_a_read_token() -> None:
     assert checkouts and all((s.get("with") or {}).get("persist-credentials") is False for s in checkouts)
 
 
+def test_file_job_takes_groups_from_the_probe_artifact() -> None:
+    steps = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]["file"]["steps"]
+    probe = [
+        (s.get("with") or {}).get("path")
+        for s in steps
+        if str(s.get("uses", "")).startswith("actions/download-artifact") and (s.get("with") or {}).get("name") == "probe"
+    ]
+    assert probe == ["factory-in/probe"]
+    command = " ".join(str(s.get("run", "")) for s in steps if "tools.factory.file_issues" in str(s.get("run", "")))
+    assert "--probe-out factory-in/probe" in command
+
+
 def test_script_runners_hold_no_secret_and_no_write_token() -> None:
     found: set[str] = set()
     for path in _factory_workflows():

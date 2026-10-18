@@ -4,6 +4,9 @@ from pathlib import Path
 from typing import Any
 
 import json
+import os
+import sys
+import time
 
 import pytest
 
@@ -247,3 +250,50 @@ def test_canonical_groups_come_from_the_live_and_ci_findings(tmp_path: Path) -> 
         flaky.fingerprint: flaky.to_json(),
     }
     assert check_drafts.canonical_groups(probe_file, None) == {live.fingerprint: live.to_json()}
+
+
+def _gone(pid: int, seconds: float = 5.0) -> bool:
+    """True once `pid` no longer exists (a zombie waiting for init to reap it counts as gone)."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        status = Path(f"/proc/{pid}/status")
+        if status.exists() and "State:\tZ" in status.read_text():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+@pytest.mark.parametrize("output", ["subprocess.DEVNULL", "None"], ids=["detached", "inherits-the-output"])
+def test_no_process_a_script_starts_outlives_it(tmp_path: Path, monkeypatch: Any, output: str) -> None:
+    monkeypatch.setattr(check_drafts, "ROOT", tmp_path)
+    pid_file = tmp_path / "child.pid"
+    body = (
+        "import subprocess, sys\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],"
+        f" stdout={output}, stderr={output})\n"
+        f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+        "print('REPRODUCED: x')\n"
+        "raise SystemExit(1)\n"
+    )
+    started = time.monotonic()
+    assert check_drafts.run_script(make_script(tmp_path, body), LIVE) == 1
+    assert time.monotonic() - started < 30
+    assert _gone(int(pid_file.read_text()))
+
+
+def test_a_timed_out_script_takes_its_children_with_it(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(check_drafts, "ROOT", tmp_path)
+    monkeypatch.setattr(check_drafts, "SCRIPT_TIMEOUT_SECONDS", 1)
+    pid_file = tmp_path / "child.pid"
+    body = (
+        "import subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(120)'])\n"
+        f"open({str(pid_file)!r}, 'w').write(str(child.pid))\n"
+        "time.sleep(30)\n"
+    )
+    assert check_drafts.run_script(make_script(tmp_path, body), LIVE) == 2
+    assert _gone(int(pid_file.read_text()))

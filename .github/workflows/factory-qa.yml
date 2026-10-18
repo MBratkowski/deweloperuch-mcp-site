@@ -455,6 +455,8 @@ jobs:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false
       - run: uv sync --locked
+      # The evidence images and this run's findings: file_issues takes every draft's groups from them,
+      # never from validated.json, which a job that ran the agent's scripts wrote.
       - uses: actions/download-artifact@v8
         with:
           name: probe

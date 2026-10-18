@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from tools.factory.findings import Group
@@ -41,6 +42,7 @@ _SCRIPT = re.compile(r"^<!-- factory:script=(\S+) -->$", re.MULTILINE)
 _FORBIDDEN = ("<!--", "-->", "factory:")
 _BACKTICKS = re.compile(r"`+")
 _REJECTED_LABELS = frozenset({"invalid", "wontfix", "duplicate"})
+UNKNOWN_FINGERPRINT = "unknown fingerprint"
 
 
 class DraftError(ValueError):
@@ -237,6 +239,41 @@ def load_drafts(data: Any) -> tuple[list[Draft], list[Suggestion], list[Dropped]
             )
         )
     return drafts, suggestions, dropped
+
+
+def canonical_groups(*findings: Path | None) -> dict[str, dict[str, Any]]:
+    """This run's groups by fingerprint, from findings.json files (the live probe's, the CI facts)."""
+    groups: dict[str, dict[str, Any]] = {}
+    for path in findings:
+        if path is not None:
+            for group in json.loads(path.read_text(encoding="utf-8")).get("groups", []):
+                groups[group["fingerprint"]] = group
+    return groups
+
+
+def rebuild_groups(
+    raw_drafts: Sequence[dict[str, Any]], canonical: Mapping[str, dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[Dropped]]:
+    """Detector drafts get this run's groups for their fingerprints, never the copies in the draft:
+    the agent wrote those, and a job that ran its scripts could have rewritten them since.
+
+    A fingerprint that is in no findings file drops the draft. Script drafts carry no groups.
+    Used by check_drafts and again by file_issues, the job that holds the App token.
+    """
+    rebuilt: list[dict[str, Any]] = []
+    dropped: list[Dropped] = []
+    for raw in raw_drafts:
+        reproduction = raw["reproduction"]
+        if reproduction["kind"] == "script":
+            rebuilt.append(raw)
+            continue
+        unknown = [fp for fp in raw["fingerprints"] if fp not in canonical]
+        if unknown:
+            dropped.append(Dropped(unknown[0], UNKNOWN_FINGERPRINT))
+            continue
+        groups = [canonical[fp] for fp in dict.fromkeys(raw["fingerprints"])]
+        rebuilt.append({**raw, "reproduction": {**reproduction, "groups": groups}})
+    return rebuilt, dropped
 
 
 def _bullets(items: Sequence[str]) -> str:

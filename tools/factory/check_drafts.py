@@ -4,16 +4,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import signal
 import subprocess
 import sys
+import tempfile
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 from tools.factory.config import load_config
 from tools.factory.findings import Group
-from tools.factory.issues import SCRIPT_PATTERN, Draft, DraftError, Dropped, load_drafts
+from tools.factory.issues import (
+    SCRIPT_PATTERN,
+    Draft,
+    DraftError,
+    Dropped,
+    canonical_groups,
+    load_drafts,
+    rebuild_groups,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_TIMEOUT_SECONDS = 120
@@ -24,7 +35,6 @@ FIXED = "fixed on main, not deployed"
 GONE = "does not reproduce on the live site"
 ERROR = "reproduction error"
 NOT_IN_CI = "not present in this run's CI facts"
-UNKNOWN = "unknown fingerprint"
 
 RunScript = Callable[[str, str], int]
 RunGroup = Callable[[Group, str], int]
@@ -39,28 +49,51 @@ def run_script(script: str, url: str) -> int:
 
     1 only for exit 1 plus a `REPRODUCED:` line, 0 only for exit 0 plus `NOT REPRODUCED`;
     2 for anything else (other codes, a traceback, a missing line, a timeout, a bad path).
+
+    The script runs in a session of its own, and its whole process group is killed once it exits
+    or times out, so nothing it started outlives it. Output goes to files, not pipes, so a child
+    holding them open cannot stall the wait.
     """
     if not SCRIPT_PATTERN.fullmatch(script) or ".." in script:
         return 2
-    try:
-        result = subprocess.run(
-            [sys.executable, "-I", script, "--base-url", url],
-            cwd=ROOT,
-            timeout=SCRIPT_TIMEOUT_SECONDS,
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-    except (subprocess.TimeoutExpired, OSError):
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        try:
+            process = subprocess.Popen(
+                [sys.executable, "-I", script, "--base-url", url],
+                cwd=ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=out,
+                stderr=err,
+                start_new_session=True,
+            )
+        except OSError:
+            return 2
+        try:
+            returncode: int | None = process.wait(timeout=SCRIPT_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            returncode = None
+        finally:
+            _kill_group(process.pid)
+            process.wait()
+        out.seek(0)
+        err.seek(0)
+        stdout = out.read().decode("utf-8", errors="replace")
+        stderr = err.read().decode("utf-8", errors="replace")
+    if returncode is None or "Traceback (most recent call last)" in stderr:
         return 2
-    stdout, stderr = result.stdout or "", result.stderr or ""
-    if "Traceback (most recent call last)" in stderr:
-        return 2
-    if result.returncode == 1 and REPRODUCED.search(stdout) and not NOT_REPRODUCED.search(stdout):
+    if returncode == 1 and REPRODUCED.search(stdout) and not NOT_REPRODUCED.search(stdout):
         return 1
-    if result.returncode == 0 and NOT_REPRODUCED.search(stdout) and not REPRODUCED.search(stdout):
+    if returncode == 0 and NOT_REPRODUCED.search(stdout) and not REPRODUCED.search(stdout):
         return 0
     return 2
+
+
+def _kill_group(pgid: int) -> None:
+    """SIGKILL every process left in the script's process group (its id is the script's pid)."""
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
 
 
 def _is_ci(draft: Draft) -> bool:
@@ -123,39 +156,6 @@ def check(
         else:
             dropped.append(Dropped(draft.fingerprints[0], reason))
     return kept, dropped
-
-
-def canonical_groups(*findings: Path | None) -> dict[str, dict[str, Any]]:
-    """This run's groups by fingerprint, from findings.json files (the live probe's, the CI facts)."""
-    groups: dict[str, dict[str, Any]] = {}
-    for path in findings:
-        if path is not None:
-            for group in json.loads(path.read_text(encoding="utf-8")).get("groups", []):
-                groups[group["fingerprint"]] = group
-    return groups
-
-
-def rebuild_groups(
-    raw_drafts: Sequence[dict[str, Any]], canonical: Mapping[str, dict[str, Any]]
-) -> tuple[list[dict[str, Any]], list[Dropped]]:
-    """Detector drafts get this run's groups for their fingerprints, never the agent's copies.
-
-    A fingerprint that is in neither findings file drops the draft. Script drafts carry no groups.
-    """
-    rebuilt: list[dict[str, Any]] = []
-    dropped: list[Dropped] = []
-    for raw in raw_drafts:
-        reproduction = raw["reproduction"]
-        if reproduction["kind"] == "script":
-            rebuilt.append(raw)
-            continue
-        unknown = [fp for fp in raw["fingerprints"] if fp not in canonical]
-        if unknown:
-            dropped.append(Dropped(unknown[0], UNKNOWN))
-            continue
-        groups = [canonical[fp] for fp in dict.fromkeys(raw["fingerprints"])]
-        rebuilt.append({**raw, "reproduction": {**reproduction, "groups": groups}})
-    return rebuilt, dropped
 
 
 def build_validated(

@@ -92,8 +92,24 @@ class Publisher:
         return {path: f"https://raw.test/{path}" for path in files}
 
 
+def write_findings(out: Path, live: Any = (), ci: Any = ()) -> None:
+    """This run's probe and CI findings under the probe artifact, as the file job downloads them."""
+    for name, groups in (("live", live), ("ci", ci)):
+        folder = out / name
+        folder.mkdir(parents=True, exist_ok=True)
+        items = [g if isinstance(g, dict) else g.to_json() for g in groups]
+        (folder / "findings.json").write_text(json.dumps({"target": name, "groups": items}))
+
+
+def record_findings(out: Path, data: dict) -> Path:
+    """Unless a test wrote its own, record the drafts' groups as this run's findings."""
+    if not any(out.rglob("findings.json")):
+        write_findings(out, [g for d in data["drafts"] for g in d["reproduction"]["groups"]])
+    return out
+
+
 def run(gh: Fake, data: dict, out: Path, publisher: Any = None, dry_run: bool = False) -> list[int]:
-    return file(data, out, gh, CONFIG, TRUSTED, dry_run, publisher or Publisher())
+    return file(data, record_findings(out, data), gh, CONFIG, TRUSTED, dry_run, publisher or Publisher())
 
 
 def selectors(count: int) -> list[Group]:
@@ -263,7 +279,8 @@ def test_script_draft_without_its_script_is_skipped(tmp_path: Path, monkeypatch:
         CONFIG, limits=file_issues.dataclasses.replace(CONFIG.limits, issues_per_run=1)
     )
     data = validated(missing, draft("S3", groups[0]))
-    numbers = file(data, probe_out(tmp_path, *groups), gh, config, TRUSTED, False, Publisher())
+    out = record_findings(probe_out(tmp_path, *groups), data)
+    numbers = file(data, out, gh, config, TRUSTED, False, Publisher())
     assert len(numbers) == 1 and gh.created()[0]["title"] == f"Draft {groups[0].fingerprint}"
     assert "gone.py" in capsys.readouterr().err
 
@@ -329,3 +346,39 @@ def test_script_with_secret_shaped_text_is_never_published(
     # The skipped draft does not use up one of the per-run issues.
     assert len(numbers) == CONFIG.limits.issues_per_run == 3
     assert "leak.py" in capsys.readouterr().err
+
+
+def test_groups_are_rederived_from_this_runs_findings(tmp_path: Path) -> None:
+    g = group()
+    planted = {**g.to_json(), "note": "ghs_planted", "extra": "sk-ant-planted"}
+    out = probe_out(tmp_path, g)
+    write_findings(out, live=[g])
+    gh = Fake()
+    run(gh, validated(draft("S3", g, reproduction={"kind": "detector", "groups": [planted], "script": None})), out)
+    body = gh.created()[0]["body"]
+    assert "planted" not in body
+    assert groups_in(body) == [g]
+
+
+def test_draft_with_an_unknown_fingerprint_is_skipped_and_not_counted(tmp_path: Path, capsys: Any) -> None:
+    others = selectors(3)
+    unknown = group(selector="div.unknown")
+    out = probe_out(tmp_path, *others, unknown)
+    write_findings(out, live=others)
+    gh = Fake()
+    numbers = run(gh, validated(draft("S1", unknown), *[draft("S3", g) for g in others]), out)
+    assert len(numbers) == 3
+    assert f"Draft {unknown.fingerprint}" not in [c["title"] for c in gh.created()]
+    err = capsys.readouterr().err
+    assert unknown.fingerprint in err and "unknown fingerprint" in err
+
+
+def test_ci_draft_groups_come_from_the_ci_findings(tmp_path: Path) -> None:
+    flaky = Group("flaky", "ci", "default", "tests/test_a.py::t", (), (), (), note="failed in https://x/runs/1")
+    planted = {**flaky.to_json(), "note": "ghp_planted"}
+    out = probe_out(tmp_path)
+    write_findings(out, ci=[flaky])
+    gh = Fake()
+    run(gh, validated(draft("S1", flaky, reproduction={"kind": "detector", "groups": [planted], "script": None})), out)
+    body = gh.created()[0]["body"]
+    assert "planted" not in body and "https://x/runs/1" in body

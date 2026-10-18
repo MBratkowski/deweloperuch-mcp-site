@@ -26,8 +26,10 @@ from tools.factory.issues import (
     Suggestion,
     Where,
     _check_plain,
+    canonical_groups,
     dedup,
     load_drafts,
+    rebuild_groups,
     render_issue,
 )
 
@@ -190,8 +192,17 @@ def file(
     dry_run: bool,
     publish_evidence: PublishEvidence,
 ) -> list[int]:
-    """Create the issues; returns their numbers (none in a dry run)."""
-    drafts, suggestions, _ = load_drafts(validated)
+    """Create the issues; returns their numbers (none in a dry run).
+
+    validated.json comes from a job that ran the agent's scripts, so each detector draft gets its
+    groups again from this run's findings under `probe_out`; the groups in the file are ignored.
+    """
+    load_drafts(validated)
+    canonical = canonical_groups(*sorted(probe_out.rglob("findings.json")))
+    raw_drafts, unknown = rebuild_groups(validated["drafts"], canonical)
+    for skipped in unknown:
+        print(f"warning: skipping {skipped.fingerprint}: {skipped.reason}", file=sys.stderr)
+    drafts, suggestions, _ = load_drafts({**validated, "drafts": raw_drafts})
     repo = config.site.repo
     path = f"/repos/{repo}/issues"
     issues = gh.paginate(path, {"state": "all"})
@@ -264,7 +275,10 @@ def file(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m tools.factory.file_issues")
     parser.add_argument("--validated", type=Path, required=True, help="validated.json from check_drafts")
-    parser.add_argument("--probe-out", type=Path, required=True, help="probe output root with groups/<fp>/")
+    parser.add_argument(
+        "--probe-out", type=Path, required=True,
+        help="probe artifact root: groups/<fp>/ evidence and this run's findings.json files",
+    )
     parser.add_argument("--dry-run", action="store_true", help="print the issues, change nothing")
     return parser
 

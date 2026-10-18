@@ -57,7 +57,7 @@ Every setup subcommand is a dry run unless you pass `--apply`. Run them from the
 
 - The pinned `claude-code-action` (v1.0.241) installs Claude Code 2.1.289. The permission check that makes environment-printing forms of `ps` prompt arrives in 2.1.290, so until then the QA agent's `--disallowedTools` denies `ps`, `env`, `printenv`, `set`, `declare`, `export` and `compgen` outright. Re-pin `claude-code-action` to a release that bundles Claude Code 2.1.290 or later once that release is at least two weeks old, and keep the denies.
 - The publish-side secret checks (draft text, the groups marker, reproduction scripts, the `drafts` and `validated` artifacts) stop only verbatim tokens and keys. A token the agent encodes first would pass them; the read block and the denies are what keep tokens out of its reach.
-- The `check` job runs the agent's scripts as root in the container, and its later steps (the summary, the scan, the upload) run after them. They are best effort against a script that tampers with the job. The job holds no secret and a read-only token, and `file` validates `validated.json` again before filing.
+- The `check` job runs the agent's scripts as root in the container. Each script runs in a process group of its own, which is killed when the script ends, but a script that starts a new session itself (`setsid`) escapes that and could still tamper with the job's later steps (the summary, the scan, the upload). The job holds no secret and a read-only token, and `file`, which holds the App token, takes every draft's groups from the probe artifact again and checks all text before filing.
 
 ## Known limitation
 
