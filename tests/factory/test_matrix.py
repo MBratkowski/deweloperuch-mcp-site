@@ -241,3 +241,54 @@ def test_cli_reproduce_array_with_canary(
     none = tmp_path / "none.json"
     none.write_text(json.dumps([clean.to_json()]))
     assert _cli("--target", fixtures_url, "--reproduce", str(none)).returncode == 0
+
+
+LIVE_URL = load_config().site.live_url
+
+
+@pytest.mark.parametrize(
+    "target",
+    [LIVE_URL, "main", "http://127.0.0.1/", "http://127.0.0.1:8123/", "http://localhost:9/canary/"],
+)
+def test_probe_accepts_the_live_site_main_and_local_servers(target: str) -> None:
+    assert probe.target_allowed(target, LIVE_URL)
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://evil.example/",
+        LIVE_URL.replace("https://", "http://", 1),
+        "https://mbratkowski.github.io/",
+        "https://mbratkowski.github.io/another-site/",
+        LIVE_URL + "docs/",
+        LIVE_URL.rstrip("/"),
+        LIVE_URL + "?leak=1",
+        "https://127.0.0.1/",
+        "http://127.0.0.1@evil.example/",
+        "http://user:pass@127.0.0.1/",
+        "http://localhost.evil.example/",
+        "http://127.0.0.1:99999/",
+        "http://127.0.0.1",
+        "file:///etc/passwd",
+        "Main",
+        "",
+    ],
+)
+def test_probe_rejects_every_other_target(target: str) -> None:
+    assert not probe.target_allowed(target, LIVE_URL)
+
+
+def test_cli_refuses_another_target_before_launching_a_browser(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    def launched(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a browser was launched")
+
+    monkeypatch.setattr(probe, "sync_playwright", launched)
+    with pytest.raises(SystemExit) as error:
+        probe.main(["--target", "https://evil.example/", "--out", str(tmp_path)])
+    assert error.value.code == 2
+    message = capsys.readouterr().err
+    assert "https://evil.example/" in message and LIVE_URL in message
+    assert not (tmp_path / "findings.json").exists()

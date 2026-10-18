@@ -47,6 +47,7 @@ Every setup subcommand is a dry run unless you pass `--apply`. Run them from the
      ```
 
      Then add `path_to_bun_executable: ${{ steps.bun.outputs.path }}` to the action's `with:`.
+   - The agent reads only the workspace: `settings` turns on `permissions.blockReadsOutsideWorkingDirectories` (Claude Code 2.1.257 and later), and `--disallowedTools` denies the places a token can sit (`/proc`, `/sys`, `/etc`, `/root`, `/home`, `/github`, `/tmp`, the home directory, `.git`) and git itself. The step before it deletes `.git`, so the action cannot store its token in `.git/config`. If the agent reports refused reads of its own inputs, check that they are under the workspace (`factory-in/`, `factory-out/`, the repository).
    - The agent step sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`. If the agent's probe or fingerprint commands then fail with a sandbox error, install the isolation tools the action installs for that mode in a step before it (`apt-get update && apt-get install -y --no-install-recommends bubblewrap socat`; the container runs as root, without sudo).
    - Git "dubious ownership" messages from the action are expected: the checkout belongs to the runner's user, not to root in the container, and the agent needs no git. Only if they stop the action, add `git config --global --add safe.directory "$GITHUB_WORKSPACE"` in a step before it, as the `verify` job does.
    - Record here what was needed: the fixer and reviewer jobs run the same action in the same image.

@@ -22,6 +22,7 @@ from tools.factory.github import GitHub, GitHubError
 from tools.factory.issues import (
     SEVERITIES,
     Draft,
+    DraftError,
     Suggestion,
     Where,
     _check_plain,
@@ -93,6 +94,20 @@ def _script_path(draft: Draft) -> Path | None:
         return None
     path = check_drafts.ROOT / script
     return path if path.is_file() else None
+
+
+def _unsafe_script(draft: Draft) -> str | None:
+    """Why the draft's script must not be published (a marker or secret-shaped text), or None."""
+    path = _script_path(draft)
+    if path is None:
+        return None
+    try:
+        _check_plain(path.read_text(encoding="utf-8"), "script")
+    except DraftError as error:
+        return error.message
+    except UnicodeDecodeError:
+        return "is not UTF-8 text"
+    return None
 
 
 def _evidence_files(draft: Draft, probe_out: Path, run_id: str) -> dict[str, tuple[str, Path]]:
@@ -193,6 +208,14 @@ def file(
         if draft.reproduction.script is not None and _script_path(draft) is None:
             print(
                 f"warning: skipping {draft.fingerprints[0]}: {draft.reproduction.script} is missing",
+                file=sys.stderr,
+            )
+            continue
+        # Checked before anything is published: the evidence branch is public.
+        unsafe = _unsafe_script(draft)
+        if unsafe is not None:
+            print(
+                f"warning: skipping {draft.fingerprints[0]}: {draft.reproduction.script} {unsafe}; not published",
                 file=sys.stderr,
             )
             continue

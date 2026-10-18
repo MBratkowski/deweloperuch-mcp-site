@@ -24,6 +24,31 @@ ENV_SCRUB = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
 SETUP_UV = "astral-sh/setup-uv"
 # Commands that execute reproduction scripts an agent wrote.
 SCRIPT_RUNNERS = ("tools.factory.check_drafts", "tools.factory.verify check")
+# What every agent is denied: the network tools, git (its config may hold a token) and every
+# place outside the workspace where a token can sit (process environments, home, runner temp).
+AGENT_DENIES = (
+    "WebFetch",
+    "WebSearch",
+    "Read(//proc/**)",
+    "Read(//sys/**)",
+    "Read(//etc/**)",
+    "Read(//root/**)",
+    "Read(//home/**)",
+    "Read(//github/**)",
+    "Read(//tmp/**)",
+    "Read(~/**)",
+    "Read(./.git/**)",
+    "Bash(git:*)",
+)
+AGENT_SETTINGS = {"permissions": {"blockReadsOutsideWorkingDirectories": True}}
+QA_CLAUDE_ARGS = (
+    "--model ${{ needs.guard.outputs.qa_model }}\n"
+    "--max-turns ${{ needs.guard.outputs.qa_max_turns }}\n"
+    "--json-schema '${{ needs.guard.outputs.drafts_schema }}'\n"
+    '--allowedTools "Read(./**),Glob,Grep,Edit(./factory-out/repros/**),'
+    'Bash(uv run python -m tools.factory.probe:*),Bash(uv run python -m tools.factory.findings fingerprint:*)"\n'
+    '--disallowedTools "' + ",".join(AGENT_DENIES) + '"\n'
+)
 # A Bash rule that is only an interpreter prefix (`uv run python -I:*`) runs any file.
 _INTERPRETER_RULE = re.compile(r"(?:uv run )?python3?(?: -[A-Za-z]+)*:\*")
 # (workflow file, job id) -> the permission scopes an agent job may hold with write access.
@@ -117,6 +142,33 @@ def test_agents_cannot_run_the_scripts_they_write() -> None:
             assert not _INTERPRETER_RULE.fullmatch(command), f"{where} may run any Python file: {rule}"
 
 
+def test_qa_agent_arguments_are_pinned() -> None:
+    jobs = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]
+    (step,) = [step for step in jobs["triage"]["steps"] if _uses_agent(step)]
+    assert step["with"]["claude_args"] == QA_CLAUDE_ARGS
+    assert json.loads(step["with"]["settings"]) == AGENT_SETTINGS
+
+
+def test_agents_read_only_the_workspace() -> None:
+    for path, _, name, job, step in _agent_steps():
+        where = f"{path.name}: job {name}"
+        settings = (step.get("with") or {}).get("settings")
+        assert settings and json.loads(settings) == AGENT_SETTINGS, f"{where} may read outside the workspace"
+        claude_args = str((step.get("with") or {}).get("claude_args", ""))
+        allowed = _allowed_tools(claude_args)
+        assert "Read" not in allowed, f"{where} may read any path"
+        outside = [r for r in allowed if r.startswith("Read(") and not r.startswith("Read(./")]
+        assert not outside, f"{where} may read outside the workspace: {outside}"
+        # Claude Code never consults Write(path) rules; Edit(path) rules govern the Write tool.
+        assert not [r for r in allowed if r == "Write" or r.startswith("Write(")], f"{where}: use Edit(path)"
+        denied = _tool_rules(claude_args, ("--disallowedTools", "--disallowed-tools"))
+        missing = [rule for rule in AGENT_DENIES if rule not in denied]
+        assert not missing, f"{where} does not deny {missing}"
+        steps = job["steps"]
+        dropped = [i for i, s in enumerate(steps) if "rm -rf .git" in str(s.get("run", ""))]
+        assert dropped and dropped[0] < steps.index(step), f"{where} keeps .git, where a token may land"
+
+
 def test_script_runners_hold_no_secret_and_no_write_token() -> None:
     found: set[str] = set()
     for path in _factory_workflows():
@@ -179,11 +231,15 @@ def _strings(value: Any, where: tuple[Any, ...]) -> list[tuple[tuple[Any, ...], 
 
 
 def _allowed_tools(claude_args: str) -> list[str]:
-    """The rules after --allowedTools (or --allowed-tools), split on commas as the action does."""
+    return _tool_rules(claude_args, ("--allowedTools", "--allowed-tools"))
+
+
+def _tool_rules(claude_args: str, flags: tuple[str, ...]) -> list[str]:
+    """The rules after the given flags, split on commas as the action does."""
     tokens = shlex.split(claude_args)
     rules: list[str] = []
     for i, token in enumerate(tokens):
-        if token not in ("--allowedTools", "--allowed-tools"):
+        if token not in flags:
             continue
         for value in tokens[i + 1 :]:
             if value.startswith("--"):

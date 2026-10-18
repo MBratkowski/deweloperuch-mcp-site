@@ -15,7 +15,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit
 
 from playwright.sync_api import (
     Browser,
@@ -484,6 +484,28 @@ def _print_deltas(deltas: Sequence[Finding], limit: int = 15) -> None:
         print(f"  {_delta_size(f):g}px  {c.page} {c.engine} {c.width} {c.mode}  {f.selector}  {f.measurement}")
 
 
+def target_allowed(target: str, live_url: str) -> bool:
+    """The probe opens only the configured live site, the local build of main, or a local server.
+
+    The QA agent may run the probe: any other target would let it send what it read to a host
+    of its choice.
+    """
+    if target in ("main", live_url):
+        return True
+    parts = urlsplit(target)
+    try:
+        port = parts.port
+    except ValueError:
+        return False
+    host = parts.hostname
+    return (
+        parts.scheme == "http"
+        and host in LOCAL_HOSTS
+        and parts.netloc in (host, f"{host}:{port}")
+        and parts.path.startswith("/")
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m tools.factory.probe")
     parser.add_argument("--target", required=True, help="a URL, or 'main' for the repository's own build")
@@ -500,6 +522,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.reproduce is None and args.out is None:
         parser.error("--out is required unless --reproduce is given")
+    live_url = load_config().site.live_url
+    if not target_allowed(args.target, live_url):
+        parser.error(
+            f"--target {args.target!r} is not allowed: use the live site {live_url}, 'main', "
+            "or a URL on http://127.0.0.1 or http://localhost"
+        )
     from tools.factory.checks import CHECKS
 
     known = [*CHECKS, ENGINE_DIFF]

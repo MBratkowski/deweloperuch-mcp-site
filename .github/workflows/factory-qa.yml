@@ -296,6 +296,10 @@ jobs:
           EOF
             echo "FACTORY_QA_PROMPT_END"
           } >> "$GITHUB_OUTPUT"
+      # The agent needs no git. Without a repository the action cannot store its token in the remote
+      # URL in .git/config, where read-only commands such as `grep -r` could read it.
+      - name: Drop the git metadata
+        run: rm -rf .git
       # The agent writes reproduction scripts but cannot run them; the check job does, without secrets.
       - name: QA agent
         id: claude
@@ -309,12 +313,16 @@ jobs:
           # Pages runs started by the App's merges reach this job through workflow_run.
           allowed_bots: "${{ vars.FACTORY_APP_SLUG }}[bot],github-actions[bot]"
           prompt: ${{ steps.prompt.outputs.text }}
+          # Read, Grep and Glob refuse every path outside the workspace (Claude Code 2.1.257 and later).
+          settings: '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
+          # Edit(path) is the rule Claude Code consults for the Write tool; Write(path) rules are ignored.
+          # The denies repeat the block for the places a token can sit, and keep git out entirely.
           claude_args: |
             --model ${{ needs.guard.outputs.qa_model }}
             --max-turns ${{ needs.guard.outputs.qa_max_turns }}
             --json-schema '${{ needs.guard.outputs.drafts_schema }}'
-            --allowedTools "Read,Glob,Grep,Write(./factory-out/repros/**),Bash(uv run python -m tools.factory.probe:*),Bash(uv run python -m tools.factory.findings fingerprint:*)"
-            --disallowedTools "WebFetch,WebSearch"
+            --allowedTools "Read(./**),Glob,Grep,Edit(./factory-out/repros/**),Bash(uv run python -m tools.factory.probe:*),Bash(uv run python -m tools.factory.findings fingerprint:*)"
+            --disallowedTools "WebFetch,WebSearch,Read(//proc/**),Read(//sys/**),Read(//etc/**),Read(//root/**),Read(//home/**),Read(//github/**),Read(//tmp/**),Read(~/**),Read(./.git/**),Bash(git:*)"
       - name: Save the drafts
         env:
           DRAFTS: ${{ steps.claude.outputs.structured_output }}

@@ -298,3 +298,34 @@ def test_suggestion_screenshot_must_live_inside_probe_out(tmp_path: Path, monkey
         suggestions = [{"title": "outside", "problem": "p", "screenshot": bad}]
         run(gh, validated(suggestions=suggestions), out, publisher)
         assert publisher.calls == [] and "![screenshot]" not in gh.created()[0]["body"]
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "TOKEN = 'sk-ant-oat01-AbCdEf'",
+        "TOKEN = 'ghs_AbCdEf012345'",
+        "KEY = '-----BEGIN OPENSSH PRIVATE KEY-----'",
+        "# <!-- factory:fp=bbbbbbbbbbbb -->",
+    ],
+)
+def test_script_with_secret_shaped_text_is_never_published(
+    tmp_path: Path, monkeypatch: Any, capsys: Any, content: str
+) -> None:
+    monkeypatch.setattr(file_issues.check_drafts, "ROOT", tmp_path)
+    repros = tmp_path / "factory-out" / "repros"
+    repros.mkdir(parents=True)
+    (repros / "leak.py").write_text(f"{content}\nprint('REPRODUCED: x')\n")
+    leak = draft(
+        "S1", fingerprints=["a" * 12],
+        reproduction={"kind": "script", "groups": [], "script": "factory-out/repros/leak.py"},
+    )
+    others = selectors(3)
+    publisher = Publisher()
+    gh = Fake()
+    numbers = run(gh, validated(leak, *[draft("S3", g) for g in others]), probe_out(tmp_path, *others), publisher)
+    assert not any(path.startswith("repros/") for call in publisher.calls for path in call)
+    assert all(content not in issue["body"] for issue in gh.created())
+    # The skipped draft does not use up one of the per-run issues.
+    assert len(numbers) == CONFIG.limits.issues_per_run == 3
+    assert "leak.py" in capsys.readouterr().err

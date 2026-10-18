@@ -367,6 +367,56 @@ def test_render_rejects_forged_markers_in_script_and_command(forged: str) -> Non
         render_issue(draft, WHERE, evidence, f"cmd {forged}")
 
 
+SECRETS = [
+    "sk-ant-oat01-AbCdEf",
+    "ghp_AbCdEf012345",
+    "gho_AbCdEf012345",
+    "ghs_AbCdEf012345",
+    "ghu_AbCdEf012345",
+    "github_pat_11AbCdEf",
+    "-----BEGIN RSA PRIVATE KEY-----",
+]
+
+
+@pytest.mark.parametrize("secret", SECRETS)
+@pytest.mark.parametrize(
+    ("field", "wrap", "path"),
+    [
+        ("title", lambda v: v, "drafts[0].title"),
+        ("problem", lambda v: v, "drafts[0].problem"),
+        ("actual", lambda v: v, "drafts[0].actual"),
+        ("expected", lambda v: v, "drafts[0].expected"),
+        ("why", lambda v: v, "drafts[0].why"),
+        ("acceptance", lambda v: ["ok", v], "drafts[0].acceptance[1]"),
+        ("sources", lambda v: [v], "drafts[0].sources[0]"),
+    ],
+)
+def test_secret_shaped_agent_text_is_rejected(secret: str, field: str, wrap: Any, path: str) -> None:
+    with pytest.raises(DraftError) as caught:
+        load_drafts(payload(**{field: wrap(f"the value {secret} leaked")}))
+    assert caught.value.path == path
+    assert secret not in str(caught.value)
+
+
+@pytest.mark.parametrize("secret", SECRETS)
+def test_secret_shaped_text_in_suggestions_dropped_and_scripts_is_rejected(secret: str) -> None:
+    data = payload()
+    data["suggestions"] = [{"title": "t", "problem": f"p {secret}", "screenshot": "s"}]
+    with pytest.raises(DraftError) as caught:
+        load_drafts(data)
+    assert caught.value.path == "suggestions[0].problem"
+    data = payload()
+    data["dropped"] = [{"fingerprint": "cccccccccccc", "reason": secret}]
+    with pytest.raises(DraftError) as caught:
+        load_drafts(data)
+    assert caught.value.path == "dropped[0].reason"
+    script = {"kind": "script", "groups": [], "script": "factory-out/repros/measure.py"}
+    (draft,), _, _ = load_drafts(payload(reproduction=script))
+    with pytest.raises(DraftError) as caught:
+        render_issue(draft, WHERE, {"measure.py": SCRIPT_URL}, "cmd", script_source=f"TOKEN = '{secret}'\n")
+    assert caught.value.path == "script_source"
+
+
 def test_parsers_ignore_markers_outside_the_trailing_block() -> None:
     _, body = render()
     head, tail = body.split(issues.SENTINEL, 1)

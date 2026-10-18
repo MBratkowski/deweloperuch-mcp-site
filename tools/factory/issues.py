@@ -38,6 +38,9 @@ _FP = re.compile(r"^<!-- factory:fp=([0-9a-f]{12}) -->$", re.MULTILINE)
 _GROUPS = re.compile(r"^<!-- factory:groups=([A-Za-z0-9+/=]*) -->$", re.MULTILINE)
 _SCRIPT = re.compile(r"^<!-- factory:script=(\S+) -->$", re.MULTILINE)
 _FORBIDDEN = ("<!--", "-->", "factory:")
+# Prefixes of the Claude and GitHub tokens and of PEM keys: agent text that carries one is never
+# published, whether the agent read a secret or was told to plant one.
+_SECRET_SHAPES = ("sk-ant-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "-----BEGIN")
 _BACKTICKS = re.compile(r"`+")
 _REJECTED_LABELS = frozenset({"invalid", "wontfix", "duplicate"})
 
@@ -113,10 +116,13 @@ def _object(value: Any, path: str, fields: Sequence[str]) -> dict[str, Any]:
 
 
 def _check_plain(value: str, path: str) -> str:
-    """Agent text must never carry or imitate a hidden marker."""
+    """Agent text must never carry or imitate a hidden marker, nor anything shaped like a secret."""
     for token in _FORBIDDEN:
         if token in value:
             raise DraftError(path, f"must not contain {token!r}")
+    for shape in _SECRET_SHAPES:
+        if shape in value:
+            raise DraftError(path, f"must not contain secret-shaped text ({shape!r})")
     return value
 
 
