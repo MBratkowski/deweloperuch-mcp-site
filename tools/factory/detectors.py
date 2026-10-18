@@ -74,3 +74,65 @@ FOCUS_PROBLEMS = """() => {""" + DESCRIBE + """
   }
   return { checked: elements.length, problems };
 }"""
+
+# Elements whose own content is cut off by a box that hides its overflow.
+CLIPPED_TEXT = """() => {""" + DESCRIBE + """
+  const hides = (value) => value === 'hidden' || value === 'clip';
+  return Array.from(document.querySelectorAll('body *'))
+    .filter(e => e.checkVisibility() && !e.closest('[aria-hidden="true"]'))
+    .filter(e => Array.from(e.childNodes).some(n => n.nodeType === 3 && n.textContent.trim()))
+    .filter(e => {
+      const style = getComputedStyle(e);
+      const x = hides(style.overflowX) && e.scrollWidth > e.clientWidth + 1;
+      const y = hides(style.overflowY) && e.scrollHeight > e.clientHeight + 1;
+      return x || y;
+    })
+    .slice(0, 5)
+    .map(e => ({
+      selector: describe(e),
+      measurement: `scroll ${e.scrollWidth}x${e.scrollHeight} > client ${e.clientWidth}x${e.clientHeight}`,
+      box: boxOf(e),
+    }));
+}"""
+
+# Pairs of visible interactive elements whose boxes intersect by more than 1 px, and
+# interactive elements that sit on top of the centre of another element's text. The element
+# reported is the later one of a pair, or the covering one.
+OVERLAPS = """() => {""" + DESCRIBE + """
+  const INTERACTIVE = 'a[href], button, summary, input, [tabindex]';
+  const visible = (e) => e.checkVisibility() && !e.closest('[aria-hidden="true"]');
+  const related = (a, b) => a.contains(b) || b.contains(a);
+  const out = [];
+  const seen = new Set();
+  const add = (el, measurement) => {
+    if (seen.has(el)) return;
+    seen.add(el);
+    out.push({ selector: describe(el), measurement, box: boxOf(el) });
+  };
+
+  const interactive = Array.from(document.querySelectorAll(INTERACTIVE)).filter(visible);
+  for (let i = 0; i < interactive.length; i += 1) {
+    for (let j = i + 1; j < interactive.length; j += 1) {
+      const a = interactive[i], b = interactive[j];
+      if (related(a, b)) continue;
+      const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      const w = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+      const h = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+      if (w > 1 && h > 1) add(b, `overlaps ${describe(a)} by ${Math.round(w)}x${Math.round(h)}`);
+    }
+  }
+
+  const scrollX = window.scrollX, scrollY = window.scrollY;
+  const texts = Array.from(document.querySelectorAll('p, li, h1, h2, h3, h4, h5, h6, td, code, span'))
+    .filter(e => visible(e) && Array.from(e.childNodes).some(n => n.nodeType === 3 && n.textContent.trim()));
+  for (const el of texts) {
+    if (out.length >= 5) break;
+    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    const rect = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    const cover = hit && hit.closest(INTERACTIVE);
+    if (cover && !related(cover, el)) add(cover, `covers the text of ${describe(el)}`);
+  }
+  window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
+  return out.slice(0, 5);
+}"""
