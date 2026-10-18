@@ -35,3 +35,6 @@ def probe_cell() -> Callable[..., Cell]:
         return Cell(page, engine, width, SHORT_HEIGHT if mode == "short" else HEIGHT, mode)
 
     return make
+
+# Fixture projects hold sample tests that only the tests under test run explicitly.
+collect_ignore_glob = ["fixtures/*"]
