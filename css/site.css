@@ -41,7 +41,10 @@
   color-scheme: dark;
 }
 
-html { scroll-behavior: smooth; }
+/* js/site.js sets data-smooth-scroll after the load-time fragment scroll. Chromium would
+   animate that scroll toward the target's position when it started, and late web font
+   swaps move the target, so deep links stopped short of their section. */
+html[data-smooth-scroll] { scroll-behavior: smooth; }
 body {
   margin: 0;
   background: var(--bg);
@@ -161,6 +164,6 @@ details[open] summary > span[aria-hidden] { transform: rotate(45deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
+  html[data-smooth-scroll] { scroll-behavior: auto; }
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

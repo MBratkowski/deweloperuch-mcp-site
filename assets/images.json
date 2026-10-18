@@ -13,15 +13,15 @@
     "assets/icon/icon-tile-512.png": "e7b3368c8595e8d736f160af0ce8248a42c8d53616903a448c93dee3596a796b",
     "css/docs.css": "c186943a763dfbf856c6cc703a3af8ca17a533079d829843d0a634329e16215a",
     "css/landing.css": "f89ae80e5dbb93768cb06455596b4c8578faedd7de57b382416adbc0aefb13b1",
-    "css/site.css": "bde34ad5fb175b207aa7b3a3cd9a32f1bf26f5dc101c203c79d4d93dd73071bf",
+    "css/site.css": "1dbf3c63cdf82cdcc278c2b6f5ade699881c725d5d4b3020a66ec229fd3d8633",
     "index.html": "fa3a3876adef5f47ece5d772fa71456f0c96e5100da09b1541fc20f7de1b4742",
-    "js/site.js": "dbf0d2a59ebbde913baf26eec16087a6f6a3761002cf453045839ee41c28b450",
+    "js/site.js": "baa4eb6bd5423f6eaaa5ce3bcf4c3076ee7f1558ee958b6fd56470972dd7e9d4",
     "tools/render_images.py": "e5ef25fd6a89675480599182eaee8ab8e1f6df183fc4a3a10e48bb78c8c3bb8c",
     "uv.lock": "9af73ecbfe41b9e2d38506b129abb4007ad063f1b4dae1e0dd8fefa26e6a01f2"
   },
   "outputs": {
     "apple-touch-icon.png": "bdcfe9167700ca1606b002dfa3dffa65843653f6ce04de647612c21285afea04",
-    "assets/og.png": "87804da498a8956bf417f2d090996369f0556990edbb81485ddf0343f9d8ace7",
+    "assets/og.png": "8450b20ecd25688fbda6818cc4c50ff4a954101796faaa613d3548fd418ce9aa",
     "favicon.png": "925c21bc64fc4712e3d6640ac7c019d6d11c2c6ed4e73a8c5a00db0ad1c7e98a"
   },
   "renderer": {
