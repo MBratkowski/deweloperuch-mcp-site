@@ -35,6 +35,18 @@
   display: block;
 }
 
+/* The art is 1440 wide and its cranes span x 130–1310; a narrower crop would cut them.
+   Below 1180 px scale it to show both, keeping the city's bottom edge at 760 px. */
+@media (max-width: 1179px) {
+  .hero-art {
+    top: 760px;
+    left: calc(-100% * 130 / 1180);
+    width: calc(100% * 1440 / 1180);
+    height: auto;
+    transform: translateY(-100%);
+  }
+}
+
 .topbar--landing {
   position: relative;
   /* Keep the shared container gutters and navigation top spacing. */
@@ -992,6 +1004,9 @@
   .term-body .command-row { flex-wrap: wrap; }
   .term-body .command-code { flex-basis: 100%; overflow-wrap: break-word; }
   .term-body .command-row > .copy { margin-left: auto; }
+
+  /* Phones zoom in on the right crane (x 760–1360 of the art, at most life-size) and leave the left one out of frame. */
+  .hero-art { left: max(calc(-100% * 760 / 600), calc(50% - 1075px)); width: min(calc(100% * 1440 / 600), 1440px); }
 
   /* Phones show the conversation alone; the chip names the tool that answered. */
   .demo-sidebar, .demo-inspector { display: none; }
