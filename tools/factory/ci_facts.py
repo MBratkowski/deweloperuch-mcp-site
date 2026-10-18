@@ -104,14 +104,14 @@ def find_flakes(gh: Any, days: int, now: datetime | None = None) -> list[Group]:
             failed_run, failed_job = by_result["failure"][0]
             passed_run, _ = by_result["success"][0]
             log = gh.download(f"{_api(gh)}/actions/jobs/{failed_job['id']}/logs")
-            for test_id in failed_tests(log.decode("utf-8", errors="replace")):
-                if test_id in flakes:
-                    continue
-                note = (
-                    f"{name} failed in {failed_run['html_url']} and passed in "
-                    f"{passed_run['html_url']} on {failed_run['head_sha'][:7]}"
-                )
-                flakes[test_id] = Group("flaky", "ci", "default", test_id, (), (), (), note=note)
+            selectors = failed_tests(log.decode("utf-8", errors="replace")) or [name]
+            note = (
+                f"{name} failed in {failed_run['html_url']} and passed in "
+                f"{passed_run['html_url']} on {failed_run['head_sha'][:7]}"
+            )
+            for selector in selectors:
+                if selector not in flakes:
+                    flakes[selector] = Group("flaky", "ci", "default", selector, (), (), (), note=note)
     return list(flakes.values())
 
 

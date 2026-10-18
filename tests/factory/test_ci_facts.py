@@ -151,3 +151,26 @@ def test_cli_exits_2_and_writes_nothing_on_github_error(
     assert ci_facts.main(["--out", str(tmp_path)]) == 2
     assert "rate limit exceeded" in capsys.readouterr().err
     assert not (tmp_path / "findings.json").exists()
+
+
+def test_find_flakes_reports_a_job_without_test_ids_by_its_name() -> None:
+    name = "Validate this commit / Lighthouse (mobile)"
+    base = {"status": "completed", "head_sha": MAIN, "created_at": "2026-10-16T16:30:00Z"}
+    r = {
+        ("GET", f"{API}/actions/workflows/check.yml/runs"): {
+            "workflow_runs": [{**base, "id": 1, "html_url": "https://x/runs/1"}]
+        },
+        ("GET", f"{API}/actions/workflows/pages.yml/runs"): {
+            "workflow_runs": [{**base, "id": 2, "html_url": "https://x/runs/2"}]
+        },
+        ("GET", f"{API}/actions/runs/1/jobs"): {
+            "jobs": [{"id": 10, "name": name, "conclusion": "failure"}]
+        },
+        ("GET", f"{API}/actions/runs/2/jobs"): {
+            "jobs": [{"id": 20, "name": name, "conclusion": "success"}]
+        },
+        ("GET", f"{API}/actions/jobs/10/logs"): b"2026-10-16T16:31:00Z score 0.4 below 0.9\n",
+    }
+    groups = find_flakes(FakeGitHub(r), 14, now=NOW)
+    assert [(g.check, g.page, g.selector) for g in groups] == [("flaky", "ci", name)]
+    assert "https://x/runs/1" in groups[0].note and "https://x/runs/2" in groups[0].note
