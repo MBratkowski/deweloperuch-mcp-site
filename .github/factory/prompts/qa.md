@@ -30,8 +30,8 @@ The paths are listed under "This run" at the end of this prompt.
 
 ### Detector drafts
 
-- `reproduction`: `{"kind": "detector", "groups": [...], "script": null}`, with the group objects copied unchanged from findings.json.
-- `fingerprints`: the `fingerprint` of each of those groups.
+- `fingerprints`: the `fingerprint` of each group of the draft, from findings.json. They decide everything: the check job replaces the draft's group objects with the probe's own groups for these fingerprints, and drops the draft when a fingerprint is in neither findings file.
+- `reproduction`: `{"kind": "detector", "groups": [...], "script": null}`, with the same groups copied from findings.json (at least one; the check job discards these copies).
 
 The check job reruns every group of the draft on the live site and on `main`; the draft survives only when all of them reproduce on both.
 

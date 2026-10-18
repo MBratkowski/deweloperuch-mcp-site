@@ -39,7 +39,18 @@ AGENT_DENIES = (
     "Read(~/**)",
     "Read(./.git/**)",
     "Bash(git:*)",
+    # Claude Code 2.1.289 runs env-printing forms of these read-only commands unprompted.
+    "Bash(ps:*)",
+    "Bash(env:*)",
+    "Bash(printenv:*)",
+    "Bash(set:*)",
+    "Bash(declare:*)",
+    "Bash(export:*)",
+    "Bash(compgen:*)",
 )
+# Artifacts that hold agent output: scanned for secret shapes first, kept one day.
+AGENT_ARTIFACTS = {"drafts": "triage", "validated": "check"}
+SCANNER = "uv run python -I -S tools/factory/secret_scan.py"
 AGENT_SETTINGS = {"permissions": {"blockReadsOutsideWorkingDirectories": True}}
 QA_CLAUDE_ARGS = (
     "--model ${{ needs.guard.outputs.qa_model }}\n"
@@ -167,6 +178,44 @@ def test_agents_read_only_the_workspace() -> None:
         steps = job["steps"]
         dropped = [i for i, s in enumerate(steps) if "rm -rf .git" in str(s.get("run", ""))]
         assert dropped and dropped[0] < steps.index(step), f"{where} keeps .git, where a token may land"
+
+
+def test_agent_output_is_scanned_before_upload_and_kept_one_day() -> None:
+    jobs = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]
+    uploads: dict[str, str] = {}
+    for name, job in jobs.items():
+        steps = job.get("steps") or []
+        for i, step in enumerate(steps):
+            settings = step.get("with") or {}
+            if not str(step.get("uses", "")).startswith("actions/upload-artifact"):
+                continue
+            if settings.get("name") not in AGENT_ARTIFACTS:
+                continue
+            artifact = settings["name"]
+            uploads[artifact] = name
+            assert settings.get("retention-days") == 1, f"{artifact} is kept longer than a day"
+            producers = [
+                j
+                for j, s in enumerate(steps[:i])
+                if _uses_agent(s) or any(r in str(s.get("run", "")) for r in SCRIPT_RUNNERS)
+            ]
+            scans = [j for j, s in enumerate(steps[:i]) if SCANNER in str(s.get("run", ""))]
+            assert scans and scans[-1] > max(producers, default=-1), f"{artifact} is not scanned last"
+            command = str(steps[scans[-1]]["run"])
+            paths = [line.strip().rstrip("/") for line in str(settings["path"]).splitlines() if line.strip()]
+            assert all(path in command for path in paths), f"the scan before {artifact} misses {paths}"
+    assert uploads == AGENT_ARTIFACTS
+
+
+def test_check_job_holds_only_a_read_token() -> None:
+    job = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]["check"]
+    assert job["permissions"] == {"contents": "read"}
+    assert "environment" not in job
+    text = json.dumps(job)
+    for reference in ("github.token", "secrets.", "GITHUB_TOKEN", "GH_TOKEN"):
+        assert reference not in text, f"the check job mentions {reference}"
+    checkouts = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout")]
+    assert checkouts and all((s.get("with") or {}).get("persist-credentials") is False for s in checkouts)
 
 
 def test_script_runners_hold_no_secret_and_no_write_token() -> None:

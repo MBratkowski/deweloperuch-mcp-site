@@ -316,17 +316,22 @@ jobs:
           # Read, Grep and Glob refuse every path outside the workspace (Claude Code 2.1.257 and later).
           settings: '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
           # Edit(path) is the rule Claude Code consults for the Write tool; Write(path) rules are ignored.
-          # The denies repeat the block for the places a token can sit, and keep git out entirely.
+          # The denies repeat the block for the places a token can sit, keep git out entirely, and stop
+          # the read-only commands that can print an environment (Claude Code 2.1.289 runs them unprompted).
           claude_args: |
             --model ${{ needs.guard.outputs.qa_model }}
             --max-turns ${{ needs.guard.outputs.qa_max_turns }}
             --json-schema '${{ needs.guard.outputs.drafts_schema }}'
             --allowedTools "Read(./**),Glob,Grep,Edit(./factory-out/repros/**),Bash(uv run python -m tools.factory.probe:*),Bash(uv run python -m tools.factory.findings fingerprint:*)"
-            --disallowedTools "WebFetch,WebSearch,Read(//proc/**),Read(//sys/**),Read(//etc/**),Read(//root/**),Read(//home/**),Read(//github/**),Read(//tmp/**),Read(~/**),Read(./.git/**),Bash(git:*)"
+            --disallowedTools "WebFetch,WebSearch,Read(//proc/**),Read(//sys/**),Read(//etc/**),Read(//root/**),Read(//home/**),Read(//github/**),Read(//tmp/**),Read(~/**),Read(./.git/**),Bash(git:*),Bash(ps:*),Bash(env:*),Bash(printenv:*),Bash(set:*),Bash(declare:*),Bash(export:*),Bash(compgen:*)"
       - name: Save the drafts
         env:
           DRAFTS: ${{ steps.claude.outputs.structured_output }}
         run: printf '%s' "$DRAFTS" > factory-out/drafts.json
+      # Artifacts of a public repository can be downloaded by any signed-in user: agent output that
+      # looks like a token or a key fails the job instead. Standard library only (-I -S).
+      - name: Scan the agent's output for secret shapes
+        run: uv run python -I -S tools/factory/secret_scan.py factory-out/drafts.json factory-out/repros
       - uses: actions/upload-artifact@v7
         with:
           name: drafts
@@ -334,7 +339,7 @@ jobs:
             factory-out/drafts.json
             factory-out/repros/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   check:
     name: Check the drafts on the live site and on main
@@ -385,6 +390,7 @@ jobs:
           --drafts factory-in/drafts/drafts.json
           --live "$LIVE_URL"
           --main-root .
+          --probe-findings factory-in/probe/live/findings.json
           --ci-findings factory-in/probe/ci/findings.json
           --out factory-out/validated.json
       # The owner reads why each finding was dropped and which drafts wait beyond the per-run limit.
@@ -413,6 +419,9 @@ jobs:
           for dropped in data["dropped"]:
               print(f"- {dropped['fingerprint']}: {plain(dropped['reason'])}")
           EOF
+      # Best effort: the scripts ran in this job before this step.
+      - name: Scan the checked output for secret shapes
+        run: uv run python -I -S tools/factory/secret_scan.py factory-out/validated.json factory-out/repros
       - uses: actions/upload-artifact@v7
         with:
           name: validated
@@ -420,7 +429,7 @@ jobs:
             factory-out/validated.json
             factory-out/repros/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 1
 
   file:
     name: File the issues

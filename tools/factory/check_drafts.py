@@ -7,7 +7,7 @@ import json
 import re
 import subprocess
 import sys
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,7 @@ FIXED = "fixed on main, not deployed"
 GONE = "does not reproduce on the live site"
 ERROR = "reproduction error"
 NOT_IN_CI = "not present in this run's CI facts"
+UNKNOWN = "unknown fingerprint"
 
 RunScript = Callable[[str, str], int]
 RunGroup = Callable[[Group, str], int]
@@ -124,6 +125,39 @@ def check(
     return kept, dropped
 
 
+def canonical_groups(*findings: Path | None) -> dict[str, dict[str, Any]]:
+    """This run's groups by fingerprint, from findings.json files (the live probe's, the CI facts)."""
+    groups: dict[str, dict[str, Any]] = {}
+    for path in findings:
+        if path is not None:
+            for group in json.loads(path.read_text(encoding="utf-8")).get("groups", []):
+                groups[group["fingerprint"]] = group
+    return groups
+
+
+def rebuild_groups(
+    raw_drafts: Sequence[dict[str, Any]], canonical: Mapping[str, dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[Dropped]]:
+    """Detector drafts get this run's groups for their fingerprints, never the agent's copies.
+
+    A fingerprint that is in neither findings file drops the draft. Script drafts carry no groups.
+    """
+    rebuilt: list[dict[str, Any]] = []
+    dropped: list[Dropped] = []
+    for raw in raw_drafts:
+        reproduction = raw["reproduction"]
+        if reproduction["kind"] == "script":
+            rebuilt.append(raw)
+            continue
+        unknown = [fp for fp in raw["fingerprints"] if fp not in canonical]
+        if unknown:
+            dropped.append(Dropped(unknown[0], UNKNOWN))
+            continue
+        groups = [canonical[fp] for fp in dict.fromkeys(raw["fingerprints"])]
+        rebuilt.append({**raw, "reproduction": {**reproduction, "groups": groups}})
+    return rebuilt, dropped
+
+
 def build_validated(
     incoming: dict[str, Any],
     live_url: str,
@@ -132,17 +166,24 @@ def build_validated(
     run_group: RunGroup,
     ci_fingerprints: Collection[str] | None,
     suggestions_per_run: int,
+    *,
+    canonical: Mapping[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    """The validated.json payload: surviving draft dicts, capped suggestions, all dropped."""
-    drafts, _, _ = load_drafts(incoming)
+    """The validated.json payload: surviving draft dicts, capped suggestions, all dropped.
+
+    Only the probe's own groups reach it: the agent's group objects are data it could have edited.
+    """
+    load_drafts(incoming)
+    raw_drafts, unknown = rebuild_groups(incoming["drafts"], canonical)
+    drafts, _, _ = load_drafts({**incoming, "drafts": raw_drafts})
     kept, new_dropped = check(drafts, live_url, main_url, run_script, run_group, ci_fingerprints)
     survivors = {id(d) for d in kept}
     return {
-        "drafts": [raw for draft, raw in zip(drafts, incoming["drafts"]) if id(draft) in survivors],
+        "drafts": [raw for draft, raw in zip(drafts, raw_drafts) if id(draft) in survivors],
         "suggestions": incoming["suggestions"][:suggestions_per_run],
         "dropped": [
             *incoming["dropped"],
-            *({"fingerprint": d.fingerprint, "reason": d.reason} for d in new_dropped),
+            *({"fingerprint": d.fingerprint, "reason": d.reason} for d in [*unknown, *new_dropped]),
         ],
     }
 
@@ -153,6 +194,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--live", required=True, help="base URL of the live site")
     parser.add_argument("--main-root", type=Path, required=True, help="checkout of main to build and serve")
     parser.add_argument("--out", type=Path, required=True, help="validated.json to write")
+    parser.add_argument(
+        "--probe-findings", type=Path, required=True, help="findings.json of this run's live probe"
+    )
     parser.add_argument("--ci-findings", type=Path, help="findings.json from this run's ci_facts")
     return parser
 
@@ -163,10 +207,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         incoming = json.loads(args.drafts.read_text(encoding="utf-8"))
         load_drafts(incoming)
-        ci_fingerprints: set[str] | None = None
-        if args.ci_findings is not None:
-            facts = json.loads(args.ci_findings.read_text(encoding="utf-8"))
-            ci_fingerprints = {g["fingerprint"] for g in facts.get("groups", [])}
+        canonical = canonical_groups(args.probe_findings, args.ci_findings)
+        ci_fingerprints = set(canonical_groups(args.ci_findings)) if args.ci_findings else None
         from playwright.sync_api import sync_playwright
 
         from tools.factory.probe import local_site, reproduce
@@ -180,6 +222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 lambda group, url: reproduce(playwright, group, url),
                 ci_fingerprints,
                 config.limits.suggestions_per_run,
+                canonical=canonical,
             )
     except (OSError, ValueError, KeyError, DraftError) as error:
         print(f"check drafts failed: {error}", file=sys.stderr)

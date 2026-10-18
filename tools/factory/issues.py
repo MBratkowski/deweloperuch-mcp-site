@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from tools.factory.findings import Group
+from tools.factory.secret_scan import SECRET_SHAPES, secret_shape  # noqa: F401 (shapes are defined once)
 
 # The rules below mirror .github/factory/schemas/drafts.json; a test keeps them equal.
 SEVERITIES = ("S1", "S2", "S3", "S4")
@@ -38,9 +39,6 @@ _FP = re.compile(r"^<!-- factory:fp=([0-9a-f]{12}) -->$", re.MULTILINE)
 _GROUPS = re.compile(r"^<!-- factory:groups=([A-Za-z0-9+/=]*) -->$", re.MULTILINE)
 _SCRIPT = re.compile(r"^<!-- factory:script=(\S+) -->$", re.MULTILINE)
 _FORBIDDEN = ("<!--", "-->", "factory:")
-# Prefixes of the Claude and GitHub tokens and of PEM keys: agent text that carries one is never
-# published, whether the agent read a secret or was told to plant one.
-_SECRET_SHAPES = ("sk-ant-", "ghp_", "gho_", "ghs_", "ghu_", "github_pat_", "-----BEGIN")
 _BACKTICKS = re.compile(r"`+")
 _REJECTED_LABELS = frozenset({"invalid", "wontfix", "duplicate"})
 
@@ -120,10 +118,16 @@ def _check_plain(value: str, path: str) -> str:
     for token in _FORBIDDEN:
         if token in value:
             raise DraftError(path, f"must not contain {token!r}")
-    for shape in _SECRET_SHAPES:
-        if shape in value:
-            raise DraftError(path, f"must not contain secret-shaped text ({shape!r})")
+    _check_secrets(value, path)
     return value
+
+
+def _check_secrets(value: str, path: str) -> None:
+    """Text shaped like a token or a key is never published, whether the agent read a secret or
+    was told to plant one."""
+    shape = secret_shape(value)
+    if shape is not None:
+        raise DraftError(path, f"must not contain secret-shaped text ({shape!r})")
 
 
 def _text(value: Any, path: str) -> str:
@@ -312,9 +316,10 @@ def render_issue(
     parts = [f"## {name}\n\n{text}" for name, text in sections]
     markers = [SENTINEL]
     markers += [f"<!-- factory:fp={fp} -->" for fp in draft.fingerprints]
-    encoded = base64.b64encode(
-        json.dumps(draft.reproduction.groups, sort_keys=True).encode()
-    )
+    groups = json.dumps(draft.reproduction.groups, sort_keys=True)
+    # check_drafts rebuilds the groups from the probe's findings; encoded, nothing else would see them.
+    _check_secrets(groups, "reproduction.groups")
+    encoded = base64.b64encode(groups.encode())
     markers.append(f"<!-- factory:groups={encoded.decode()} -->")
     if script is not None:
         markers.append(f"<!-- factory:script={evidence.get(script_name or '', '')} -->")

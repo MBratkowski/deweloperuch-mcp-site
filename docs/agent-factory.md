@@ -53,6 +53,12 @@ Every setup subcommand is a dry run unless you pass `--apply`. Run them from the
    - Record here what was needed: the fixer and reviewer jobs run the same action in the same image.
 5. "--json-schema was provided but Claude did not return structured_output" means the agent ended without output that matches `.github/factory/schemas/drafts.json` (for example out of turns); the run's log and `max_turns.qa` in `config.json` are the places to look.
 
+## Known residual risk
+
+- The pinned `claude-code-action` (v1.0.241) installs Claude Code 2.1.289. The permission check that makes environment-printing forms of `ps` prompt arrives in 2.1.290, so until then the QA agent's `--disallowedTools` denies `ps`, `env`, `printenv`, `set`, `declare`, `export` and `compgen` outright. Re-pin `claude-code-action` to a release that bundles Claude Code 2.1.290 or later once that release is at least two weeks old, and keep the denies.
+- The publish-side secret checks (draft text, the groups marker, reproduction scripts, the `drafts` and `validated` artifacts) stop only verbatim tokens and keys. A token the agent encodes first would pass them; the read block and the denies are what keep tokens out of its reach.
+- The `check` job runs the agent's scripts as root in the container, and its later steps (the summary, the scan, the upload) run after them. They are best effort against a script that tampers with the job. The job holds no secret and a read-only token, and `file` validates `validated.json` again before filing.
+
 ## Known limitation
 
 Sync pull requests are opened with `GITHUB_TOKEN`, so they still need the owner's admin bypass to merge; the factory does not merge them.

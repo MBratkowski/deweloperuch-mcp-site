@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Any
 
+import json
+
 import pytest
 
 from tools.factory import check_drafts
@@ -162,8 +164,9 @@ def test_validated_json_keeps_survivors_limits_suggestions_and_extends_dropped()
     def run_group(g: Group, url: str) -> int:
         return 1 if g.check == "overflow" or url == LIVE else 0
 
+    canonical = {"a" * 12: group().to_json(), "b" * 12: group("axe").to_json()}
     result = check_drafts.build_validated(
-        incoming, LIVE, MAIN, never_script, run_group, None, suggestions_per_run=1
+        incoming, LIVE, MAIN, never_script, run_group, None, suggestions_per_run=1, canonical=canonical
     )
     assert result["drafts"] == [incoming["drafts"][0]]
     assert [s["title"] for s in result["suggestions"]] == ["s1"]
@@ -171,3 +174,76 @@ def test_validated_json_keeps_survivors_limits_suggestions_and_extends_dropped()
         {"fingerprint": "c" * 12, "reason": "old"},
         {"fingerprint": "b" * 12, "reason": "fixed on main, not deployed"},
     ]
+
+
+def test_agent_groups_are_replaced_by_this_runs_groups() -> None:
+    canonical = group()
+    planted = {**canonical.to_json(), "note": "ghs_planted", "leak": "sk-ant-planted"}
+    incoming = {"drafts": [draft_dict(canonical.fingerprint)], "suggestions": [], "dropped": []}
+    incoming["drafts"][0]["reproduction"]["groups"] = [planted]
+    seen: list[Group] = []
+
+    def run_group(g: Group, _url: str) -> int:
+        seen.append(g)
+        return 1
+
+    result = check_drafts.build_validated(
+        incoming, LIVE, MAIN, never_script, run_group, None, suggestions_per_run=1,
+        canonical={canonical.fingerprint: canonical.to_json()},
+    )
+    assert result["drafts"][0]["reproduction"]["groups"] == [canonical.to_json()]
+    assert seen == [canonical, canonical]
+    assert "planted" not in json.dumps(result)
+
+
+def test_unknown_fingerprint_is_dropped_before_any_reproduction() -> None:
+    def no_browser(_group: Group, _url: str) -> int:
+        raise AssertionError("an unknown fingerprint must not be reproduced")
+
+    incoming = {"drafts": [draft_dict("d" * 12)], "suggestions": [], "dropped": []}
+    result = check_drafts.build_validated(
+        incoming, LIVE, MAIN, never_script, no_browser, None, suggestions_per_run=1,
+        canonical={group().fingerprint: group().to_json()},
+    )
+    assert result["drafts"] == []
+    assert result["dropped"] == [{"fingerprint": "d" * 12, "reason": "unknown fingerprint"}]
+
+
+def test_ci_draft_is_rebuilt_from_the_ci_findings() -> None:
+    flaky = Group("flaky", "ci", "default", "tests/e2e/test_docs.py::test_toc", (), (), (), note="failed in run 1")
+    planted = {**flaky.to_json(), "note": "ghp_planted"}
+    raw = draft_dict(flaky.fingerprint)
+    raw["reproduction"]["groups"] = [planted]
+
+    def no_browser(_group: Group, _url: str) -> int:
+        raise AssertionError("a CI draft is not reproduced in a browser")
+
+    result = check_drafts.build_validated(
+        {"drafts": [raw], "suggestions": [], "dropped": []}, LIVE, MAIN, never_script, no_browser,
+        {flaky.fingerprint}, suggestions_per_run=1, canonical={flaky.fingerprint: flaky.to_json()},
+    )
+    assert result["drafts"][0]["reproduction"]["groups"] == [flaky.to_json()]
+    assert "planted" not in json.dumps(result)
+
+
+def test_script_drafts_carry_no_groups_and_need_no_known_fingerprint() -> None:
+    raw = draft_dict("e" * 12, script="factory-out/repros/m.py")
+    result = check_drafts.build_validated(
+        {"drafts": [raw], "suggestions": [], "dropped": []}, LIVE, MAIN, lambda _s, _u: 1,
+        by_url(0, 0), None, suggestions_per_run=1, canonical={},
+    )
+    assert result["drafts"] == [raw]
+
+
+def test_canonical_groups_come_from_the_live_and_ci_findings(tmp_path: Path) -> None:
+    live = group()
+    flaky = Group("flaky", "ci", "default", "tests/x.py::test_y", (), (), ())
+    probe_file = tmp_path / "live.json"
+    probe_file.write_text(json.dumps({"target": "https://live.test/", "groups": [live.to_json()]}))
+    ci_file = tmp_path / "ci.json"
+    ci_file.write_text(json.dumps({"target": "ci", "groups": [flaky.to_json()]}))
+    assert check_drafts.canonical_groups(probe_file, ci_file) == {
+        live.fingerprint: live.to_json(),
+        flaky.fingerprint: flaky.to_json(),
+    }
+    assert check_drafts.canonical_groups(probe_file, None) == {live.fingerprint: live.to_json()}

@@ -417,6 +417,20 @@ def test_secret_shaped_text_in_suggestions_dropped_and_scripts_is_rejected(secre
     assert caught.value.path == "script_source"
 
 
+def test_render_rejects_secret_shaped_text_in_the_groups_marker() -> None:
+    group = {**make_group().to_json(), "note": "ghs_AbCdEf012345"}
+    (draft,), _, _ = load_drafts(payload(reproduction={"kind": "detector", "groups": [group], "script": None}))
+    with pytest.raises(DraftError) as caught:
+        render_issue(draft, WHERE, EVIDENCE, COMMAND)
+    assert caught.value.path == "reproduction.groups"
+
+
+def test_secret_shapes_are_defined_once() -> None:
+    from tools.factory import secret_scan
+
+    assert issues.SECRET_SHAPES is secret_scan.SECRET_SHAPES
+
+
 def test_parsers_ignore_markers_outside_the_trailing_block() -> None:
     _, body = render()
     head, tail = body.split(issues.SENTINEL, 1)
