@@ -1,0 +1,59 @@
+{
+  "limits": {
+    "issues_per_run": 3,
+    "suggestions_per_run": 1,
+    "fixes_in_progress": 2,
+    "attempts_per_issue": 2,
+    "merges_per_day": 5,
+    "max_changed_lines": 300
+  },
+  "site": {
+    "live_url": "https://mbratkowski.github.io/deweloperuch-mcp-site/",
+    "pages": {"landing": "", "docs": "docs/"},
+    "repo": "MBratkowski/deweloperuch-mcp-site"
+  },
+  "matrix": {
+    "engines": ["chromium", "firefox", "webkit"],
+    "widths": [320, 375, 390, 414, 719, 721, 759, 761, 768, 1024, 1280, 1440, 1920],
+    "height": 900,
+    "breakpoints": [720, 760],
+    "mode_engines": ["chromium"],
+    "mode_widths": [320, 768, 1440],
+    "modes": {
+      "no-js": {"java_script_enabled": false},
+      "reduced-motion": {"reduced_motion": "reduce"},
+      "short": {"height": 500}
+    },
+    "menu_widths": [320, 375, 390, 414],
+    "keyboard_widths": [375, 1440]
+  },
+  "detectors": {
+    "engine_diff_px": 8,
+    "target_min_px": 24,
+    "mobile_nav_target_min_px": 44,
+    "flaky_window_days": 14
+  },
+  "fence": {
+    "allowed": [
+      "css/**", "js/**", "tools/templates/**", "tools/html_helpers.py",
+      "tools/page_fragments.py", "tools/docs_renderer.py", "tools/docs_content.py",
+      "tools/page_config.py", "tools/build_docs.py", "tests/**", "index.html",
+      "docs/index.html", "assets/images.json"
+    ],
+    "forbidden": [
+      ".github/**", "CLAUDE.md", "data/**", "tools/capture_demo.py",
+      "tools/sync_server.py", "tools/check_facts.py", "tools/factory/**",
+      "pyproject.toml", "uv.lock", "lighthouserc.json", "lychee.toml",
+      "docs/superpowers/**", "assets/fonts/**", "assets/icon/**",
+      "tests/visual/comparison.py"
+    ],
+    "generated": ["index.html", "docs/index.html", "assets/images.json"]
+  },
+  "models": {
+    "qa": "claude-sonnet-5-5",
+    "fixer": "claude-sonnet-5-5",
+    "reviewer": "claude-opus-5-5"
+  },
+  "max_turns": {"qa": 40, "fixer": 80, "reviewer": 40},
+  "trusted_logins": ["MBratkowski"]
+}
