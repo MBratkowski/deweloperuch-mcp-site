@@ -1,6 +1,6 @@
 # Agent factory runbook
 
-Spec: `docs/superpowers/specs/2026-10-18-agent-factory-design.md`. This file is extended phase by phase; it covers phase 0, the one-time repository setup done by the owner, and the first dry run of the QA workflow.
+Spec: `docs/superpowers/specs/2026-10-18-agent-factory-design.md`. This file is extended phase by phase; it covers phase 0, the one-time repository setup done by the owner, the first dry run of the QA workflow and the fixer.
 
 Every setup subcommand is a dry run unless you pass `--apply`. Run them from the repository root with `GH_TOKEN` set to a token that may administer the repository (for example `export GH_TOKEN=$(gh auth token)`).
 
@@ -53,10 +53,20 @@ Every setup subcommand is a dry run unless you pass `--apply`. Run them from the
    - Record here what was needed: the fixer and reviewer jobs run the same action in the same image.
 5. "--json-schema was provided but Claude did not return structured_output" means the agent ended without output that matches `.github/factory/schemas/drafts.json` (for example out of turns); the run's log and `max_turns.qa` in `config.json` are the places to look.
 
+## The fixer
+
+`factory-fix.yml` runs when the owner or the App labels an issue `factory:ready`, and on `workflow_dispatch` (`issue`, `attempt`) for a later attempt. Its jobs: `guard` (the mode, who set the label, the attempt within `limits.attempts_per_issue`) → `fix` (the Playwright image: `fix prepare` checks out `fix/<N>-<slug>`, or the open pull request's branch on a later attempt, and writes `factory-out/context.md`; the agent writes a failing test and the fix and commits them; `fix prove` runs the new tests on a worktree of the base, where they must fail, and on the head, where they must pass, then the full suite; `fix before-after` renders the issue's cells on both commits; the commits leave as a git bundle) → `publish` (a fresh checkout of `main` with the App token: fetches the bundle, runs the fence and the secret checks, pushes, opens or updates the pull request labelled `factory`, publishes the images under `prs/<number>/<sha>/` on the evidence branch and moves the issue from `factory:ready` to `factory:fixing`).
+
+- Every attempt leaves a comment with `<!-- factory:attempt=K -->` on the issue; the guard counts only those by the owner or the App.
+- A failed attempt (the fix job failed, a hard fence reason, a proof that is not red then green) dispatches the next attempt with `GITHUB_TOKEN`. After the last attempt, when the fixer reports `not_reproducible` or `needs_human`, when a flaky test never fails on the base, or when anything carries secret-shaped text, the issue gets `factory:needs-human` and an open pull request goes back to draft with a summary.
+- Soft fence reasons (existing tests changed, test code that needs a person, a baseline changed without a stated reason) still open the pull request, labelled `factory:needs-human` and listed under "Needs a human".
+- To stop the factory on one issue, remove `factory:ready` and `factory:fixing` (or add `factory:needs-human`): the guard and the publish job then leave it alone.
+
 ## Known residual risk
 
 - The pinned `claude-code-action` (v1.0.241) installs Claude Code 2.1.289. The permission check that makes environment-printing forms of `ps` prompt arrives in 2.1.290, so until then the QA agent's `--disallowedTools` denies `ps`, `env`, `printenv`, `set`, `declare`, `export` and `compgen` outright. Re-pin `claude-code-action` to a release that bundles Claude Code 2.1.290 or later once that release is at least two weeks old, and keep the denies.
 - The publish-side secret checks (draft text, the groups marker, reproduction scripts, the `drafts` and `validated` artifacts) stop only verbatim tokens and keys. A token the agent encodes first would pass them; the read block and the denies are what keep tokens out of its reach.
+- The fixer must run the code it writes (its tests, the build), in the job that holds the Claude token for the agent step, as root in the container. The token reaches the agent's commands only through process memory: `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB` keeps it out of their environment, the read block and the denies keep `/proc` and the home directory out of the agent's own tools, the checkout stores no token, and `prove` drops anything credential-like from the environment of what it starts. Code the fixer wrote could still read another process's memory or environment and reach the network. Everything the job uploads is scanned first, and `publish` (main's code, no code from the fix) scans the commits, the report, the proof and the images again before it pushes; like the other checks, it stops only verbatim tokens. The fixer's inputs (the issue, filed by QA or the owner, and the repository) are owner-controlled, which keeps prompt injection unlikely. Everything the `fix` job writes after the agent step (the proof, the images, the scan) runs in the same container, so it is a claim: the reviewer's evidence job proves red and green again without secrets.
 - The `check` job runs the agent's scripts as root in the container. Each script runs in a process group of its own, which is killed when the script ends, but a script that starts a new session itself (`setsid`) escapes that and could still tamper with the job's later steps (the summary, the scan, the upload). The job holds no secret and a read-only token, and `file`, which holds the App token, takes every draft's groups from the probe artifact again and checks all text before filing.
 
 ## Known limitation

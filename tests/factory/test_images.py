@@ -1,4 +1,4 @@
-"""Evidence images: annotation, crop and contact sheet."""
+"""Evidence images: annotation, crop, contact sheet and diff."""
 
 import io
 
@@ -45,3 +45,17 @@ def test_contact_sheet_size() -> None:
 def test_contact_sheet_scales_wide_tiles_down() -> None:
     sheet = _open(images.contact_sheet([("a", _png(1920, 960)), ("b", _png(1920, 960))], columns=2))
     assert sheet.width == 2 * images.TILE_WIDTH
+
+
+def test_diff_marks_changed_pixels_in_magenta() -> None:
+    same = _open(images.diff(_png(10, 10), _png(10, 10)))
+    assert images.MAGENTA not in {same.getpixel((x, y)) for x in range(10) for y in range(10)}
+    before = Image.new("RGB", (10, 10), (255, 255, 255))
+    before.paste((0, 0, 0), (0, 0, 5, 10))
+    buffer = io.BytesIO()
+    before.save(buffer, format="PNG")
+    changed = _open(images.diff(buffer.getvalue(), _png(10, 12)))
+    assert changed.size == (10, 12)
+    assert changed.getpixel((2, 2)) == images.MAGENTA  # black became white
+    assert changed.getpixel((7, 2)) == (85, 85, 85)  # unchanged white, dimmed
+    assert changed.getpixel((7, 11)) == images.MAGENTA  # only in the taller image

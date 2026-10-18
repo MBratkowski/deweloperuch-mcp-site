@@ -1,11 +1,11 @@
-"""Image helpers for probe evidence: annotate a box, crop around it, tile screenshots."""
+"""Image helpers for probe evidence: annotate a box, crop around it, tile screenshots, diff two."""
 
 from __future__ import annotations
 
 import io
 from collections.abc import Sequence
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 Box = tuple[float, float, float, float]
 RED = (255, 0, 0)
@@ -13,6 +13,9 @@ OUTLINE = 2
 TILE_WIDTH = 240
 LABEL_HEIGHT = 16
 SHEET_BACKGROUND = (255, 255, 255)
+MAGENTA = (255, 0, 255)
+# Channel differences up to this are rounding, as in tests/visual/comparison.py.
+DIFF_TOLERANCE = 8
 
 
 def _png(image: Image.Image) -> bytes:
@@ -71,3 +74,19 @@ def contact_sheet(shots: Sequence[tuple[str, bytes]], columns: int) -> bytes:
             sheet.paste(image, (column * cell_width, top + LABEL_HEIGHT))
         top += height
     return _png(sheet)
+
+
+def diff(before: bytes, after: bytes) -> bytes:
+    """Changed pixels in magenta over a dimmed `after`, both padded to the larger size: the same
+    picture as the visual tests' diff.png."""
+    old, new = _load(before), _load(after)
+    size = (max(old.width, new.width), max(old.height, new.height))
+    old_canvas, new_canvas = Image.new("RGB", size), Image.new("RGB", size)
+    old_canvas.paste(old)
+    new_canvas.paste(new)
+    red, green, blue = ImageChops.difference(old_canvas, new_canvas).split()
+    largest = ImageChops.lighter(ImageChops.lighter(red, green), blue)
+    mask = largest.point(lambda value: 255 if value > DIFF_TOLERANCE else 0)
+    overlay = new_canvas.point(lambda value: value // 3)
+    overlay.paste(MAGENTA, mask=mask)
+    return _png(overlay)
