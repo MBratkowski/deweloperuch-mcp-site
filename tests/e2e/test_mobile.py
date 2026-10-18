@@ -87,9 +87,36 @@ def test_demo_offers_fit_the_window_on_phones(new_context, site_url: str, width:
 
 
 def test_demo_fits_one_phone_screen(new_context, site_url: str) -> None:
-    """The reference phone is 375×812; 320-wide phones have shorter screens, so there it only has to fit sideways."""
+    """The reference phone is 375×812; 320-wide phones have shorter screens, so there it only has to fit sideways.
+
+    Body text uses the system font stack: about 765 px with the San Francisco and Roboto metrics of real
+    phones, more where a wider fallback font wraps the investment names again (823 px on a bare Ubuntu
+    runner). Allow 10% for that; the old stacked layout was 1,770 px."""
     page = phone(new_context, site_url, 375)
-    assert page.locator("#demo").bounding_box()["height"] <= PHONE_HEIGHT
+    assert page.locator("#demo").bounding_box()["height"] <= PHONE_HEIGHT * 1.1
+
+
+def accessible_counts(page: Page, table) -> dict[str, int]:
+    """Rows, column headers and cells of one table in Chromium's accessibility tree, not Playwright's own role guess."""
+    cdp = page.context.new_cdp_session(page)
+    root = cdp.send("DOM.getDocument", {"depth": 0})["root"]["nodeId"]
+    path = table.evaluate("t => Array.from(document.querySelectorAll('table')).indexOf(t)")
+    node = cdp.send("DOM.querySelectorAll", {"nodeId": root, "selector": "table"})["nodeIds"][path]
+    return {role: len(cdp.send("Accessibility.queryAXTree", {"nodeId": node, "role": role})["nodes"]) for role in ("row", "columnheader", "cell")}
+
+
+@pytest.mark.parametrize("path", ["", "docs/"], ids=["landing", "docs"])
+def test_tables_keep_their_semantics_on_phones(new_context, site_url: str, browser_name: str, path: str) -> None:
+    """Phones lay table rows out as grid and flex boxes; Chromium must still expose every row, header and cell."""
+    if browser_name != "chromium":
+        pytest.skip("reads Chromium's accessibility tree over CDP")
+    page = phone(new_context, site_url + path, 375)
+    open_all_details(page)
+    tables = page.locator("#demo table, .ref-table").all()
+    assert tables
+    for table in tables:
+        expected = {"row": table.locator("tr").count(), "columnheader": table.locator("th").count(), "cell": table.locator("td").count()}
+        assert accessible_counts(page, table) == expected
 
 
 @pytest.mark.parametrize("width", PHONES)

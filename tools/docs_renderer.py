@@ -16,23 +16,22 @@ def schema_type(prop: dict) -> str:
     return " albo ".join(names.get(t, t) for t in types if t and t != "null") or "—"
 
 
-# Reference tables (tool parameters, prompt fields, CLI commands) stack their rows on phones
-# (css/docs.css); explicit roles keep the table semantics under that layout.
-REF_TABLE = '<div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table role="table" class="ref-table">'
+# Reference tables (tool parameters, prompt fields, CLI commands) stack their rows on phones (css/docs.css).
+REF_TABLE = '<div class="table-wrap" tabindex="0" role="region" aria-label="Tabela"><table class="ref-table">'
 
 
 def ref_head(*columns: str) -> str:
-    cells = "".join(f'<th role="columnheader" scope="col">{e(column)}</th>' for column in columns)
-    return f'<thead role="rowgroup"><tr role="row">{cells}</tr></thead>'
+    cells = "".join(f'<th scope="col">{e(column)}</th>' for column in columns)
+    return f'<thead><tr>{cells}</tr></thead>'
 
 
 def ref_name(name: str, required: bool = False) -> str:
     badge = ' <span class="req">wymagany</span>' if required else ""
-    return f'<td role="cell" class="ref-name"><code>{e(name)}</code>{badge}</td>'
+    return f'<td class="ref-name"><code>{e(name)}</code>{badge}</td>'
 
 
 def ref_cell(text: str, kind: str) -> str:
-    return f'<td role="cell" class="ref-{kind}">{e(text)}</td>'
+    return f'<td class="ref-{kind}">{e(text)}</td>'
 
 
 def tool_card(tool: dict) -> str:
@@ -40,7 +39,7 @@ def tool_card(tool: dict) -> str:
     props = tool["inputSchema"].get("properties", {})
     required = set(tool["inputSchema"].get("required") or [])
     rows = "".join(
-        f'<tr role="row">{ref_name(name, name in required)}'
+        f'<tr>{ref_name(name, name in required)}'
         f"{ref_cell(schema_type(p), 'type')}{ref_cell(p.get('description', ''), 'desc')}</tr>"
         for name, p in props.items()
     )
@@ -51,7 +50,7 @@ def tool_card(tool: dict) -> str:
         f"<p>{e(lead)}</p>"
         f"<details><summary>Parametry ({len(props)})</summary>{REF_TABLE}"
         f'{ref_head("Parametr", "Typ", "Opis")}'
-        f'<tbody role="rowgroup">{rows}</tbody></table></div></details></article>'
+        f"<tbody>{rows}</tbody></table></div></details></article>"
     )
 
 
@@ -71,13 +70,13 @@ def prompts_section(release: Release) -> str:
     cards = []
     for p in release.prompts:
         rows = "".join(
-            f'<tr role="row">{ref_name(a["name"], bool(a.get("required")))}{ref_cell(a.get("description", ""), "desc")}</tr>'
+            f'<tr>{ref_name(a["name"], bool(a.get("required")))}{ref_cell(a.get("description", ""), "desc")}</tr>'
             for a in p.get("arguments", [])
         )
         cards.append(
             f'<article class="tool"><div class="tool-head"><h3>{e(p["title"])}</h3><code>{e(p["name"])}</code></div>'
             f'<p>{e(p["description"])}</p>{REF_TABLE}{ref_head("Pole", "Co wpisać")}'
-            f'<tbody role="rowgroup">{rows}</tbody></table></div></article>'
+            f"<tbody>{rows}</tbody></table></div></article>"
         )
     return "".join(cards)
 
@@ -251,7 +250,7 @@ def render_landing(
 
 def cli_table(release: Release) -> str:
     commands = validate_cli({"version": release.version, "commands": list(release.cli_commands)}, release.version)
-    return "".join(f'<tr role="row">{ref_name(command["usage"])}{ref_cell(command["description"], "desc")}</tr>' for command in commands)
+    return "".join(f'<tr>{ref_name(command["usage"])}{ref_cell(command["description"], "desc")}</tr>' for command in commands)
 
 
 def render_docs(

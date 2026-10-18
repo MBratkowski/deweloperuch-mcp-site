@@ -11,10 +11,10 @@
     "assets/icon/icon-dark.png": "3d9e896452ab3bc847907b98ae9441932e764a19e6a129deedf5850c18cf5967",
     "assets/icon/icon-light.png": "2294849faa90739491a5892d1476746872ec31fee567e3fa99780ceb957c3eea",
     "assets/icon/icon-tile-512.png": "e7b3368c8595e8d736f160af0ce8248a42c8d53616903a448c93dee3596a796b",
-    "css/docs.css": "d90048bc0cf0e96dcae2a1eb60e5983da287393a7f155636ea583c939d203f9d",
-    "css/landing.css": "249d7490f08d0f3e3cdd473a277867d2a433f6fdbe742dcf21810bae420b4352",
+    "css/docs.css": "c7369078cfe2083692c56066351a24182c2c4d80a5a4cd46005cf2fd57cf53a8",
+    "css/landing.css": "4e178accf19ebe5ad14ff4ee621efc5b9f0ca7366ac289b77a73ec57b8814a39",
     "css/site.css": "ce09787a65865a646642e72a74a428929bc5147daeaed4e2f0114848b2146338",
-    "index.html": "d1756ded3d6eaee178dffa945da4dfd7d68629f472d88f40320b2d5870a6d69c",
+    "index.html": "e0ae0520778cbc29a797012f4d77d18aed203867811c1d2bed02e494fd6463e3",
     "js/site.js": "baa4eb6bd5423f6eaaa5ce3bcf4c3076ee7f1558ee958b6fd56470972dd7e9d4",
     "tools/render_images.py": "e5ef25fd6a89675480599182eaee8ab8e1f6df183fc4a3a10e48bb78c8c3bb8c",
     "uv.lock": "9af73ecbfe41b9e2d38506b129abb4007ad063f1b4dae1e0dd8fefa26e6a01f2"

@@ -106,7 +106,9 @@
   .mock-pair { flex-direction: column; }
   .mock-pair .mock-window { width: 100%; }
   /* Phones stack each reference row: name, badge and type on one line, the description under them.
-     The header stays for screen readers; the renderer's roles keep the table semantics. */
+     The header stays for screen readers. Chromium and Firefox keep the table semantics under flex
+     rows; Safari may read them as plain text (WebKit bug 257458), and ARIA roles that would fix it
+     are not valid on table rows and cells. */
   .ref-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   .ref-table, .ref-table tbody { display: block; }
   .ref-table tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 10px 12px; border-top: 1px solid var(--table-border); }

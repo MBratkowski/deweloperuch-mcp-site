@@ -1012,8 +1012,10 @@
   .demo-sidebar, .demo-inspector { display: none; }
   .demo-chat { padding: 16px; gap: 12px; }
   .chat-question { max-width: 88%; }
-  /* Each offer on two lines: name, area and price over the investment and the drop.
-     The header stays for screen readers; the renderer's roles keep the table semantics. */
+  /* Each offer on two lines: name, area and price over the investment and the drop. The header
+     stays for screen readers. Chromium and Firefox keep the table semantics under grid rows;
+     Safari may read them as plain text (WebKit bug 257458), and ARIA roles that would fix it
+     are not valid on table rows and cells. */
   .offers-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   .offers-table, .offers-table tbody { display: block; }
   .offers-table tr {
