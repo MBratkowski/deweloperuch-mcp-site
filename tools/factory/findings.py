@@ -114,6 +114,8 @@ class Group:
     findings: tuple[Finding, ...]
     # Stylesheet breakpoints the width bands come from; group_findings passes the matrix's.
     breakpoints: tuple[int, ...] = (720, 760)
+    # Human-readable measurement of a group that has no findings (CI groups); not fingerprinted.
+    note: str = ""
 
     @property
     def fingerprint(self) -> str:
@@ -142,6 +144,7 @@ class Group:
             "breakpoints": list(self.breakpoints),
             "fingerprint": self.fingerprint,
             "severity": self.severity,
+            "note": self.note,
         }
 
     @classmethod
@@ -155,6 +158,7 @@ class Group:
             tuple(data["widths"]),
             tuple(Finding.from_json(f) for f in data["findings"]),
             tuple(data["breakpoints"]),
+            data.get("note", ""),
         )
 
 

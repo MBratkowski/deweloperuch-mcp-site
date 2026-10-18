@@ -92,3 +92,14 @@ def test_non_browser_group_is_valid() -> None:
     assert ci.severity == "S1"
     assert len(ci.fingerprint) == 12
     assert Group.from_json(json.loads(json.dumps(ci.to_json()))) == ci
+
+
+def test_group_note_round_trips_and_stays_out_of_the_fingerprint() -> None:
+    plain = Group("deploy-stale", "site", "default", "", (), (), ())
+    noted = Group("deploy-stale", "site", "default", "", (), (), (), note="live 1f104d1, main 8b6ec7b")
+    assert noted.fingerprint == plain.fingerprint
+    assert noted.to_json()["note"] == "live 1f104d1, main 8b6ec7b"
+    assert Group.from_json(json.loads(json.dumps(noted.to_json()))) == noted
+    assert plain.note == ""
+    legacy = {k: v for k, v in plain.to_json().items() if k != "note"}
+    assert Group.from_json(legacy) == plain

@@ -1,0 +1,76 @@
+{
+  "jobs": [
+    {
+      "id": 117079477591,
+      "name": "Validate this commit / Visual baselines (pinned Linux Chromium)",
+      "status": "completed",
+      "conclusion": "success",
+      "completed_at": "2026-10-16T16:30:59Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200/job/117079477591"
+    },
+    {
+      "id": 117079477860,
+      "name": "Validate this commit / HTML validation (Nu)",
+      "status": "completed",
+      "conclusion": "success",
+      "completed_at": "2026-10-16T16:30:14Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200/job/117079477860"
+    },
+    {
+      "id": 117079477885,
+      "name": "Validate this commit / Generated files match the pinned release and the demo data",
+      "status": "completed",
+      "conclusion": "success",
+      "completed_at": "2026-10-16T16:30:23Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200/job/117079477885"
+    },
+    {
+      "id": 117079477896,
+      "name": "Validate this commit / Lighthouse (mobile)",
+      "status": "completed",
+      "conclusion": "success",
+      "completed_at": "2026-10-16T16:31:52Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200/job/117079477896"
+    },
+    {
+      "id": 117079477905,
+      "name": "Validate this commit / Link check",
+      "status": "completed",
+      "conclusion": "success",
+      "completed_at": "2026-10-16T16:30:10Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200/job/117079477905"
+    },
+    {
+      "id": 117079477947,
+      "name": "Validate this commit / Browser smoke (Firefox, WebKit)",
+      "status": "completed",
+      "conclusion": "success",
+      "completed_at": "2026-10-16T16:32:00Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200/job/117079477947"
+    },
+    {
+      "id": 117079478213,
+      "name": "Validate this commit / Tests (pytest, Playwright)",
+      "status": "completed",
+      "conclusion": "failure",
+      "completed_at": "2026-10-16T16:33:11Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200/job/117079478213"
+    },
+    {
+      "id": 117080894553,
+      "name": "Deploy the site files",
+      "status": "completed",
+      "conclusion": "skipped",
+      "completed_at": "2026-10-16T16:33:11Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200/job/117080894553"
+    },
+    {
+      "id": 117080895614,
+      "name": "Lighthouse on the live site (mobile)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "completed_at": "2026-10-16T16:33:11Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200/job/117080895614"
+    }
+  ]
+}
