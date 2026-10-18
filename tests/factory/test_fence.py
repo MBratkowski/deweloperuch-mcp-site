@@ -353,7 +353,6 @@ def module_check(tmp_path: Path, head: str, base: str | None = MODULE, extra=Non
         "def assert_visual():\n    return None",
         "def expect(page):\n    return None",
         "def helper(x):\n    return None",
-        "LIMIT_2 = compute()",
         "LIMIT = 6",
         "from tests.helpers import expect",
         "from tests.visual.thing import *",
@@ -419,6 +418,14 @@ def soft(report, needle: str) -> bool:
         ("def test_o(card_data):\n    card_data['headline'] = 'x'", "attribute or item assigned"),
         ("def test_o():\n    import tests.visual.conftest as c\n    c.compare_image = None", "attribute or item assigned"),
         ("def _helper2():\n    raise ValueError", None),
+        ("LIMIT_2 = compute()", "computed assignment"),
+        ("ROOT = Path(__file__).resolve().parents[2]", "computed assignment"),
+        ("def test_o(monkeypatch):\n    monkeypatch.setattr(c, 'x', 1)", "dynamic attribute set"),
+        ("def test_o():\n    builtins.setattr(c, 'compare_image', None)", "dynamic attribute set"),
+        ("def test_o():\n    object.__setattr__(c, 'compare_image', None)", "dynamic attribute set"),
+        ("def test_o():\n    type.__setattr__(_pytest.python.Function, 'runtest', lambda self: None)", "dynamic attribute set"),
+        ("def test_o():\n    c.__dict__.update(compare_image=None)", "dynamic attribute set"),
+        ("from builtins import setattr as s\n\ndef test_o():\n    s(c, 'compare_image', None)", "dynamic attribute set"),
     ],
 )
 def test_definition_time_and_state_code_needs_a_human(tmp_path: Path, addition: str, needle) -> None:
@@ -428,6 +435,37 @@ def test_definition_time_and_state_code_needs_a_human(tmp_path: Path, addition: 
         assert report.ok and not report.needs_human
         return
     assert soft(report, needle), (report.reasons, report.review)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "builtins.setattr(c, 'compare_image', None)",
+        "type.__setattr__(_pytest.python.Function, 'runtest', lambda self: None)",
+        "c.__dict__.update(compare_image=None)",
+        "monkeypatch.setattr(c, 'x', 1)",
+    ],
+)
+def test_dynamic_attribute_set_in_a_new_module_needs_a_human(tmp_path: Path, body: str) -> None:
+    head = "import pytest\n\ndef test_new(monkeypatch):\n    " + body + "\n"
+    report = module_check(tmp_path, head, base=None)
+    assert soft(report, "dynamic attribute set"), (report.reasons, report.review)
+
+
+def test_new_module_with_repo_idiom_is_review_not_hard(tmp_path: Path) -> None:
+    head = (
+        "import json\nfrom pathlib import Path\n\n"
+        "ROOT = Path(__file__).resolve().parents[2]\n"
+        "DEMO = json.loads((ROOT / 'data.json').read_text())\n\n"
+        "def test_new():\n    assert DEMO\n"
+    )
+    report = module_check(tmp_path, head, base=None)
+    assert soft(report, "computed assignment"), (report.reasons, report.review)
+
+
+def test_bare_top_level_call_is_still_hard(tmp_path: Path) -> None:
+    head = "import json\n\njson.loads('1')\n\ndef test_new():\n    assert 1\n"
+    assert hard(module_check(tmp_path, head, base=None), "at the top level")
 
 
 def test_raise_added_in_an_existing_helper_needs_a_human(tmp_path: Path) -> None:

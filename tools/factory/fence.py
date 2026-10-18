@@ -60,6 +60,8 @@ SETUP_NAMES = frozenset(
     "setup_method teardown_method setUpModule tearDownModule".split()
 )
 ALLOWED_DECORATOR_NAMES = frozenset({"staticmethod", "classmethod", "property"})
+SOFT_ASSIGNMENT = "computed assignment"
+SETTER_NAMES = frozenset({"setattr", "delattr", "__setattr__", "__delattr__"})
 DYNAMIC_CALLS = frozenset("eval exec compile __import__ globals locals vars setattr delattr".split())
 INFRASTRUCTURE_NAMES = ("pytest.ini", "tox.ini", "setup.cfg", ".gitattributes")
 SYMLINK, GITLINK = "120000", "160000"
@@ -459,16 +461,17 @@ def _top_level_problem(stmt: ast.stmt) -> str | None:
     if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return "hook function" if stmt.name.startswith("pytest_") else None
     if isinstance(stmt, ast.Assign):
-        plain = all(isinstance(t, ast.Name) for t in stmt.targets)
-        if plain and _literal(stmt.value):
-            if any(n.startswith(("pytest_", "__")) for n in _bound_names(stmt)):
-                return "reserved name"
-            return None
-        return "assignment"
+        if not all(isinstance(t, ast.Name) for t in stmt.targets):
+            return "assignment"
+        if any(n.startswith(("pytest_", "__")) for n in _bound_names(stmt)):
+            return "reserved name"
+        return None if _literal(stmt.value) else SOFT_ASSIGNMENT
     if isinstance(stmt, ast.AnnAssign):
-        if isinstance(stmt.target, ast.Name) and _literal(stmt.value):
-            return None
-        return "assignment"
+        if not isinstance(stmt.target, ast.Name):
+            return "assignment"
+        if stmt.target.id.startswith(("pytest_", "__")):
+            return "reserved name"
+        return None if _literal(stmt.value) else SOFT_ASSIGNMENT
     if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant) and isinstance(
         stmt.value.value, str
     ):
@@ -534,7 +537,20 @@ def _class_body_problem(stmt: ast.stmt) -> bool:
 def _soft_counts(tree: ast.Module) -> Counter[str]:
     """Counts of constructs that run code at definition time or rewire state; a human reads them."""
     counts: Counter[str] = Counter()
+    from_builtins = {
+        (a.asname or a.name)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "builtins"
+        for a in node.names
+    }
     for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+            counts["dynamic attribute set"] += 1
+        elif isinstance(node, ast.Call):
+            callee = node.func
+            last = callee.attr if isinstance(callee, ast.Attribute) else getattr(callee, "id", "")
+            if last in SETTER_NAMES or (isinstance(callee, ast.Name) and callee.id in from_builtins):
+                counts["dynamic attribute set"] += 1
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             counts["decorator"] += sum(_decorator_suspicious(d) for d in node.decorator_list)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -662,7 +678,9 @@ def _module_findings(
             seen[dump] -= 1
             continue
         problem = _top_level_problem(stmt)
-        if problem:
+        if problem == SOFT_ASSIGNMENT:
+            soft.append(f"{path}: computed assignment at the top level")
+        elif problem:
             infra.append(f"{path}: {problem} at the top level")
 
     base_count, head_count = _binding_counts(before), _binding_counts(after)
