@@ -149,15 +149,15 @@
 <h2 id="zainstaluj-z-ai-title">Niech AI zainstaluje to za Ciebie.</h2>
 <p>Masz agenta AI z dostępem do terminala, np. Claude Code? Skopiuj ten prompt i wklej go agentowi. Sprawdzi Twój system, w razie potrzeby zainstaluje uv i doda serwer do Twojej aplikacji. Przed każdą zmianą w plikach konfiguracji pokaże, co zmieni, i zapyta o zgodę.</p>
 </div>
-<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Prompt dla agenta AI</em></div><div class="cmd"><pre><span class="cmd-text">Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https:/<wbr>/<wbr>github.com/<wbr>MBratkowski/<wbr>deweloperuch-mcp).
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Prompt dla agenta AI</em></div><div class="cmd"><pre><span class="cmd-text">Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
 
 1. Sprawdź system: obsługiwane są macOS, Linux oraz Windows 10 (1903+) i 11. Na Windowsie katalog pamięci podręcznej musi być na lokalnym dysku NTFS.
-2. Sprawdź, czy mam program uv (uvx <span class="cmd-option">--version).</span> Jeśli nie, zainstaluj go oficjalnym skryptem: na macOS i Linuxie curl <span class="cmd-option">-LsSf</span> https:/<wbr>/<wbr>astral.sh/<wbr>uv/<wbr>install.sh | sh; na Windowsie w PowerShellu powershell <span class="cmd-option">-ExecutionPolicy</span> ByPass <span class="cmd-option">-c</span> &quot;irm https:/<wbr>/<wbr>astral.sh/<wbr>uv/<wbr>install.ps1 | iex&quot;. Po instalacji otwórz nowy terminal.
-3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp <span class="cmd-option">--help</span>
+2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: na macOS i Linuxie curl -LsSf https://astral.sh/uv/install.sh | sh; na Windowsie w PowerShellu powershell -ExecutionPolicy ByPass -c &quot;irm https://astral.sh/uv/install.ps1 | iex&quot;. Po instalacji otwórz nowy terminal.
+3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
 4. Dodaj serwer do aplikacji, której używam:
-   <span class="cmd-option">-</span> Claude Code: claude mcp add deweloperuch <span class="cmd-option">--</span> uvx deweloperuch-mcp
-   <span class="cmd-option">-</span> Claude Desktop: w pliku claude_desktop_config.json (macOS: ~/<wbr>Library/<wbr>Application Support/<wbr>Claude/<wbr>; Windows: %APPDATA%\Claude\) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku. Jeśli aplikacja nie znajduje uvx, użyj pełnej ścieżki; na Windowsie odczytaj ją przez (Get-Command uvx).Source i zapisz jako poprawny ciąg JSON.
-   <span class="cmd-option">-</span> Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
+   - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
+   - Claude Desktop: w pliku claude_desktop_config.json (macOS: ~/Library/Application Support/Claude/; Windows: %APPDATA%\Claude\) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku. Jeśli aplikacja nie znajduje uvx, użyj pełnej ścieżki; na Windowsie odczytaj ją przez (Get-Command uvx).Source i zapisz jako poprawny ciąg JSON.
+   - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
    Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
 5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
 6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start.</span></pre><button type="button" class="copy" data-command="Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).

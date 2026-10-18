@@ -66,7 +66,10 @@ OPTION = re.compile(r"(?<!\S)-\S*")
 def command_text(command: str) -> str:
     """The visible command as phones should wrap it: options stay whole (browsers break "--"
     between its hyphens) and paths and URLs may break after a slash. The added <span> and
-    <wbr> carry no text, so the copied and selected command is unchanged."""
+    <wbr> carry no text, so the copied and selected command is unchanged. A multi-line block
+    (an agent prompt, JSON) wraps like prose instead, moving a whole URL to the next line."""
+    if "\n" in command:
+        return f'<span class="cmd-text">{e(command)}</span>'
     text = OPTION.sub(lambda option: f'<span class="cmd-option">{option.group()}</span>', e(command).replace("/", "/<wbr>"))
     return f'<span class="cmd-text">{text}</span>'
 
