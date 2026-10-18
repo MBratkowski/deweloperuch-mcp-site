@@ -83,6 +83,9 @@ CLIPPED_TEXT = """() => {""" + DESCRIBE + """
     .filter(e => Array.from(e.childNodes).some(n => n.nodeType === 3 && n.textContent.trim()))
     .filter(e => {
       const style = getComputedStyle(e);
+      // Visually hidden text (a 1 px box, clip or clip-path) is clipped on purpose.
+      if (e.clientWidth <= 2 || e.clientHeight <= 2) return false;
+      if (style.clip !== 'auto' || style.clipPath !== 'none') return false;
       const x = hides(style.overflowX) && e.scrollWidth > e.clientWidth + 1;
       const y = hides(style.overflowY) && e.scrollHeight > e.clientHeight + 1;
       return x || y;
@@ -99,7 +102,7 @@ CLIPPED_TEXT = """() => {""" + DESCRIBE + """
 # interactive elements that sit on top of the centre of another element's text. The element
 # reported is the later one of a pair, or the covering one.
 OVERLAPS = """() => {""" + DESCRIBE + """
-  const INTERACTIVE = 'a[href], button, summary, input, [tabindex]';
+  const INTERACTIVE = 'a[href], button, summary, input, [tabindex]:not([tabindex="-1"])';
   const visible = (e) => e.checkVisibility() && !e.closest('[aria-hidden="true"]');
   const related = (a, b) => a.contains(b) || b.contains(a);
   const out = [];
@@ -131,7 +134,11 @@ OVERLAPS = """() => {""" + DESCRIBE + """
     const rect = el.getBoundingClientRect();
     const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
     const cover = hit && hit.closest(INTERACTIVE);
-    if (cover && !related(cover, el)) add(cover, `covers the text of ${describe(el)}`);
+    // A hit from a ::after overlay lies outside the element's own box: a stretched link, on purpose.
+    const box = cover && cover.getBoundingClientRect();
+    const px = rect.left + rect.width / 2, py = rect.top + rect.height / 2;
+    const inside = box && px >= box.left && px <= box.right && py >= box.top && py <= box.bottom;
+    if (cover && inside && !related(cover, el)) add(cover, `covers the text of ${describe(el)}`);
   }
   window.scrollTo({ left: scrollX, top: scrollY, behavior: 'instant' });
   return out.slice(0, 5);

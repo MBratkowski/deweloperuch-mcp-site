@@ -20,6 +20,10 @@ def test_umami_is_stubbed_and_other_hosts_blocked(
         assert run.requests.blocked == ["example.com"]
         assert "cloud.umami.is" in run.requests.hosts
         assert run.requests.failed == []
+        seen = []
+        run.context.on("response", lambda r: "cloud.umami.is" in r.url and seen.append(r))
+        run.page.reload()
+        assert [(r.status, r.body()) for r in seen] == [(200, b"")]
         assert set(run.requests.hosts) <= {"127.0.0.1", "cloud.umami.is", "example.com"}
     finally:
         run.close()
@@ -69,5 +73,50 @@ def test_no_js_mode_disables_scripts(
     try:
         assert run.page.viewport_size == {"width": 375, "height": 900}
         assert run.console == []
+    finally:
+        run.close()
+
+
+def test_missing_stylesheet_raises(
+    browser: Browser, fixtures_url: str, probe_cell: Callable[..., Cell]
+) -> None:
+    with pytest.raises(ProbeError, match="missing.css"):
+        open_cell(browser, Target("f", fixtures_url), probe_cell("p", 375), "probe/missing-css.html")
+
+
+def test_missing_image_is_only_recorded(
+    browser: Browser, fixtures_url: str, probe_cell: Callable[..., Cell]
+) -> None:
+    run = open_cell(browser, Target("f", fixtures_url), probe_cell("p", 375), "probe/missing-image.html")
+    try:
+        assert any(e.startswith("404 ") and e.endswith("/probe/missing.png") for e in run.requests.bad_status)
+        assert run.requests.critical == []
+    finally:
+        run.close()
+
+
+def test_menu_mode_opens_the_menu(
+    browser: Browser, fixtures_url: str, probe_cell: Callable[..., Cell]
+) -> None:
+    run = open_cell(browser, Target("f", fixtures_url), probe_cell("p", 375, mode="menu"), "probe/menu.html")
+    try:
+        assert run.page.get_attribute(".nav-toggle", "aria-expanded") == "true"
+    finally:
+        run.close()
+
+
+def test_menu_mode_without_a_toggle_raises(
+    browser: Browser, fixtures_url: str, probe_cell: Callable[..., Cell]
+) -> None:
+    with pytest.raises(ProbeError):
+        open_cell(browser, Target("f", fixtures_url), probe_cell("p", 375, mode="menu"), "clean/index.html")
+
+
+def test_keyboard_mode_focuses_an_element(
+    browser: Browser, fixtures_url: str, probe_cell: Callable[..., Cell]
+) -> None:
+    run = open_cell(browser, Target("f", fixtures_url), probe_cell("p", 375, mode="keyboard"), "clean/index.html")
+    try:
+        assert run.page.evaluate("document.activeElement.tagName") == "A"
     finally:
         run.close()

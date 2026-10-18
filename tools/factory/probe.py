@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
-from playwright.sync_api import Browser, BrowserContext, Page, Route
+from playwright.sync_api import Browser, BrowserContext, Page, Request, Response, Route
 from playwright.sync_api import Error as PlaywrightError
 
 from tools.factory.config import load_config
@@ -20,6 +20,7 @@ from tools.package_site import package_site
 
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost"})
 ANALYTICS_HOSTS = frozenset({"cloud.umami.is", "gateway.umami.is"})
+CRITICAL_RESOURCES = frozenset({"stylesheet", "script", "font"})
 MENU_BUTTON = ".topbar button.nav-toggle"
 NAVIGATION_TIMEOUT_MS = 30_000
 
@@ -39,6 +40,8 @@ class RequestLog:
     hosts: list[str] = field(default_factory=list)
     blocked: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    bad_status: list[str] = field(default_factory=list)  # "STATUS URL" of same-host responses >= 400
+    critical: list[str] = field(default_factory=list)  # stylesheet, script or font that failed
 
 
 @dataclass
@@ -78,13 +81,24 @@ def guard_requests(context: BrowserContext, site_host: str) -> RequestLog:
             aborted.add(url)
             route.abort()
 
-    def on_failed(request: object) -> None:
-        url = request.url  # type: ignore[attr-defined]
-        if url not in aborted:
-            log.failed.append(url)
+    def on_failed(request: Request) -> None:
+        if request.url in aborted:
+            return
+        log.failed.append(request.url)
+        if (urlparse(request.url).hostname or "") in allowed and request.resource_type in CRITICAL_RESOURCES:
+            log.critical.append(f"failed {request.resource_type} {request.url}")
+
+    def on_response(response: Response) -> None:
+        url = response.url
+        if (urlparse(url).hostname or "") not in allowed or response.status < 400:
+            return
+        log.bad_status.append(f"{response.status} {url}")
+        if response.request.resource_type in CRITICAL_RESOURCES:
+            log.critical.append(f"{response.status} {response.request.resource_type} {url}")
 
     context.route("**/*", handle)
     context.on("requestfailed", on_failed)
+    context.on("response", on_response)
     return log
 
 
@@ -110,6 +124,8 @@ def open_cell(browser: Browser, target: Target, cell: Cell, path: str) -> PageRu
         if response is None or response.status >= 400:
             status = "no response" if response is None else f"status {response.status}"
             raise ProbeError(f"cannot open {url}: {status}")
+        if requests.critical:
+            raise ProbeError(f"{url} is half-loaded: {'; '.join(requests.critical)}")
         if cell.mode == "menu":
             _open_menu(page, url)
         elif cell.mode == "keyboard":
