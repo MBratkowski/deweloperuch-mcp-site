@@ -12,3 +12,7 @@ def test_flaky() -> None:
     count = int(counter.read_text()) + 1 if counter.exists() else 1
     counter.write_text(str(count))
     assert count % 3 != 0, f"flaky failure on run {count}"
+
+
+def test_setup_error(missing_fixture_that_raises) -> None:  # noqa: ANN001
+    raise AssertionError("never reached")

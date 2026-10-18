@@ -146,3 +146,17 @@ def test_a_file_without_tests_is_reported_as_collecting_nothing(tmp_path: Path) 
     (tmp_path / "empty_case.py").write_text("")
     with pytest.raises(StressError, match="collected no tests"):
         stress("empty_case.py", runs=1, throttle=4, cwd=tmp_path)
+
+
+def test_a_setup_error_is_not_a_flaky_failure() -> None:
+    with pytest.raises(StressError, match="errors outside the test body"):
+        stress("flaky_case.py::test_setup_error", runs=1, throttle=4, cwd=PROJECT)
+
+
+@pytest.mark.parametrize("flag, value", [("--runs", "0"), ("--throttle", "1")])
+def test_the_cli_rejects_out_of_range_values(flag: str, value: str) -> None:
+    args = ["--test", CASE, "--runs", "1", "--throttle", "4"]
+    args[args.index(flag) + 1] = value
+    with pytest.raises(SystemExit) as exit_info:
+        main(args)
+    assert exit_info.value.code == 2
