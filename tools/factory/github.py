@@ -48,7 +48,12 @@ class GitHub:
         return headers
 
     def _send(
-        self, method: str, url: str, body: dict | None = None, headers: dict[str, str] | None = None
+        self,
+        method: str,
+        url: str,
+        body: dict | None = None,
+        headers: dict[str, str] | None = None,
+        follow_redirects: bool = False,
     ) -> tuple[bytes, Any]:
         data = None if body is None else json.dumps(body).encode()
         request_headers = self._headers() if headers is None else headers
@@ -61,7 +66,11 @@ class GitHub:
         except urllib.error.HTTPError as error:
             payload = error.read()
             if error.code in (301, 302, 303, 307, 308):
-                return b"", error.headers
+                if follow_redirects:
+                    return b"", error.headers
+                raise GitHubError(
+                    error.code, f"unexpected redirect to {error.headers.get('Location')}"
+                ) from None
             try:
                 message = json.loads(payload).get("message", "")
             except (ValueError, AttributeError):
@@ -99,7 +108,7 @@ class GitHub:
         url = self._url(path)
         headers = self._headers()
         for _ in range(_MAX_REDIRECTS):
-            payload, response_headers = self._send("GET", url, headers=headers)
+            payload, response_headers = self._send("GET", url, headers=headers, follow_redirects=True)
             location = response_headers.get("Location")
             if not location:
                 return payload

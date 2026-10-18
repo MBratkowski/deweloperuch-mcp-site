@@ -12,6 +12,7 @@ from tools.factory.github import GitHub, GitHubError
 
 class _Stub(http.server.BaseHTTPRequestHandler):
     seen: list[dict] = []
+    other_url = ""
 
     def log_message(self, format: str, *args: object) -> None:
         pass
@@ -26,6 +27,13 @@ class _Stub(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def do_POST(self) -> None:
+        _Stub.seen.append({"path": self.path, "headers": {}})
+        self.send_response(307)
+        self.send_header("Location", "/elsewhere")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self) -> None:
         base = f"http://127.0.0.1:{self.server.server_port}"
         _Stub.seen.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}})
@@ -34,6 +42,15 @@ class _Stub(http.server.BaseHTTPRequestHandler):
             self._reply(200, [1, 2], {"Link": link})
         elif self.path.startswith("/pages"):
             self._reply(200, [3])
+        elif self.path.startswith("/moved"):
+            self._reply(301, {}, {"Location": "/new-home"})
+        elif self.path.startswith("/to-other"):
+            self._reply(302, {}, {"Location": _Stub.other_url + "/blob"})
+        elif self.path.startswith("/blob"):
+            self.send_response(200)
+            self.send_header("Content-Length", "4")
+            self.end_headers()
+            self.wfile.write(b"data")
         elif self.path.startswith("/invalid"):
             self._reply(422, {"message": "Validation Failed"})
         else:
@@ -80,3 +97,31 @@ def test_error_raises_with_status(api_url: str) -> None:
         client.request("GET", "/invalid")
     assert error.value.status == 422
     assert "Validation Failed" in error.value.message
+
+
+def test_redirect_is_an_error_not_an_empty_success(api_url: str) -> None:
+    client = GitHub("o/r", token="t", api_url=api_url)
+    with pytest.raises(GitHubError) as moved:
+        client.request("GET", "/moved")
+    assert moved.value.status == 301
+    assert "/new-home" in moved.value.message
+    with pytest.raises(GitHubError) as temporary:
+        client.request("POST", "/anything", {"a": 1})
+    assert temporary.value.status == 307
+    with pytest.raises(GitHubError):
+        client.paginate("/moved")
+
+
+def test_download_follows_redirect_without_leaking_the_token(api_url: str) -> None:
+    other = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
+    threading.Thread(target=other.serve_forever, daemon=True).start()
+    _Stub.other_url = f"http://127.0.0.1:{other.server_port}"
+    try:
+        client = GitHub("o/r", token="t", api_url=api_url)
+        assert client.download("/to-other") == b"data"
+    finally:
+        other.shutdown()
+        other.server_close()
+    first, second = _Stub.seen
+    assert first["headers"]["authorization"] == "Bearer t"
+    assert "authorization" not in second["headers"]
