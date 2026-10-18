@@ -412,6 +412,14 @@ def reproduce(playwright: Playwright, group: Group, base_url: str) -> int:
     return 1 if any(_identity(f.check, f.cell, f.selector) == wanted for f in found) else 0
 
 
+def reproduce_any(playwright: Playwright, groups: Sequence[Group], base_url: str) -> int:
+    """1 when any group reappears, 2 when none did and one could not be probed, else 0."""
+    codes = [reproduce(playwright, group, base_url) for group in groups]
+    if 1 in codes:
+        return 1
+    return 2 if 2 in codes or not codes else 0
+
+
 # --- the design reference -------------------------------------------------------------------
 
 
@@ -522,8 +530,9 @@ def _run(args: argparse.Namespace, target: Target) -> int:
     config = load_config()
     with sync_playwright() as playwright:
         if args.reproduce is not None:
-            group = Group.from_json(json.loads(args.reproduce.read_text(encoding="utf-8")))
-            return reproduce(playwright, group, target.base_url)
+            data = json.loads(args.reproduce.read_text(encoding="utf-8"))
+            groups = [Group.from_json(d) for d in (data if isinstance(data, list) else [data])]
+            return reproduce_any(playwright, groups, target.base_url)
         matrix = config.matrix
         if args.engines:
             wanted = args.engines.split(",")

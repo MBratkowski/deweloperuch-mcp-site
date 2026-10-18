@@ -1,7 +1,9 @@
 """Every draft's reproduction must exit 1 on the live site and on main; code disposes."""
 
-import subprocess
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 from tools.factory import check_drafts
 from tools.factory.check_drafts import check
@@ -111,24 +113,39 @@ def test_ci_group_is_verified_by_its_fingerprint_not_a_browser() -> None:
     assert kept == [] and dropped[0].reason == "not present in this run's CI facts"
 
 
-def test_run_script_uses_isolated_python_and_a_timeout(monkeypatch: Any) -> None:
-    calls: list[tuple[Any, dict]] = []
+def make_script(root: Path, body: str) -> str:
+    folder = root / "factory-out" / "repros"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "m.py").write_text(body)
+    return "factory-out/repros/m.py"
 
-    def fake_run(args: Any, **kwargs: Any) -> Any:
-        calls.append((args, kwargs))
-        return subprocess.CompletedProcess(args, 1)
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    assert check_drafts.run_script("factory-out/repros/m.py", LIVE) == 1
-    args, kwargs = calls[0]
-    assert args[1:] == ["-I", "factory-out/repros/m.py", "--base-url", LIVE]
-    assert kwargs["timeout"] == 120 and kwargs["cwd"] == check_drafts.ROOT
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("print('REPRODUCED: 640 > 375')\nraise SystemExit(1)", 1),
+        ("print('NOT REPRODUCED')", 0),
+        ("print('REPRODUCED: x')\nraise SystemExit(3)", 2),
+        ("print('REPRODUCED: x')\nraise SystemExit(137)", 2),
+        ("import os, signal\nprint('REPRODUCED: x', flush=True)\nos.kill(os.getpid(), signal.SIGKILL)", 2),
+        ("print('NOT REPRODUCED')\nraise SystemExit(3)", 2),
+        ("raise SystemExit(1)", 2),
+        ("print('all fine')", 2),
+        ("print('REPRODUCED: x')\nprint('NOT REPRODUCED')", 2),
+        ("raise TimeoutError('selector')", 2),
+        ("import sys\nprint('REPRODUCED: x')\nsys.stderr.write('Traceback (most recent call last)')\nraise SystemExit(1)", 2),
+    ],
+)
+def test_run_script_contract(body: str, expected: int, tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(check_drafts, "ROOT", tmp_path)
+    assert check_drafts.run_script(make_script(tmp_path, body), LIVE) == expected
 
-    def timeout(*a: Any, **k: Any) -> Any:
-        raise subprocess.TimeoutExpired("x", 120)
 
-    monkeypatch.setattr(subprocess, "run", timeout)
-    assert check_drafts.run_script("factory-out/repros/m.py", LIVE) == 2
+def test_run_script_timeout_and_bad_path(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setattr(check_drafts, "ROOT", tmp_path)
+    monkeypatch.setattr(check_drafts, "SCRIPT_TIMEOUT_SECONDS", 1)
+    script = make_script(tmp_path, "import time\ntime.sleep(10)")
+    assert check_drafts.run_script(script, LIVE) == 2
     assert check_drafts.run_script("../evil.py", LIVE) == 2
 
 

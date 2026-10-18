@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.factory import evidence as evidence_module
+from tools.factory import check_drafts
 from tools.factory.ci_facts import deployed_sha, main_sha
 from tools.factory.config import Config, load_config
 from tools.factory.evidence import EvidenceError, redact
@@ -85,6 +86,15 @@ def _artifact_dirs(probe_out: Path, fingerprint: str) -> Path | None:
     return found[0] if found else None
 
 
+def _script_path(draft: Draft) -> Path | None:
+    """The draft's script on disk, resolved against the repo root as check_drafts does."""
+    script = draft.reproduction.script
+    if script is None:
+        return None
+    path = check_drafts.ROOT / script
+    return path if path.is_file() else None
+
+
 def _evidence_files(draft: Draft, probe_out: Path, run_id: str) -> dict[str, tuple[str, Path]]:
     """Display name -> (published path, local file) for the images and the script."""
     files: dict[str, tuple[str, Path]] = {}
@@ -98,17 +108,24 @@ def _evidence_files(draft: Draft, probe_out: Path, run_id: str) -> dict[str, tup
             if source.is_file():
                 label = f"{fingerprint}-{name}.png" if many else f"{name}.png"
                 files[label] = (f"issues/{fingerprint}/{run_id}/{name}.png", source)
-    script = draft.reproduction.script
-    if script is not None and Path(script).is_file():
-        files[script.rsplit("/", 1)[-1]] = (f"repros/{draft.fingerprints[0]}.py", Path(script))
+    script = _script_path(draft)
+    if script is not None:
+        name = (draft.reproduction.script or "").rsplit("/", 1)[-1]
+        files[name] = (f"repros/{draft.fingerprints[0]}.py", script)
     return files
 
 
 def _reproduce(draft: Draft, groups: Sequence[Group], live_url: str) -> tuple[str, str | None]:
     script = draft.reproduction.script
     if script is not None:
-        source = Path(script).read_text(encoding="utf-8") if Path(script).is_file() else None
+        path = _script_path(draft)
+        source = path.read_text(encoding="utf-8") if path is not None else None
         return f"uv run python -I {script} --base-url {live_url}", source
+    if groups and all(g.check in check_drafts.CI_CHECKS for g in groups):
+        lines = ["uv run python -m tools.factory.ci_facts --out ci-out"]
+        lines += [f"grep {fp} ci-out/findings.json" for fp in draft.fingerprints]
+        lines += [f"# {g.note}" for g in groups if g.note]
+        return "\n".join(lines), None
     data = draft.reproduction.groups
     shown = data if len(data) != 1 else data[0]
     command = f"uv run python -m tools.factory.probe --target {live_url} --reproduce group.json"
@@ -139,10 +156,13 @@ def render_suggestion(suggestion: Suggestion, image_url: str | None) -> tuple[st
 
 
 def _suggestion_image(suggestion: Suggestion, probe_out: Path) -> Path | None:
+    """The screenshot only when it is a .png that resolves inside probe_out."""
+    root = probe_out.resolve()
     candidate = Path(suggestion.screenshot)
-    for path in (candidate, probe_out / candidate):
-        if path.suffix == ".png" and path.is_file() and ".." not in candidate.parts:
-            return path
+    for path in (candidate, probe_out / candidate) if candidate.is_absolute() else (probe_out / candidate,):
+        resolved = path.resolve()
+        if resolved.suffix == ".png" and resolved.is_file() and resolved.is_relative_to(root):
+            return resolved
     return None
 
 
@@ -170,6 +190,12 @@ def file(
     for draft in ordered:
         if count >= config.limits.issues_per_run:
             break
+        if draft.reproduction.script is not None and _script_path(draft) is None:
+            print(
+                f"warning: skipping {draft.fingerprints[0]}: {draft.reproduction.script} is missing",
+                file=sys.stderr,
+            )
+            continue
         fingerprints = set(draft.fingerprints)
         if fingerprints & filed:
             continue

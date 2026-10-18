@@ -179,7 +179,7 @@ def test_detector_reproduce_command_and_group_json(tmp_path: Path) -> None:
 
 
 def test_script_draft_command_and_published_script(tmp_path: Path, monkeypatch: Any) -> None:
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(file_issues.check_drafts, "ROOT", tmp_path)
     (tmp_path / "factory-out" / "repros").mkdir(parents=True)
     (tmp_path / "factory-out" / "repros" / "m.py").write_text("print('hi')\n")
     d = draft(
@@ -249,3 +249,52 @@ def test_main_exits_2_on_github_error(tmp_path: Path, monkeypatch: Any, capsys: 
     path.write_text(json.dumps(validated(draft())))
     assert file_issues.main(["--validated", str(path), "--probe-out", str(tmp_path), "--dry-run"]) == 2
     assert "ghs_secret" not in capsys.readouterr().err
+
+
+def test_script_draft_without_its_script_is_skipped(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
+    monkeypatch.setattr(file_issues.check_drafts, "ROOT", tmp_path)
+    groups = selectors(3)
+    missing = draft(
+        "S1", fingerprints=["a" * 12],
+        reproduction={"kind": "script", "groups": [], "script": "factory-out/repros/gone.py"},
+    )
+    gh = Fake()
+    config = file_issues.dataclasses.replace(
+        CONFIG, limits=file_issues.dataclasses.replace(CONFIG.limits, issues_per_run=1)
+    )
+    data = validated(missing, draft("S3", groups[0]))
+    numbers = file(data, probe_out(tmp_path, *groups), gh, config, TRUSTED, False, Publisher())
+    assert len(numbers) == 1 and gh.created()[0]["title"] == f"Draft {groups[0].fingerprint}"
+    assert "gone.py" in capsys.readouterr().err
+
+
+def test_ci_draft_shows_ci_facts_commands(tmp_path: Path) -> None:
+    flaky = Group(
+        "flaky", "ci", "default", "tests/test_a.py::t", (), (), (),
+        note="job failed in https://x/runs/1 and passed in https://x/runs/2",
+    )
+    gh = Fake()
+    run(gh, validated(draft("S1", flaky)), probe_out(tmp_path))
+    body = gh.created()[0]["body"]
+    assert "uv run python -m tools.factory.ci_facts --out ci-out" in body
+    assert f"grep {flaky.fingerprint} ci-out/findings.json" in body
+    assert "https://x/runs/1" in body and "https://x/runs/2" in body
+    assert "--reproduce" not in body and "group.json" not in body
+
+
+def test_suggestion_screenshot_must_live_inside_probe_out(tmp_path: Path, monkeypatch: Any) -> None:
+    out = probe_out(tmp_path)
+    (out / "shot.png").write_bytes(b"ok")
+    (tmp_path / "secret.png").write_bytes(b"no")
+    monkeypatch.chdir(tmp_path)
+    publisher = Publisher()
+    suggestions = [{"title": "inside", "problem": "p", "screenshot": "shot.png"}]
+    gh = Fake()
+    run(gh, validated(suggestions=suggestions), out, publisher)
+    assert len(publisher.calls) == 1 and "![screenshot]" in gh.created()[0]["body"]
+    for bad in ("secret.png", str(tmp_path / "secret.png"), "../secret.png"):
+        publisher = Publisher()
+        gh = Fake()
+        suggestions = [{"title": "outside", "problem": "p", "screenshot": bad}]
+        run(gh, validated(suggestions=suggestions), out, publisher)
+        assert publisher.calls == [] and "![screenshot]" not in gh.created()[0]["body"]

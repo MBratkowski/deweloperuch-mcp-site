@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from collections.abc import Callable, Collection, Sequence
@@ -28,8 +29,16 @@ RunScript = Callable[[str, str], int]
 RunGroup = Callable[[Group, str], int]
 
 
+REPRODUCED = re.compile(r"^REPRODUCED: .+$", re.MULTILINE)
+NOT_REPRODUCED = re.compile(r"^NOT REPRODUCED$", re.MULTILINE)
+
+
 def run_script(script: str, url: str) -> int:
-    """Run an agent's reproduction script in isolated mode; 2 on timeout or a path outside repros/."""
+    """Run an agent's reproduction script in isolated mode.
+
+    1 only for exit 1 plus a `REPRODUCED:` line, 0 only for exit 0 plus `NOT REPRODUCED`;
+    2 for anything else (other codes, a traceback, a missing line, a timeout, a bad path).
+    """
     if not SCRIPT_PATTERN.fullmatch(script) or ".." in script:
         return 2
     try:
@@ -38,10 +47,19 @@ def run_script(script: str, url: str) -> int:
             cwd=ROOT,
             timeout=SCRIPT_TIMEOUT_SECONDS,
             check=False,
+            capture_output=True,
+            text=True,
         )
-    except subprocess.TimeoutExpired:
+    except (subprocess.TimeoutExpired, OSError):
         return 2
-    return result.returncode
+    stdout, stderr = result.stdout or "", result.stderr or ""
+    if "Traceback (most recent call last)" in stderr:
+        return 2
+    if result.returncode == 1 and REPRODUCED.search(stdout) and not NOT_REPRODUCED.search(stdout):
+        return 1
+    if result.returncode == 0 and NOT_REPRODUCED.search(stdout) and not REPRODUCED.search(stdout):
+        return 0
+    return 2
 
 
 def _is_ci(draft: Draft) -> bool:

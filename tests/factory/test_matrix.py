@@ -204,3 +204,40 @@ def test_reference_blocks_all_but_fonts(
     )
     assert out == tmp_path / "out" / "reference.png" and out.is_file()
     assert sorted(aborted) == ["https://example.com/x.png", "https://fonts.gstatic.com/y.png"]
+
+
+def test_cli_reproduce_accepts_a_group_array(tmp_path: Path) -> None:
+    flaky = Group("flaky", "p", "default", "x", ("chromium",), (375,), ()).to_json()
+    path = tmp_path / "groups.json"
+    path.write_text(json.dumps([flaky, flaky]))
+    result = _cli("--target", "http://127.0.0.1:9/", "--reproduce", str(path))
+    assert result.returncode == 2 and "reproduction failed" in result.stderr
+
+
+def test_reproduce_any_codes(monkeypatch: pytest.MonkeyPatch) -> None:
+    results = iter([0, 1, 2])
+    monkeypatch.setattr(probe, "reproduce", lambda *_: next(results))
+    group = Group("overflow", "p", "default", "x", ("chromium",), (375,), ())
+    assert probe.reproduce_any(None, [group] * 3, "u") == 1  # type: ignore[arg-type]
+    for codes, expected in (([0, 0], 0), ([0, 2], 2), ([2, 1], 1)):
+        it = iter(codes)
+        monkeypatch.setattr(probe, "reproduce", lambda *_: next(it))
+        assert probe.reproduce_any(None, [group] * len(codes), "u") == expected  # type: ignore[arg-type]
+
+
+def test_cli_reproduce_array_with_canary(
+    playwright: Playwright, fixtures_url: str, probe_cell: Callable[..., Cell], tmp_path: Path
+) -> None:
+    canary = probe_cell("canary/overflow.html", 375)
+    (group,) = run_matrix(playwright, Target("f", fixtures_url), [canary], tmp_path, ["overflow"])
+    clean = Group(
+        group.check, "clean/index.html", group.mode, group.selector, group.engines, group.widths,
+        tuple(type(f)(f.check, probe_cell("clean/index.html", 375), f.selector, f.measurement, f.box) for f in group.findings),
+        group.breakpoints,
+    )
+    mixed = tmp_path / "mixed.json"
+    mixed.write_text(json.dumps([clean.to_json(), group.to_json()]))
+    assert _cli("--target", fixtures_url, "--reproduce", str(mixed)).returncode == 1
+    none = tmp_path / "none.json"
+    none.write_text(json.dumps([clean.to_json()]))
+    assert _cli("--target", fixtures_url, "--reproduce", str(none)).returncode == 0
