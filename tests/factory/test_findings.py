@@ -1,13 +1,21 @@
 """Findings merge by adjacent widths and engines and get a stable fingerprint."""
 
 import json
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
 
 from tools.factory.findings import (
     DEFAULT_SEVERITY,
     Cell,
     Finding,
     Group,
+    fingerprint,
     group_findings,
+    main,
     normalize_selector,
     width_bands,
 )
@@ -103,3 +111,41 @@ def test_group_note_round_trips_and_stays_out_of_the_fingerprint() -> None:
     assert plain.note == ""
     legacy = {k: v for k, v in plain.to_json().items() if k != "note"}
     assert Group.from_json(legacy) == plain
+
+
+def test_ai_review_fingerprint_command(capsys: pytest.CaptureFixture[str]) -> None:
+    args = ["fingerprint", "--check", "ai-review", "--page", "docs", "--selector", "nav.toc>a:nth-child(2)"]
+    assert main(args) == 0
+    printed = capsys.readouterr().out
+    assert re.fullmatch(r"[0-9a-f]{12}\n", printed)
+    assert printed.strip() == fingerprint("ai-review", "docs", "default", "nav.toc > a", (), ())
+    # The same element on another night, written another way, gets the same fingerprint.
+    assert main([*args[:-1], "nav.toc > a:nth-child(5)"]) == 0
+    assert capsys.readouterr().out == printed
+    assert main([*args[:-3], "landing", *args[-2:]]) == 0
+    assert capsys.readouterr().out != printed
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["fingerprint", "--check", "overflow", "--page", "docs", "--selector", "nav"],
+        ["fingerprint", "--check", "ai-review", "--page", "ci", "--selector", "nav"],
+        ["fingerprint", "--check", "ai-review", "--page", "docs", "--selector", "  "],
+    ],
+)
+def test_fingerprint_command_rejects_other_checks_pages_and_empty_selectors(args: list[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(args)
+    assert error.value.code == 2
+
+
+def test_fingerprint_command_runs_as_a_module() -> None:
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, "-m", "tools.factory.findings", "fingerprint", "--check", "ai-review",
+         "--page", "landing", "--selector", "header .brand"],
+        cwd=root, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == fingerprint("ai-review", "landing", "default", "header .brand", (), ())

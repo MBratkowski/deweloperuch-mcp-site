@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,13 @@ MODE_GUARD = "vars.FACTORY_MODE != 'off'"
 AGENT_ACTION = "anthropics/claude-code-action"
 APP_TOKEN_ACTION = "actions/create-github-app-token"
 APP_KEY = "FACTORY_APP_PRIVATE_KEY"
+CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
+ENV_SCRUB = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
+SETUP_UV = "astral-sh/setup-uv"
+# Commands that execute reproduction scripts an agent wrote.
+SCRIPT_RUNNERS = ("tools.factory.check_drafts", "tools.factory.verify check")
+# A Bash rule that is only an interpreter prefix (`uv run python -I:*`) runs any file.
+_INTERPRETER_RULE = re.compile(r"(?:uv run )?python3?(?: -[A-Za-z]+)*:\*")
 # (workflow file, job id) -> the permission scopes an agent job may hold with write access.
 # Empty until the reviewer job (Task 20), which posts its review with GITHUB_TOKEN.
 AGENT_WRITE_ALLOWED: dict[tuple[str, str], frozenset[str]] = {}
@@ -69,6 +77,119 @@ def test_agents_hold_no_write_token() -> None:
             writes = _write_scopes(permissions, where)
             assert writes <= allowed, f"{where} holds write access: {sorted(writes - allowed)}"
     assert agents, "no job runs anthropics/claude-code-action"
+
+
+def test_claude_token_reaches_only_the_agent_step() -> None:
+    seen = 0
+    for path in _workflow_files():
+        workflow = load_yaml(path)
+        for where, text in _strings(workflow, ()):
+            if CLAUDE_TOKEN not in text:
+                continue
+            seen += 1
+            in_agent_with = (
+                len(where) == 6
+                and where[0] == "jobs"
+                and where[2:5:2] == ("steps", "with")
+                and _uses_agent(workflow["jobs"][where[1]]["steps"][where[3]])
+            )
+            assert in_agent_with, f"{path.name}: {'.'.join(map(str, where))} mentions {CLAUDE_TOKEN}"
+    assert seen, f"no agent step receives {CLAUDE_TOKEN}"
+
+
+def test_agent_steps_scrub_the_environment_of_their_subprocesses() -> None:
+    for path, workflow, name, job, step in _agent_steps():
+        env = {**(workflow.get("env") or {}), **(job.get("env") or {}), **(step.get("env") or {})}
+        assert str(env.get(ENV_SCRUB)) == "1", f"{path.name}: job {name} does not set {ENV_SCRUB}=1"
+
+
+def test_agents_cannot_run_the_scripts_they_write() -> None:
+    for path, _, name, _, step in _agent_steps():
+        where = f"{path.name}: job {name}"
+        rules = _allowed_tools(str((step.get("with") or {}).get("claude_args", "")))
+        assert rules, f"{where} has no --allowedTools list"
+        for rule in rules:
+            if rule != "Bash" and not rule.startswith("Bash("):
+                continue
+            command = rule[len("Bash(") : -1] if rule.startswith("Bash(") else ""
+            assert command.strip(" :*"), f"{where} allows any shell command: {rule}"
+            assert "factory-out/repros" not in command, f"{where} may run its own scripts: {rule}"
+            assert not _INTERPRETER_RULE.fullmatch(command), f"{where} may run any Python file: {rule}"
+
+
+def test_script_runners_hold_no_secret_and_no_write_token() -> None:
+    found: set[str] = set()
+    for path in _factory_workflows():
+        workflow = load_yaml(path)
+        for name, job in workflow["jobs"].items():
+            commands = " ".join(str(step.get("run", "")) for step in job.get("steps") or [])
+            runners = {runner for runner in SCRIPT_RUNNERS if runner in commands}
+            if not runners:
+                continue
+            found |= runners
+            where = f"{path.name}: job {name}"
+            assert "environment" not in job, f"{where} runs agent scripts in an environment with secrets"
+            assert "secrets." not in json.dumps(job), f"{where} runs agent scripts next to a secret"
+            permissions = job["permissions"] if "permissions" in job else workflow.get("permissions")
+            assert not _write_scopes(permissions, where), f"{where} runs agent scripts with a write token"
+    assert found == set(SCRIPT_RUNNERS)
+
+
+def test_factory_jobs_never_use_the_uv_cache() -> None:
+    steps = [
+        step
+        for path in _factory_workflows()
+        for job in load_yaml(path)["jobs"].values()
+        for step in job.get("steps") or []
+        if str(step.get("uses", "")).startswith(SETUP_UV)
+    ]
+    assert steps
+    for step in steps:
+        assert (step.get("with") or {}).get("enable-cache") in (False, "false"), step
+
+
+def _uses_agent(step: Any) -> bool:
+    return isinstance(step, dict) and str(step.get("uses", "")).startswith(AGENT_ACTION)
+
+
+def _agent_steps() -> list[tuple[Path, dict[str, Any], str, dict[str, Any], dict[str, Any]]]:
+    found = [
+        (path, workflow, name, job, step)
+        for path in _workflow_files()
+        for workflow in [load_yaml(path)]
+        for name, job in workflow["jobs"].items()
+        for step in job.get("steps") or []
+        if _uses_agent(step)
+    ]
+    assert found, "no job runs anthropics/claude-code-action"
+    return found
+
+
+def _strings(value: Any, where: tuple[Any, ...]) -> list[tuple[tuple[Any, ...], str]]:
+    """Every mapping key and every string value, with the path that leads to it."""
+    if isinstance(value, dict):
+        items: list[tuple[tuple[Any, ...], str]] = []
+        for key, child in value.items():
+            items.append(((*where, key), str(key)))
+            items += _strings(child, (*where, key))
+        return items
+    if isinstance(value, list):
+        return [item for i, child in enumerate(value) for item in _strings(child, (*where, i))]
+    return [(where, value)] if isinstance(value, str) else []
+
+
+def _allowed_tools(claude_args: str) -> list[str]:
+    """The rules after --allowedTools (or --allowed-tools), split on commas as the action does."""
+    tokens = shlex.split(claude_args)
+    rules: list[str] = []
+    for i, token in enumerate(tokens):
+        if token not in ("--allowedTools", "--allowed-tools"):
+            continue
+        for value in tokens[i + 1 :]:
+            if value.startswith("--"):
+                break
+            rules += [rule.strip() for rule in value.split(",") if rule.strip()]
+    return rules
 
 
 def _write_scopes(permissions: Any, where: str) -> set[str]:

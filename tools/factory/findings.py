@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import re
 from collections import defaultdict
@@ -25,6 +26,8 @@ DEFAULT_SEVERITY: dict[str, str] = {
     "images": "S3",
 }
 FALLBACK_SEVERITY = "S3"
+# Defects the QA agent proves with a script of its own; no detector reports them.
+AI_REVIEW = "ai-review"
 
 _NTH = re.compile(r":nth-(?:child|of-type)\([^)]*\)")
 _COMBINATORS = re.compile(r"\s*([>+~])\s*")
@@ -216,3 +219,29 @@ def _store(
     runs[(check, page, mode, selector, tuple(widths))][engine] = [
         f for w in widths for f in by_width[w]
     ]
+
+
+def ai_review_fingerprint(page: str, selector: str) -> str:
+    """The fingerprint of an AI-review defect: page and measured element only, so the same
+    defect gets the same fingerprint every night whatever cells the agent's script checks."""
+    return fingerprint(AI_REVIEW, page, "default", normalize_selector(selector), (), ())
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    from tools.factory.config import load_config
+
+    parser = argparse.ArgumentParser(prog="python -m tools.factory.findings")
+    commands = parser.add_subparsers(dest="command", required=True)
+    command = commands.add_parser("fingerprint", help="print the fingerprint of an AI-review defect")
+    command.add_argument("--check", required=True, choices=[AI_REVIEW])
+    command.add_argument("--page", required=True, choices=sorted(load_config().site.pages))
+    command.add_argument("--selector", required=True, help="the CSS selector the script measures")
+    args = parser.parse_args(argv)
+    if not normalize_selector(args.selector):
+        parser.error("--selector must not be empty")
+    print(ai_review_fingerprint(args.page, args.selector))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
