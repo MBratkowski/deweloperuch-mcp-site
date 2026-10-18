@@ -32,9 +32,13 @@ SUGGESTION_FIELDS = ("title", "problem", "screenshot")
 DROPPED_FIELDS = ("fingerprint", "reason")
 SCRIPT_PATTERN = re.compile(r"^factory-out/repros/[A-Za-z0-9_.-]+\.py$")
 
-_FP = re.compile(r"<!-- factory:fp=([0-9a-f]+) -->")
-_GROUPS = re.compile(r"<!-- factory:groups=([A-Za-z0-9+/=]*) -->")
-_SCRIPT = re.compile(r"<!-- factory:script=(\S+) -->")
+FINGERPRINT_PATTERN = re.compile(r"[0-9a-f]{12}")
+SENTINEL = "<!-- factory:markers -->"
+_FP = re.compile(r"^<!-- factory:fp=([0-9a-f]{12}) -->$", re.MULTILINE)
+_GROUPS = re.compile(r"^<!-- factory:groups=([A-Za-z0-9+/=]*) -->$", re.MULTILINE)
+_SCRIPT = re.compile(r"^<!-- factory:script=(\S+) -->$", re.MULTILINE)
+_FORBIDDEN = ("<!--", "-->", "factory:")
+_BACKTICKS = re.compile(r"`+")
 _REJECTED_LABELS = frozenset({"invalid", "wontfix", "duplicate"})
 
 
@@ -108,9 +112,23 @@ def _object(value: Any, path: str, fields: Sequence[str]) -> dict[str, Any]:
     return value
 
 
+def _check_plain(value: str, path: str) -> str:
+    """Agent text must never carry or imitate a hidden marker."""
+    for token in _FORBIDDEN:
+        if token in value:
+            raise DraftError(path, f"must not contain {token!r}")
+    return value
+
+
 def _text(value: Any, path: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise DraftError(path, "must be a non-empty string")
+    return _check_plain(value, path)
+
+
+def _fingerprint(value: Any, path: str) -> str:
+    if not isinstance(value, str) or not FINGERPRINT_PATTERN.fullmatch(value):
+        raise DraftError(path, "must be 12 lowercase hex characters")
     return value
 
 
@@ -120,6 +138,13 @@ def _texts(value: Any, path: str, *, minimum: int) -> list[str]:
     if len(value) < minimum:
         raise DraftError(path, f"needs at least {minimum} item(s)")
     return [_text(item, f"{path}[{i}]") for i, item in enumerate(value)]
+
+
+def _fingerprints(value: Any, path: str) -> list[str]:
+    items = _array(value, path)
+    if not items:
+        raise DraftError(path, "needs at least 1 item(s)")
+    return [_fingerprint(item, f"{path}[{i}]") for i, item in enumerate(items)]
 
 
 def _array(value: Any, path: str) -> list[Any]:
@@ -141,7 +166,7 @@ def _reproduction(value: Any, path: str) -> Reproduction:
     if kind == "script":
         if (
             not isinstance(script, str)
-            or not SCRIPT_PATTERN.match(script)
+            or not SCRIPT_PATTERN.fullmatch(script)
             or ".." in script
         ):
             raise DraftError(f"{path}.script", "must be factory-out/repros/<name>.py")
@@ -167,7 +192,7 @@ def _draft(value: Any, path: str) -> Draft:
     return Draft(
         title=_text(data["title"], f"{path}.title"),
         severity=severity,
-        fingerprints=_texts(data["fingerprints"], f"{path}.fingerprints", minimum=1),
+        fingerprints=_fingerprints(data["fingerprints"], f"{path}.fingerprints"),
         problem=_text(data["problem"], f"{path}.problem"),
         actual=_text(data["actual"], f"{path}.actual"),
         expected=_text(data["expected"], f"{path}.expected"),
@@ -219,7 +244,20 @@ def render_issue(
     """Return the issue title and body: eight sections, then the hidden markers."""
     script = draft.reproduction.script
     script_name = script.rsplit("/", 1)[-1] if script else None
-    reproduce = [f"```sh\n{reproduce_command}\n```"]
+    _check_plain(reproduce_command, "reproduce_command")
+    if script_source is not None:
+        _check_plain(script_source, "script_source")
+    for name, url in evidence.items():
+        _check_plain(name, f"evidence[{name!r}]")
+        _check_plain(url, f"evidence[{name!r}]")
+    for field, value in vars(where).items():
+        _check_plain(
+            _list(value)
+            if isinstance(value, Sequence) and not isinstance(value, str)
+            else str(value),
+            f"where.{field}",
+        )
+    reproduce = [_fenced("sh", reproduce_command)]
     if script is not None:
         shown = (
             script_source
@@ -227,7 +265,7 @@ def render_issue(
             else f"See {evidence.get(script_name or '', script)}"
         )
         reproduce.append(
-            f"<details>\n<summary>{script_name}</summary>\n\n```python\n{shown.rstrip()}\n```\n\n</details>"
+            f"<details>\n<summary>{script_name}</summary>\n\n{_fenced('python', shown.rstrip())}\n\n</details>"
         )
     images = [
         f"![{name}]({url})" for name, url in evidence.items() if name != script_name
@@ -259,7 +297,8 @@ def render_issue(
         ("Likely sources", _bullets([f"`{s}`" for s in draft.sources])),
     ]
     parts = [f"## {name}\n\n{text}" for name, text in sections]
-    markers = [f"<!-- factory:fp={fp} -->" for fp in draft.fingerprints]
+    markers = [SENTINEL]
+    markers += [f"<!-- factory:fp={fp} -->" for fp in draft.fingerprints]
     encoded = base64.b64encode(
         json.dumps(draft.reproduction.groups, sort_keys=True).encode()
     )
@@ -269,19 +308,35 @@ def render_issue(
     return draft.title, "\n\n".join(parts) + "\n\n" + "\n".join(markers) + "\n"
 
 
+def _fenced(language: str, text: str) -> str:
+    """A code block whose fence is longer than any backtick run inside."""
+    longest = max((len(run) for run in _BACKTICKS.findall(text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{language}\n{text}\n{fence}"
+
+
+def _marker_block(body: str) -> str:
+    """The renderer's trailing block: only lines after the last sentinel line."""
+    lines = (body or "").splitlines()
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index] == SENTINEL:
+            return "\n".join(lines[index + 1 :])
+    return ""
+
+
 def fingerprints_in(body: str) -> set[str]:
-    return set(_FP.findall(body or ""))
+    return set(_FP.findall(_marker_block(body)))
 
 
 def groups_in(body: str) -> list[Group]:
-    match = _GROUPS.search(body or "")
+    match = _GROUPS.search(_marker_block(body))
     if match is None:
         return []
     return [Group.from_json(d) for d in json.loads(base64.b64decode(match.group(1)))]
 
 
 def script_in(body: str) -> str | None:
-    match = _SCRIPT.search(body or "")
+    match = _SCRIPT.search(_marker_block(body))
     return match.group(1) if match else None
 
 
