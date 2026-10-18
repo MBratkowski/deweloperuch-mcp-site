@@ -104,15 +104,47 @@ def test_failing_site_leaves_no_findings(
     assert not (tmp_path / "findings.json").exists()
 
 
-def test_cli_exits_2_on_a_failing_site(unavailable_url: str, tmp_path: Path) -> None:
-    result = subprocess.run(
-        [sys.executable, "-m", "tools.factory.probe", "--target", unavailable_url, "--out", str(tmp_path), "--only", "overflow"],
+def _cli(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [sys.executable, "-m", "tools.factory.probe", *args],
         cwd=Path(__file__).resolve().parents[2],
         capture_output=True,
         text=True,
     )
+
+
+def test_cli_exits_2_on_a_failing_site(unavailable_url: str, tmp_path: Path) -> None:
+    result = _cli("--target", unavailable_url, "--out", str(tmp_path), "--only", "overflow", "--engines", "chromium")
     assert result.returncode == 2, result.stderr
+    assert "cannot open" in result.stderr and "503" in result.stderr
     assert not (tmp_path / "findings.json").exists()
+
+
+def test_stale_findings_do_not_survive_a_failed_run(
+    playwright: Playwright, unavailable_url: str, probe_cell: Callable[..., Cell], tmp_path: Path
+) -> None:
+    (tmp_path / "findings.json").write_text("{}")
+    (tmp_path / "groups").mkdir()
+    with pytest.raises(probe.ProbeError):
+        run_matrix(playwright, Target("down", unavailable_url), [probe_cell("", 375)], tmp_path)
+    assert not (tmp_path / "findings.json").exists()
+    assert not (tmp_path / "groups").exists()
+
+
+def test_cli_rejects_unknown_check_and_engine(tmp_path: Path) -> None:
+    assert _cli("--target", "main", "--out", str(tmp_path), "--only", "nope").returncode == 2
+    assert _cli("--target", "main", "--out", str(tmp_path), "--engines", "opera").returncode == 2
+
+
+def test_cli_reproduce_crashes_exit_2(tmp_path: Path) -> None:
+    flaky = tmp_path / "flaky.json"
+    flaky.write_text(json.dumps(Group("flaky", "p", "default", "x", ("chromium",), (375,), ()).to_json()))
+    result = _cli("--target", "http://127.0.0.1:9/", "--reproduce", str(flaky))
+    assert result.returncode == 2 and "reproduction failed" in result.stderr
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    result = _cli("--target", "http://127.0.0.1:9/", "--reproduce", str(bad))
+    assert result.returncode == 2 and "reproduction failed" in result.stderr
 
 
 def test_reproduce_exit_codes(

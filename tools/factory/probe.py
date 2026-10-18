@@ -8,6 +8,7 @@ import http.server
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 from collections.abc import Iterable, Iterator, Sequence
@@ -294,6 +295,7 @@ def run_matrix(
     names = _validate(checks)
     probe_names = [n for n in names if n != ENGINE_DIFF]
     want_diff = ENGINE_DIFF in names
+    _clear_previous(out)
     shots = out / "shots"
     shots.mkdir(parents=True, exist_ok=True)
     findings: list[Finding] = []
@@ -302,7 +304,7 @@ def run_matrix(
         for cell in cells:
             try:
                 run = open_cell(browsers[cell.engine], target, cell, _page_path(cell.page))
-            except ProbeError as error:
+            except (ProbeError, PlaywrightError) as error:
                 raise ProbeError(f"{cell.page} {cell.engine} {cell.width} {cell.mode}: {error}") from error
             try:
                 (shots / _shot_name(cell)).write_bytes(run.page.screenshot(full_page=True))
@@ -327,6 +329,14 @@ def run_matrix(
     temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     os.replace(temporary, out / "findings.json")
     return groups
+
+
+def _clear_previous(out: Path) -> None:
+    """Remove what an earlier run left in `out`, so a failed run cannot leave stale findings."""
+    for name in ("findings.json", "findings.json.tmp", "reference.png"):
+        (out / name).unlink(missing_ok=True)
+    for name in ("shots", "groups", "sheets"):
+        shutil.rmtree(out / name, ignore_errors=True)
 
 
 def _write_group_evidence(out: Path, groups: Sequence[Group]) -> None:
@@ -482,13 +492,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.reproduce is None and args.out is None:
         parser.error("--out is required unless --reproduce is given")
+    from tools.factory.checks import CHECKS
+
+    known = [*CHECKS, ENGINE_DIFF]
+    for name in args.only or []:
+        if name not in known:
+            parser.error(f"unknown check {name!r}; choose from {', '.join(known)}")
+    configured = load_config().matrix.engines
+    for name in (args.engines.split(",") if args.engines else []):
+        if name not in configured:
+            parser.error(f"unknown engine {name!r}; choose from {', '.join(configured)}")
     try:
         if args.target == "main":
             with local_site(ROOT) as url:
                 return _run(args, Target("main", url))
         return _run(args, Target(args.target, args.target))
-    except ProbeError as error:
+    except (ProbeError, PlaywrightError) as error:
         print(f"probe failed: {error}", file=sys.stderr)
+        return 2
+    except Exception as error:
+        if args.reproduce is None:
+            raise
+        # In reproduce mode exit 1 means "the defect is there"; a crash must never look like that.
+        print(f"reproduction failed: {type(error).__name__}: {error}", file=sys.stderr)
         return 2
 
 
@@ -501,9 +527,6 @@ def _run(args: argparse.Namespace, target: Target) -> int:
         matrix = config.matrix
         if args.engines:
             wanted = args.engines.split(",")
-            unknown = [e for e in wanted if e not in matrix.engines]
-            if unknown:
-                raise SystemExit(f"unknown engines: {', '.join(unknown)}")
             matrix = replace(matrix, engines=tuple(wanted), mode_engines=tuple(e for e in matrix.mode_engines if e in wanted))
         cells = build_cells(matrix, config.site.pages)
         deltas: list[Finding] = []

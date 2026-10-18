@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from urllib.parse import urlparse
@@ -171,8 +172,8 @@ def images(run: PageRun) -> list[Finding]:
 
 
 Box = tuple[float, float, float, float]
-# Landmarks whose vertical position is compared too; lower down, content above shifts `y`.
-_COMPARE_Y = ("header", "nav")
+# Only the top bar's vertical position is compared; lower down, content above shifts `y`.
+_COMPARE_Y_TAG = "header"
 
 
 def landmark_boxes(run: PageRun) -> dict[str, Box]:
@@ -181,7 +182,10 @@ def landmark_boxes(run: PageRun) -> dict[str, Box]:
 
 
 def _compares_y(selector: str) -> bool:
-    return selector.rsplit(" > ", 1)[-1].split("#")[0].split(".")[0] in _COMPARE_Y
+    """True for a header and anything inside one."""
+    return any(
+        re.split(r"[#.:\[]", part, maxsplit=1)[0] == _COMPARE_Y_TAG for part in selector.split(" > ")
+    )
 
 
 def engine_diff(boxes: Mapping[Cell, Mapping[str, Box]], threshold: float) -> list[Finding]:

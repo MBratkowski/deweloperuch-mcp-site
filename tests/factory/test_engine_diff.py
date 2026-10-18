@@ -41,6 +41,17 @@ def test_engine_diff_pure_compares_y_only_for_header_and_nav() -> None:
     assert engine_diff({CHROMIUM: _boxes(16), FIREFOX: other}, 8) == []
 
 
+def test_engine_diff_pure_compares_y_for_nav_inside_header_only() -> None:
+    inside = {"div > header.topbar > nav#site-navigation": (0, 10, 300, 40)}
+    shifted = {"div > header.topbar > nav#site-navigation": (0, 10 - 19, 300, 40)}
+    assert [f.selector for f in engine_diff({CHROMIUM: inside, FIREFOX: shifted}, 8)] == [
+        "div > header.topbar > nav#site-navigation"
+    ]
+    footer = {"div > footer.site-footer > div.wrap > nav.footer-nav": (0, 900, 300, 40)}
+    footer_shifted = {"div > footer.site-footer > div.wrap > nav.footer-nav": (0, 881, 300, 40)}
+    assert engine_diff({CHROMIUM: footer, FIREFOX: footer_shifted}, 8) == []
+
+
 def test_engine_diff_pure_skips_keys_missing_in_one_engine() -> None:
     assert engine_diff({CHROMIUM: _boxes(16), FIREFOX: {"header": (0, 0, 375, 60)}}, 8) == []
 
