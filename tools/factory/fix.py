@@ -75,6 +75,13 @@ _TEST_ID = re.compile(
     r"::[A-Za-z_]\w*(?:::[A-Za-z_]\w*)?(?:\[[^\]\r\n]*\])?"
 )
 _ATTEMPT = re.compile(r"^<!-- factory:attempt=([0-9]+) -->$", re.MULTILINE)
+# A closing keyword with an issue reference closes the issue on merge; factory pull requests say
+# `Refs #N` and an issue closes only after QA verified the fix on the live site.
+CLOSING_REFERENCE = re.compile(r"(close[sd]?|fix(e[sd])?|resolve[sd]?)\s*:?\s*([\w.-]+/[\w.-]+)?#\d+", re.IGNORECASE)
+ISSUE_URL = re.compile(r"https?://(?:www\.)?github\.com/[\w.-]+/[\w.-]+/(?:issues|pull)/\d+", re.IGNORECASE)
+VISUAL_TESTS = "tests/visual/"
+BASELINE_DIR = "tests/visual/baselines/"
+RENDERER = BASELINE_DIR + "renderer.json"
 _SHA = re.compile(r"[0-9a-f]{40}")
 # Environment variables that may hold a credential; no test or build the fixer wrote ever sees them.
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSPHRASE|PRIVATE|CREDENTIAL|_KEY$|^KEY$", re.IGNORECASE)
@@ -120,6 +127,17 @@ class FixReport:
         }
 
 
+def check_text(value: str, path: str) -> str:
+    """Agent text that may reach a pull request: plain (no marker, no secret shape), closing no
+    issue and linking no issue or pull request."""
+    _check_plain(value, path)
+    if CLOSING_REFERENCE.search(value):
+        raise DraftError(path, "must not close an issue (a closing keyword before #N); the pull request says Refs #N")
+    if ISSUE_URL.search(value):
+        raise DraftError(path, "must not link a GitHub issue or pull request")
+    return value
+
+
 def _string(value: Any, path: str, *, required: bool) -> str:
     if not isinstance(value, str):
         raise DraftError(path, "must be a string")
@@ -127,7 +145,7 @@ def _string(value: Any, path: str, *, required: bool) -> str:
         raise DraftError(path, "must not be empty")
     if len(value) > MAX_TEXT:
         raise DraftError(path, f"must be at most {MAX_TEXT} characters")
-    return _check_plain(value, path)
+    return check_text(value, path)
 
 
 def check_test_id(value: Any, path: str) -> str:
@@ -138,7 +156,7 @@ def check_test_id(value: Any, path: str) -> str:
         or ".." in value.split("::", 1)[0].split("/")
     ):
         raise DraftError(path, "must be a pytest node id tests/<path>/test_<name>.py::<test>")
-    return _check_plain(value, path)
+    return check_text(value, path)  # a parameter id is free text and reaches the pull request
 
 
 def _array(value: Any, path: str, maximum: int) -> list[Any]:
@@ -153,8 +171,9 @@ def load_report(data: Any) -> FixReport:
     """Validate the fixer's structured output by the rules of schemas/fix-report.json.
 
     Every string is plain text: no `<!--`, `-->` or `factory:` (so it can never imitate a hidden
-    marker) and nothing shaped like a secret. A `fixed` report names its tests, its cause and its
-    change; any other status explains itself in `reason`.
+    marker), nothing shaped like a secret, no closing keyword before an issue reference and no link
+    to an issue or a pull request. A `fixed` report names its tests, its cause and its change; any
+    other status explains itself in `reason`.
     """
     top = _object(data, "", REPORT_FIELDS)
     status = top["status"]
@@ -657,12 +676,18 @@ def _junit(report: Path) -> tuple[int, int, int, int]:
         return 0, 0, 0, 0
 
 
+def _selection(test_id: str) -> tuple[str, ...]:
+    """Visual tests are deselected by the project's addopts (`-m 'not visual'`); a later -m wins."""
+    return ("-m", "visual") if test_id.startswith(VISUAL_TESTS) else ()
+
+
 def _pytest(test_ids: Sequence[str], cwd: Path, timeout: float = RUN_TIMEOUT_SECONDS) -> _Run:
-    """Run pytest in `cwd` (a checkout of one commit) without any credential in its environment."""
+    """Run pytest in `cwd` (a worktree of one commit) without any credential in its environment."""
     env = {**clean_environment(), "PYTHONDONTWRITEBYTECODE": "1"}
+    selection = _selection(test_ids[0]) if len(test_ids) == 1 else ()
     with tempfile.TemporaryDirectory() as scratch:
         report = Path(scratch) / "junit.xml"
-        command = [sys.executable, "-m", "pytest", *test_ids, *_PYTEST_ARGS, f"--junitxml={report}"]
+        command = [sys.executable, "-m", "pytest", *test_ids, *_PYTEST_ARGS, *selection, f"--junitxml={report}"]
         try:
             done = subprocess.run(
                 command, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout, check=False
@@ -673,7 +698,9 @@ def _pytest(test_ids: Sequence[str], cwd: Path, timeout: float = RUN_TIMEOUT_SEC
         tests, failures, errors, skipped = _junit(report)
     output = done.stdout + done.stderr
     summary = _summary(done.stdout)
-    if done.returncode == 0 and tests >= 1 and failures == errors == skipped == 0:
+    # A named test must really run; the whole suite may skip what needs the network (exit 0).
+    skips_allowed = not test_ids
+    if done.returncode == 0 and tests >= 1 and failures == errors == 0 and (skips_allowed or skipped == 0):
         return _Run(f"passed: {summary}", _tail(output), True)
     if done.returncode == 1 and failures >= 1 and errors == 0:
         return _Run(f"failed: {summary}", _tail(output), False)
@@ -687,9 +714,11 @@ def _changed_test_files(repo: Path, base: str, head: str) -> set[str]:
 
 
 def prove(report: FixReport, repo: Path, base_sha: str, flaky: bool) -> Proof:
-    """Each test id fails on a worktree of the base and passes on HEAD, and the full suite passes.
+    """Each test id fails on a worktree of the base and passes on a worktree of HEAD, and the full
+    suite passes on HEAD; only committed work counts, so a dirty working tree is refused.
 
-    The base runs head's version of only the test files that hold the test ids, so the new tests
+    The base runs head's version of only the test files that hold the test ids (and, for visual
+    tests, head's versions of the baselines the report lists and of renderer.json), so the new tests
     meet the old site; those files must be ones the change adds or modifies. For a flaky issue the
     existing test runs 50 times under 4x CPU throttling on the base (at least one failure) and on
     HEAD (none). Nothing runs with a credential in its environment.
@@ -699,12 +728,34 @@ def prove(report: FixReport, repo: Path, base_sha: str, flaky: bool) -> Proof:
     common: dict[str, Any] = {"base_sha": base_sha, "head_sha": head, "flaky": flaky}
     if report.status != "fixed":
         return Proof({}, {}, False, False, reasons=(f"the fixer reported {report.status}",), **common)
+    dirty = git(repo, "status", "--porcelain", "--untracked-files=all").splitlines()
+    if dirty:
+        shown = ", ".join(line[3:] for line in dirty[:5]) + (", …" if len(dirty) > 5 else "")
+        reason = f"uncommitted changes in the working tree (only commits are published): {shown}"
+        return Proof({}, {}, False, False, reasons=(reason,), **common)
     if head == base_sha or not is_ancestor(repo, base_sha, head):
         return Proof({}, {}, False, False, reasons=("no commits on top of the base",), **common)
     with _scrubbed_environment():
         if flaky:
             return _prove_flaky(report, repo, base_sha, common)
         return _prove_red_green(report, repo, base_sha, head, common)
+
+
+def baseline_paths(report: FixReport) -> list[str]:
+    """The baseline images the report lists, as paths under tests/visual/baselines/."""
+    paths = []
+    for baseline in report.baselines:
+        path = baseline.name if baseline.name.startswith(BASELINE_DIR) else BASELINE_DIR + baseline.name
+        path = path if path.endswith(".png") else path + ".png"
+        if "\\" not in path and not {"", ".", ".."} & set(path.split("/")):
+            paths.append(path)
+    return paths
+
+
+def _copy_from(repo: Path, head: str, tree: Path, path: str) -> None:
+    target = tree / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(_git_bytes(repo, "show", f"{head}:{path}"))
 
 
 def _prove_red_green(report: FixReport, repo: Path, base: str, head: str, common: dict[str, Any]) -> Proof:
@@ -715,9 +766,14 @@ def _prove_red_green(report: FixReport, repo: Path, base: str, head: str, common
     runnable = [t for t in report.test_ids if t.split("::", 1)[0] in changed]
     with worktree(repo, base) as tree:
         for path in dict.fromkeys(t.split("::", 1)[0] for t in runnable):
-            target = tree / path
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(_git_bytes(repo, "show", f"{head}:{path}"))
+            _copy_from(repo, head, tree, path)
+        if any(t.startswith(VISUAL_TESTS) for t in runnable):
+            # A visual test on the base compares against the baselines the fix renders, not a missing file.
+            for path in [*baseline_paths(report), RENDERER]:
+                try:
+                    _copy_from(repo, head, tree, path)
+                except FixError:
+                    pass  # not in the head: the test reports the missing baseline itself
         for test_id in report.test_ids:
             if test_id not in runnable:
                 red[test_id] = "error: not in a test file that this change adds or modifies"
@@ -725,11 +781,12 @@ def _prove_red_green(report: FixReport, repo: Path, base: str, head: str, common
             run = _pytest([test_id], tree)
             red[test_id] = run.verdict
             logs[f"base {test_id}"] = run.tail
-    for test_id in report.test_ids:
-        run = _pytest([test_id], repo)
-        green[test_id] = run.verdict
-        logs[f"head {test_id}"] = run.tail
-    suite = _pytest([], repo, SUITE_TIMEOUT_SECONDS)
+    with worktree(repo, head) as tree:
+        for test_id in report.test_ids:
+            run = _pytest([test_id], tree)
+            green[test_id] = run.verdict
+            logs[f"head {test_id}"] = run.tail
+        suite = _pytest([], tree, SUITE_TIMEOUT_SECONDS)
     logs["suite"] = suite.tail
     reasons = [f"not red on the base: {t}: {v}" for t, v in red.items() if not v.startswith("failed")]
     reasons += [f"not green on the head: {t}: {v}" for t, v in green.items() if not v.startswith("passed")]
@@ -762,18 +819,20 @@ def _prove_flaky(report: FixReport, repo: Path, base: str, common: dict[str, Any
         reasons += [f"the base never failed in {counts}: {t}" for t in never]
         reasons += [f"the base could not be stressed: {t}: {red[t]}" for t in errors]
         return Proof(red, green, False, False, reproducible=not never, reasons=tuple(reasons), logs=logs, **common)
-    for test_id in report.test_ids:
-        try:
-            result = stress(test_id, FLAKY_RUNS, FLAKY_THROTTLE, repo)
-        except StressError as error:
-            green[test_id] = f"error: {str(error).splitlines()[0]}"
-            logs[f"head {test_id}"] = _tail(str(error))
-            continue
-        verdict = "failed" if result.failures else "passed"
-        green[test_id] = f"{verdict}: {result.failures} of {result.runs} throttled runs failed"
-        logs[f"head {test_id}"] = _tail(result.first_failure)
+    head = common["head_sha"]
+    with worktree(repo, head) as tree:
+        for test_id in report.test_ids:
+            try:
+                result = stress(test_id, FLAKY_RUNS, FLAKY_THROTTLE, tree)
+            except StressError as error:
+                green[test_id] = f"error: {str(error).splitlines()[0]}"
+                logs[f"head {test_id}"] = _tail(str(error))
+                continue
+            verdict = "failed" if result.failures else "passed"
+            green[test_id] = f"{verdict}: {result.failures} of {result.runs} throttled runs failed"
+            logs[f"head {test_id}"] = _tail(result.first_failure)
+        suite = _pytest([], tree, SUITE_TIMEOUT_SECONDS)
     reasons += [f"not green on the head in {counts}: {t}: {v}" for t, v in green.items() if not v.startswith("passed")]
-    suite = _pytest([], repo, SUITE_TIMEOUT_SECONDS)
     logs["suite"] = suite.tail
     if not suite.passed:
         reasons.append(f"the full suite fails on the head: {suite.verdict}")
@@ -898,6 +957,7 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--branch", default="")
     command.add_argument("--in", dest="inputs", type=Path, required=True, help="the fix job's artifact")
     command.add_argument("--fix-result", default="success", help="needs.fix.result")
+    command.add_argument("--scan-result", default="success", help="the fix job's secret scan outcome")
     return parser
 
 

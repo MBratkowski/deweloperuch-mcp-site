@@ -5,7 +5,8 @@ name: Factory fix
 # red-then-green proof and before/after images, then a pull request. Agents propose, code disposes:
 # the agent edits, tests and commits on a local branch in a job whose token is read-only; publish,
 # a separate job that holds the App token, runs nothing from the fix: it fetches the commits from a
-# bundle, fences them with main's code and opens or updates the pull request.
+# bundle, builds one commit of its own from their tree (the factory as author, its own message),
+# fences and scans that commit with main's code, pushes it and opens or updates the pull request.
 #
 #   guard -> fix -> publish
 #
@@ -131,7 +132,8 @@ jobs:
     needs: guard
     if: vars.FACTORY_MODE != 'off' && needs.guard.outputs.go == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # The agent's turns, red and green, the full suite, and for a flaky test 100 throttled runs.
+    timeout-minutes: 90
     environment: factory
     # The agent holds no write token: this GITHUB_TOKEN is read-only and the App token is never minted here.
     permissions:
@@ -149,6 +151,8 @@ jobs:
       VISUAL_RENDERER: playwright-1.64.0-noble-amd64
     outputs:
       branch: ${{ steps.prepare.outputs.branch }}
+      # A failed scan sends the issue to a person instead of another attempt.
+      scan: ${{ steps.scan.outcome }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -262,14 +266,15 @@ jobs:
           BASE: ${{ steps.prepare.outputs.base_sha }}
           BRANCH: ${{ steps.prepare.outputs.branch }}
         run: |
-          # The text of every commit, for the secret scan: the bundle itself is compressed.
-          git log --format=fuller --patch "$BASE..refs/heads/$BRANCH" > factory-out/changes.txt
+          # Every commit as text, binary blobs included, for the secret scan: the bundle is compressed.
+          git log --text --patch --format=fuller "$BASE..refs/heads/$BRANCH" > factory-out/changes.txt
           if [ "$(git rev-list --count "$BASE..refs/heads/$BRANCH")" -gt 0 ]; then
             git bundle create factory-out/fix.bundle "$BASE..refs/heads/$BRANCH"
           fi
       # Artifacts of a public repository can be downloaded by any signed-in user: anything shaped like a
       # token or a key fails the job instead. publish scans again, with main's code, before it pushes.
       - name: Scan the artifact for secret shapes
+        id: scan
         run: uv run python -I -S tools/factory/secret_scan.py factory-out
       - uses: actions/upload-artifact@v7
         with:
@@ -286,7 +291,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: factory
-    # GITHUB_TOKEN only dispatches the next attempt; the App token pushes, opens and labels.
+    # GITHUB_TOKEN only dispatches the next attempt (workflow_dispatch of this workflow). The App
+    # has actions: read only, and an attempt that fails before any pull request exists has no
+    # reviewer to start the next one. The job runs nothing from the fix. The App token pushes,
+    # opens and labels.
     permissions:
       actions: write
       contents: read
@@ -317,8 +325,9 @@ jobs:
           permission-contents: write
           permission-issues: write
           permission-pull-requests: write
-      # The bundle is fetched, fenced and pushed, never checked out or run; the report, the proof and
-      # the images are validated and scanned before anything reaches GitHub.
+      # The bundle is fetched, never checked out or run, and never pushed: publish builds one commit
+      # of its own from the fix's tree, fences and scans it, and pushes that. The report, the proof
+      # and the images are validated and scanned before anything reaches GitHub.
       - name: Publish the attempt
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
@@ -328,7 +337,8 @@ jobs:
           ATTEMPT: ${{ needs.guard.outputs.attempt }}
           BRANCH: ${{ needs.fix.outputs.branch }}
           FIX_RESULT: ${{ needs.fix.result }}
+          SCAN_RESULT: ${{ needs.fix.outputs.scan }}
         run: >-
           uv run python -m tools.factory.fix publish
           --issue "$ISSUE" --attempt "$ATTEMPT" --branch "$BRANCH"
-          --in factory-in/fix --fix-result "$FIX_RESULT"
+          --in factory-in/fix --fix-result "$FIX_RESULT" --scan-result "$SCAN_RESULT"

@@ -239,7 +239,7 @@ def test_fix_job_holds_no_write_token_and_no_token_after_the_agent() -> None:
     job = load_yaml(WORKFLOWS / "factory-fix.yml")["jobs"]["fix"]
     assert job["permissions"] == {"checks": "read", "contents": "read", "issues": "read", "pull-requests": "read"}
     assert job["environment"] == "factory"  # for the Claude token of the agent step only
-    assert job["timeout-minutes"] == 45
+    assert job["timeout-minutes"] == 90
     assert job["container"]["image"] == PLAYWRIGHT_IMAGE
     assert job["env"] == {"HOME": "/root", "VISUAL_RENDERER": "playwright-1.64.0-noble-amd64"}
     steps = job["steps"]
@@ -258,6 +258,10 @@ def test_fix_job_holds_no_write_token_and_no_token_after_the_agent() -> None:
     later = " ".join(str(s.get("run", "")) for s in steps[agent + 1 :])
     for command in ("tools.factory.fix prove", "tools.factory.fix before-after", "git bundle create", SCANNER):
         assert command in later
+    # The scanned text of the commits includes binary blobs; the scan's outcome reaches publish.
+    assert "git log --text --patch" in later
+    (scan,) = [s for s in steps if SCANNER in str(s.get("run", ""))]
+    assert scan["id"] == "scan" and job["outputs"]["scan"] == "${{ steps.scan.outcome }}"
 
 
 def test_publish_job_holds_the_app_token_and_runs_no_fix_code() -> None:
@@ -281,6 +285,7 @@ def test_publish_job_holds_the_app_token_and_runs_no_fix_code() -> None:
     assert not any(runner in commands[-1] for runner in ("pytest", *AGENT_CODE_RUNNERS))
     env = steps[-1]["env"]
     assert (env["GH_TOKEN"], env["DISPATCH_TOKEN"]) == ("${{ steps.app.outputs.token }}", "${{ github.token }}")
+    assert env["SCAN_RESULT"] == "${{ needs.fix.outputs.scan }}" and '--scan-result "$SCAN_RESULT"' in commands[-1]
 
 
 def test_agents_read_only_the_workspace() -> None:
@@ -399,6 +404,27 @@ def test_factory_jobs_never_use_the_uv_cache() -> None:
     assert steps
     for step in steps:
         assert (step.get("with") or {}).get("enable-cache") in (False, "false"), step
+
+
+def test_jobs_that_can_write_never_use_the_uv_cache() -> None:
+    """A cache an agent job could seed must never be restored where a write token or the App token
+    is held, in any workflow (sync.yml writes with GITHUB_TOKEN)."""
+    writers = 0
+    for path in _workflow_files():
+        workflow = load_yaml(path)
+        for name, job in workflow["jobs"].items():
+            steps = job.get("steps") or []
+            permissions = job["permissions"] if "permissions" in job else workflow.get("permissions")
+            writes = permissions is None or permissions == "write-all" or (
+                isinstance(permissions, dict) and "write" in permissions.values()
+            )
+            if not (writes or any(str(s.get("uses", "")).startswith(APP_TOKEN_ACTION) for s in steps)):
+                continue
+            writers += 1
+            for step in steps:
+                if str(step.get("uses", "")).startswith(SETUP_UV):
+                    assert (step.get("with") or {}).get("enable-cache") in (False, "false"), f"{path.name}: job {name}"
+    assert writers
 
 
 def _uses_agent(step: Any) -> bool:

@@ -10,7 +10,7 @@ Replace the fixed width with a max-width of 100%.
 
 ## Proof
 
-Each new test ran on a worktree of the base with only its test file taken from the head, then on the head.
+Each new test ran on a worktree of the base with only its test file taken from the head, then on a worktree of the head.
 
 | Test | Base `aaaaaaa` (must fail) | Head `bbbbbbb` (must pass) |
 |---|---|---|

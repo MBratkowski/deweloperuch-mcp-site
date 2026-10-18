@@ -1,23 +1,28 @@
 """Publish one fixer attempt with the App token: fence, secret checks, push, pull request, evidence.
 
 Runs in factory-fix.yml's publish job, a fresh checkout of main that executes nothing from the fix.
-The commits arrive as a git bundle: they are fetched into a private ref, diffed by the fence of this
-checkout and pushed, never checked out. The report, the proof and the images come from the fix job,
-which ran the agent's code, so they are data: the report is validated again, proof output is
-neutralised, images must be PNG files, and everything is scanned for secret shapes before anything
-reaches GitHub. Hidden markers are rendered by this module after the sentinel line; agent text can
-never contain one.
+The agent's commits arrive as a git bundle and are never pushed: they are fetched into a private
+ref, and this module builds one commit of its own from the fix's tree (`git commit-tree`, on the
+base or on the pull request's current head), with the factory as author and committer and a message
+rendered from the validated report. Only that commit is fenced, scanned (every blob that differs
+from its parent, text and binary, and its message) and pushed, so nothing the agent wrote into
+intermediate commits, author fields or messages leaves the job. The report, the proof and the
+images come from the fix job, which ran the agent's code, so they are data: the report is validated
+again, proof output is neutralised, images must be PNG files, and everything is scanned for secret
+shapes before anything reaches GitHub. Hidden markers are rendered by this module after the sentinel
+line; agent text can never contain one, close an issue or mention anyone.
 
 Outcomes, each with a comment carrying `<!-- factory:attempt=K -->` on the issue:
 
-- the fixer reports `not_reproducible` or `needs_human`, anything carries secret-shaped text, or a
-  flaky test never fails on the base: `factory:needs-human`, and an open pull request goes back to
-  draft with a summary;
-- the fix job failed, no valid report or commits, a hard fence reason or a proof that is not green:
+- the fixer reports `not_reproducible` or `needs_human`, its new test passes on the base, anything
+  carries secret-shaped text (here or in the fix job's own scan), or a flaky test never fails on
+  the base: `factory:needs-human`, and an open pull request goes back to draft with a summary;
+- the fix job failed, no valid report or change, a hard fence reason or a proof that is not green:
   the next attempt is dispatched, or after the last attempt the same as above;
-- otherwise the branch is pushed and the pull request opened or updated, labelled `factory` (and
+- otherwise the commit is pushed and the pull request opened or updated, labelled `factory` (and
   `factory:needs-human` when the fence found review reasons, listed under "Needs a human"); the
-  issue moves from `factory:ready` to `factory:fixing`.
+  issue moves from `factory:ready` to `factory:fixing`. If a step after the push fails, the attempt
+  is still recorded on the issue before the error surfaces.
 """
 
 from __future__ import annotations
@@ -27,8 +32,10 @@ import base64
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
+import textwrap
 import urllib.parse
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -40,10 +47,13 @@ from tools.factory.config import Config, load_config
 from tools.factory.evidence import EvidenceError, redact
 from tools.factory.fence import FenceReport, GitError, check_fence
 from tools.factory.fix import (
+    BASELINE_DIR,
+    CLOSING_REFERENCE,
     FIXING,
     FLAKY,
     FLAKY_RUNS,
     FLAKY_THROTTLE,
+    ISSUE_URL,
     NEEDS_HUMAN,
     READY,
     SUITE_COMMAND,
@@ -53,29 +63,39 @@ from tools.factory.fix import (
     _git_bytes,
     branch_pattern,
     check_test_id,
+    check_text,
     find_pull,
     git,
+    is_ancestor,
     read_report,
 )
 from tools.factory.github import GitHub, GitHubError
-from tools.factory.issues import SENTINEL, _check_plain, _fenced, _marker_block
+from tools.factory.issues import SENTINEL, DraftError, _fenced, _marker_block, groups_in
 from tools.factory.secret_scan import secret_shape
 
 PR_LABEL = "factory"
 WORKFLOW = "factory-fix.yml"
 HEAD_REF = "refs/factory/fix-head"
-BASELINES = "tests/visual/baselines/"
+PR_HEAD_REF = "refs/factory/pr-head"
+IDENTITY = ("deweloperuch-factory", "factory@users.noreply.github.com")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_IMAGE_BYTES = 5_000_000
 MAX_REASON = 500
 MAX_TITLE = 256
+MAX_SUBJECT = 72
 LOG_LINES = 20
-# Output blocks for this many tests at most, so the body stays far below GitHub's 65536 characters.
+MAX_LOG_LINE = 300
+# Output blocks for this many tests at most; the whole body stays below GitHub's 65536 characters.
 MAX_LOGGED_TESTS = 3
+MAX_BODY = 60_000
+MAX_LISTED = 200
+MAX_BULLETS = 30
 NO_IMAGES = (
     "No before and after images: the issue has no probe cells to render "
     "(an AI-review script, a flaky test or a CI finding)."
 )
+LOGS_LEFT_OUT = "The output is left out to keep this description within GitHub's limit; it is in the fix job's artifact."
+CUT = "\n\n(The rest of this description was cut to stay within GitHub's limit.)"
 WITHHELD = "(withheld: the text is shaped like a secret)"
 CONVERT_TO_DRAFT = (
     "mutation($id: ID!) { convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { isDraft } } }"
@@ -86,6 +106,7 @@ _ATTEMPT = re.compile(r"^<!-- factory:attempt=([0-9]+) -->$", re.MULTILINE)
 _SHA = re.compile(r"[0-9a-f]{40}")
 _URL = re.compile(r"https://[^\s()<>\[\]]+")
 _BACKTICKS = re.compile(r"`+")
+_MENTION = re.compile(r"@(?=[A-Za-z0-9_-])")
 
 Dispatch = Callable[[int, int], None]
 PublishEvidence = Callable[[Mapping[str, Path]], dict[str, str]]
@@ -114,10 +135,11 @@ def attempt_in(body: str) -> int | None:
 
 
 def _neutral(text: str) -> str:
-    """Text that can neither open nor close an HTML comment, so no hidden marker can come of it."""
+    """Text that can neither open nor close an HTML comment (so no hidden marker can come of it)
+    and mentions nobody (a zero-width joiner after each @)."""
     while "<!--" in text or "-->" in text:
         text = text.replace("<!--", "").replace("-->", "")
-    return text
+    return _MENTION.sub("@\u200d", text)
 
 
 def _line(text: str, limit: int = MAX_REASON) -> str:
@@ -141,11 +163,24 @@ def _short(sha: str) -> str:
 
 
 def _bullets(items: Sequence[str]) -> str:
-    return "\n".join(f"- {WITHHELD if secret_shape(item) else _line(item)}" for item in items)
+    shown = [f"- {WITHHELD if secret_shape(item) else _line(item)}" for item in items[:MAX_BULLETS]]
+    if len(items) > MAX_BULLETS:
+        shown.append(f"- and {len(items) - MAX_BULLETS} more")
+    return "\n".join(shown)
 
 
 def _last_lines(text: str) -> str:
-    return "\n".join(_neutral(text).rstrip().splitlines()[-LOG_LINES:])
+    lines = _neutral(text).rstrip().splitlines()[-LOG_LINES:]
+    return "\n".join(line if len(line) <= MAX_LOG_LINE else line[: MAX_LOG_LINE - 1] + "…" for line in lines)
+
+
+def safe_title(title: str, issue: int) -> str:
+    """The issue title as a pull request title or commit subject: one line, mentioning nobody, and
+    never a closing reference (the merger turns the title into the squash commit's subject)."""
+    text = _line(title, MAX_TITLE)
+    if not text or CLOSING_REFERENCE.search(text) or ISSUE_URL.search(text):
+        return f"Fix for issue {issue}"
+    return text
 
 
 # --- the pull request body -------------------------------------------------------------------
@@ -167,38 +202,48 @@ def render_pr_body(
     """`Refs #N`, the cause, the change, the proof, the images, the baselines, the files, what needs
     a human and the attempt; then the sentinel and the `factory:attempt` and `factory:tests` markers.
 
-    The report's text is checked again (it may not come from load_report); tool output is
-    neutralised and kept inside code blocks and spans.
+    The report's text is checked again (it may not come from load_report): no marker, no secret
+    shape, no closing reference, no issue link; mentions are neutralised. Tool output is neutralised
+    and kept inside code blocks and spans. The text stays within MAX_BODY characters: the output is
+    left out first, then the rest is cut.
     """
     limit = load_config().limits.attempts_per_issue if limit is None else limit
     for name in ("cause", "change", "reason"):
-        _check_plain(getattr(report, name), name)
+        check_text(getattr(report, name), name)
     for i, baseline in enumerate(report.baselines):
-        _check_plain(baseline.name, f"baselines[{i}].name")
-        _check_plain(baseline.reason, f"baselines[{i}].reason")
+        check_text(baseline.name, f"baselines[{i}].name")
+        check_text(baseline.reason, f"baselines[{i}].reason")
     test_ids = [check_test_id(t, f"test_ids[{i}]") for i, t in enumerate(report.test_ids)]
     review = list(fence.review if review is None else review)
-    baselines = [f"{_code(b.name)}: {_line(b.reason)}" for b in report.baselines]
-    sections = [
-        ("Cause", report.cause.strip()),
-        ("Change", report.change.strip()),
-        ("Proof", _proof_section(test_ids, proof)),
-        ("Before and after", _images_section(evidence, images_note)),
-        ("Changed baselines", "\n".join(f"- {b}" for b in baselines) or "None."),
-        ("Changed files", _files_section(changed_files, fence)),
-    ]
-    if review:
-        sections.append(
-            ("Needs a human", "The fence found changes a person must review before this merges:\n\n" + _bullets(review))
-        )
-    sections.append(("Attempt", f"Attempt {attempt} of {limit}."))
-    body = f"Refs #{issue}\n\n" + "\n\n".join(f"## {name}\n\n{text}" for name, text in sections)
+
+    def sections(with_logs: bool) -> str:
+        baselines = [f"- {_code(b.name)}: {_line(b.reason)}" for b in report.baselines]
+        parts = [
+            ("Cause", _neutral(report.cause.strip())),
+            ("Change", _neutral(report.change.strip())),
+            ("Proof", _proof_section(test_ids, proof, with_logs)),
+            ("Before and after", _images_section(evidence, images_note)),
+            ("Changed baselines", "\n".join(baselines) or "None."),
+            ("Changed files", _files_section(changed_files, fence)),
+        ]
+        if review:
+            parts.append(
+                ("Needs a human", "The fence found changes a person must review before this merges:\n\n" + _bullets(review))
+            )
+        parts.append(("Attempt", f"Attempt {attempt} of {limit}."))
+        return f"Refs #{issue}\n\n" + "\n\n".join(f"## {name}\n\n{text}" for name, text in parts)
+
+    body = sections(with_logs=True)
+    if len(body) > MAX_BODY:
+        body = sections(with_logs=False)
+    if len(body) > MAX_BODY:
+        body = body[: MAX_BODY - len(CUT)].rstrip() + CUT
     encoded = base64.b64encode(json.dumps(test_ids).encode()).decode()
     markers = [SENTINEL, f"<!-- factory:attempt={attempt} -->", f"<!-- factory:tests={encoded} -->"]
     return body + "\n\n" + "\n".join(markers) + "\n"
 
 
-def _proof_section(test_ids: Sequence[str], proof: Proof) -> str:
+def _proof_section(test_ids: Sequence[str], proof: Proof, with_logs: bool) -> str:
     base, head = _short(proof.base_sha), _short(proof.head_sha)
     if proof.flaky:
         intro = (
@@ -209,7 +254,7 @@ def _proof_section(test_ids: Sequence[str], proof: Proof) -> str:
     else:
         intro = (
             "Each new test ran on a worktree of the base with only its test file taken from the head, "
-            "then on the head."
+            "then on a worktree of the head."
         )
         columns = f"Base `{base}` (must fail) | Head `{head}` (must pass)"
     rows = [f"| Test | {columns} |", "|---|---|---|"]
@@ -229,9 +274,11 @@ def _proof_section(test_ids: Sequence[str], proof: Proof) -> str:
         for side in ("base", "head")
     ]
     shown = [(title, text) for title, text in logs if text.strip()]
-    if shown:
+    if shown and with_logs:
         blocks = "\n\n".join(f"{title}\n\n{_fenced('text', _last_lines(text))}" for title, text in shown)
         parts.append(f"<details>\n<summary>Output</summary>\n\n{blocks}\n\n</details>")
+    elif shown:
+        parts.append(LOGS_LEFT_OUT)
     return "\n\n".join(parts)
 
 
@@ -251,11 +298,14 @@ def _images_section(evidence: Mapping[str, str], note: str | None) -> str:
 
 
 def _files_section(files: Sequence[str], fence: FenceReport) -> str:
-    listed = "\n".join(f"- {_code(path)}" for path in files) or "- none"
-    return f"{listed}\n\n{fence.changed_lines} changed lines, not counting PNG files and the generated pages."
+    listed = [f"- {_code(path)}" for path in files[:MAX_LISTED]]
+    if len(files) > MAX_LISTED:
+        listed.append(f"- and {len(files) - MAX_LISTED} more")
+    text = "\n".join(listed) or "- none"
+    return f"{text}\n\n{fence.changed_lines} changed lines, not counting PNG files and the generated pages."
 
 
-# --- git and data checks ---------------------------------------------------------------------
+# --- git: the commit publish builds ----------------------------------------------------------
 
 
 def fetch_bundle(repo: Path, bundle: Path, branch: str) -> tuple[str, str]:
@@ -270,6 +320,62 @@ def fetch_bundle(repo: Path, bundle: Path, branch: str) -> tuple[str, str]:
     return head, base
 
 
+def pull_head(repo: Path, branch: str, pull: Mapping[str, Any]) -> str:
+    """The pull request's head as GitHub reports it, fetched from origin; a branch that moved since
+    is never built on or overwritten."""
+    expected = str((pull.get("head") or {}).get("sha") or "")
+    git(repo, "fetch", "--no-tags", "origin", f"+refs/heads/{branch}:{PR_HEAD_REF}")
+    actual = git(repo, "rev-parse", "--verify", f"{PR_HEAD_REF}^{{commit}}")
+    if actual != expected:
+        raise FixError(
+            f"the pull request branch moved: GitHub reports {_short(expected)}, the branch is at "
+            f"{actual[:7]}; nothing was pushed"
+        )
+    return actual
+
+
+def tree_of(repo: Path, revision: str) -> str | None:
+    if not _SHA.fullmatch(revision):
+        return None
+    try:
+        return git(repo, "rev-parse", "--verify", "--quiet", f"{revision}^{{tree}}")
+    except FixError:
+        return None
+
+
+def commit_message(title: str, issue: int, attempt: int, report: FixReport) -> str:
+    """English, rendered here from the issue title and the validated report; never the agent's."""
+    subject = safe_title(title, issue)
+    if len(subject) > MAX_SUBJECT:
+        subject = subject[: MAX_SUBJECT - 1].rsplit(" ", 1)[0] + "…"
+    paragraphs = [textwrap.fill(_neutral(" ".join(text.split())), 72) for text in (report.cause, report.change)]
+    return "\n\n".join([subject, *paragraphs, f"Refs #{issue}. Fixer attempt {attempt}."]) + "\n"
+
+
+def build_commit(repo: Path, tree: str, parent: str, message: str) -> str:
+    """One commit with `tree` on `parent`, authored and committed by the factory."""
+    name, email = IDENTITY
+    env = {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_AUTHOR_NAME": name,
+        "GIT_AUTHOR_EMAIL": email,
+        "GIT_COMMITTER_NAME": name,
+        "GIT_COMMITTER_EMAIL": email,
+    }
+    done = subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit-tree", tree, "-p", parent],
+        cwd=repo,
+        env=env,
+        input=message.encode(),
+        capture_output=True,
+        check=False,
+    )
+    if done.returncode != 0:
+        raise FixError(f"git commit-tree failed: {redact(done.stderr.decode(errors='replace')).strip()}")
+    return done.stdout.decode().strip()
+
+
 def _paths(repo: Path, base: str, head: str, statuses: str | None = None) -> list[str]:
     args = ["diff", "--name-only", "--no-renames", "-z"]
     if statuses:
@@ -278,30 +384,46 @@ def _paths(repo: Path, base: str, head: str, statuses: str | None = None) -> lis
     return [name for name in names if name]
 
 
+def _blob(repo: Path, commit: str, path: str) -> bytes | None:
+    """The bytes of `path` in `commit`, or None when it is not a blob (a submodule link)."""
+    entry = _git_bytes(repo, "ls-tree", "-z", commit, "--", path).decode(errors="replace").split("\0")[0]
+    meta = entry.split("\t", 1)[0].split()
+    if len(meta) != 3 or meta[1] != "blob":
+        return None
+    return _git_bytes(repo, "cat-file", "blob", meta[2])
+
+
 def changed_files(repo: Path, base: str, head: str) -> list[str]:
     return _paths(repo, base, head)
 
 
 def secret_findings(
     repo: Path,
-    base: str,
-    head: str,
+    parent: str,
+    commit: str,
+    message: str,
     report: FixReport,
     proof: Proof | None,
     images: Mapping[str, Path],
 ) -> list[str]:
-    """Where secret-shaped text sits in what this attempt would publish: commit messages, the diff,
-    every added or modified file (PNG baselines included), the report, the proof and the images."""
+    """Where secret-shaped text sits in what this attempt would publish: the commit message, every
+    file name and every blob (text or binary) that differs between the commit and its parent, the
+    report, the proof and the images. The agent's own commits, authors and messages are never
+    pushed, so they need no scan."""
     found: list[str] = []
 
     def check(where: str, text: str) -> None:
         if secret_shape(text) and where not in found:
             found.append(where)
 
-    check("the commit messages", git(repo, "log", "--format=%B", f"{base}..{head}"))
-    check("the diff", _git_bytes(repo, "diff", "--no-ext-diff", "--no-textconv", base, head).decode(errors="replace"))
-    for path in _paths(repo, base, head, "AM"):
-        check(path, _git_bytes(repo, "show", f"{head}:{path}").decode(errors="replace"))
+    check("the commit message", message)
+    for path in _paths(repo, parent, commit, "AMT"):
+        if secret_shape(path):
+            check("a file name", path)
+            continue
+        blob = _blob(repo, commit, path)
+        if blob is not None:
+            check(path, blob.decode(errors="replace"))
     check("the report", json.dumps(report.to_json()))
     if proof is not None:
         check("the proof", json.dumps(proof.to_json()))
@@ -330,23 +452,60 @@ def valid_images(images: Mapping[str, Path]) -> dict[str, Path]:
     return valid
 
 
-def proof_problems(report: FixReport, proof: Proof | None, base: str, head: str, flaky: bool) -> list[str]:
-    """Why the proof does not show red on this base and green on this head, of the kind the issue
-    needs (statistical for `factory:flaky`). The verdicts are read from the data, not from the fix
-    job's own `ok`."""
+def flaky_test_ids(data: Mapping[str, Any], trusted: frozenset[str]) -> list[str]:
+    """The test ids the trusted issue's flaky groups name (a flaky job's selector is not one)."""
+    if (data.get("user") or {}).get("login") not in trusted:
+        return []
+    try:
+        groups = groups_in(str(data.get("body") or ""))
+    except (ValueError, KeyError, TypeError):
+        return []
+    ids = []
+    for group in groups:
+        if group.check != "flaky":
+            continue
+        try:
+            ids.append(check_test_id(group.selector, "selector"))
+        except DraftError:
+            continue
+    return ids
+
+
+def proof_mismatch(
+    report: FixReport,
+    proof: Proof | None,
+    base: str,
+    tree: str,
+    proof_tree: str | None,
+    flaky: bool,
+    flaky_ids: Sequence[str],
+) -> list[str]:
+    """Why the proof is not about this fix: no proof, another tree or base, the wrong kind, or a
+    flaky fix that leaves out the issue's flaky test."""
     if proof is None:
         return ["the fix job wrote no valid proof"]
     problems: list[str] = []
+    if proof_tree is None:
+        problems.append(f"the proof is for {_short(proof.head_sha)}, which is not among the fix's commits")
+    elif proof_tree != tree:
+        problems.append(f"the proof is for {_short(proof.head_sha)}, whose files are not the fix's")
+    if proof.base_sha != base:
+        problems.append(f"the proof starts from {_short(proof.base_sha)}, not the base {base[:7]}")
     if proof.flaky != flaky:
         problems.append(
             "the issue is a flaky test, but this is not the statistical proof"
             if flaky
             else "the statistical proof is only for a flaky-test issue"
         )
-    if proof.head_sha != head:
-        problems.append(f"the proof is for {_short(proof.head_sha)}, not the head {head[:7]}")
-    if proof.base_sha != base:
-        problems.append(f"the proof starts from {_short(proof.base_sha)}, not the base {base[:7]}")
+    if flaky:
+        problems += [f"the report does not name the flaky test {t}" for t in flaky_ids if t not in report.test_ids]
+    return [_line(problem) for problem in problems]
+
+
+def proof_verdicts(report: FixReport, proof: Proof) -> list[str]:
+    """Why the proof does not show red on the base and green on the head. The verdicts are read
+    from the data, not from the fix job's own `ok`."""
+    problems: list[str] = []
     for test_id in report.test_ids:
         red = proof.red.get(test_id, "not run")
         green = proof.green.get(test_id, "not run")
@@ -366,7 +525,7 @@ def unexplained_baselines(repo: Path, base: str, head: str, report: FixReport) -
     named = {b.name for b in report.baselines}
     reasons = []
     for path in _paths(repo, base, head):
-        if path.startswith(BASELINES) and path.endswith(".png"):
+        if path.startswith(BASELINE_DIR) and path.endswith(".png"):
             name = path.rsplit("/", 1)[-1]
             if not named & {path, name, name.removesuffix(".png")}:
                 reasons.append(f"baseline changed without a stated reason: {path}")
@@ -377,12 +536,12 @@ def token_remote(repo_name: str) -> str:
     return f"https://x-access-token:{os.environ.get('GH_TOKEN', '')}@github.com/{repo_name}.git"
 
 
-def push(repo: Path, remote: str, head: str, branch: str, expected: str | None) -> None:
-    """Push `head` to `branch`. A branch with a pull request is replaced only while it still points
-    at the head GitHub reported (`expected`); without one the branch is the factory's own."""
+def push(repo: Path, remote: str, commit: str, branch: str, expected: str | None) -> None:
+    """Push `commit` to `branch`. A branch with a pull request is replaced only while it still
+    points at the head GitHub reported (`expected`); without one the branch is the factory's own."""
     lease = f"--force-with-lease=refs/heads/{branch}:{expected}" if expected else "--force"
     try:
-        git(repo, "push", lease, remote, f"{head}:refs/heads/{branch}")
+        git(repo, "push", lease, remote, f"{commit}:refs/heads/{branch}")
     except FixError as error:
         raise FixError(redact(str(error).replace(remote, "<remote>"))) from None
 
@@ -462,20 +621,15 @@ def _label_names(data: Mapping[str, Any]) -> set[str]:
     return {label["name"] for label in data.get("labels") or []}
 
 
-def _title(data: Mapping[str, Any], issue: int) -> str:
-    title = _neutral(" ".join(str(data.get("title") or "").split()))[:MAX_TITLE]
-    return title or f"Fix #{issue}"
-
-
 def publish_images(
-    images: Mapping[str, Path], number: int, head: str, publish_evidence: PublishEvidence | None
+    images: Mapping[str, Path], number: int, commit: str, publish_evidence: PublishEvidence | None
 ) -> tuple[dict[str, str], str | None]:
-    """Push the images to the evidence branch under prs/<number>/<head>/; (urls by key, a note)."""
+    """Push the images to the evidence branch under prs/<number>/<commit>/; (urls by key, a note)."""
     if not images:
         return {}, None
     if publish_evidence is None:
         return {}, "The images were not published in this run."
-    prefix = f"prs/{number}/{head}"
+    prefix = f"prs/{number}/{commit}"
     try:
         urls = publish_evidence({f"{prefix}/{key}": path for key, path in images.items()})
     except EvidenceError as error:
@@ -501,9 +655,15 @@ def publish_fix(
     publish_evidence: PublishEvidence | None = None,
     trusted: frozenset[str] | None = None,
     fix_result: str = "success",
+    scan_result: str = "success",
+    leaked: Sequence[str] = (),
 ) -> int | None:
-    """Fence the attempt's commits and open or update its pull request; returns its number, or None
-    when the attempt ends without one (see the module docstring for the outcomes)."""
+    """Fence a commit built from the attempt's tree and open or update its pull request; returns its
+    number, or None when the attempt ends without one (see the module docstring for the outcomes).
+
+    `scan_result` is the outcome of the fix job's own secret scan; `leaked` names artifact files
+    that held secret-shaped text before they could be read. Both send the issue to a person.
+    """
     trusted = trusted if trusted is not None else config.trusted(os.environ.get("FACTORY_APP_SLUG"))
     repo_name = config.site.repo
     api = f"/repos/{repo_name}"
@@ -517,6 +677,10 @@ def publish_fix(
         print(f"#{issue}: closed, or no longer the factory's to fix; nothing published")
         return None
     pull = find_pull(gh, api, repo_name, issue, trusted, branch or None)
+    if scan_result == "failure":
+        return run.stop(pull, ["the fix job's secret scan found secret-shaped text in its output; nothing was published"])
+    if leaked:
+        return run.stop(pull, [f"secret-shaped text in {where}; nothing was published" for where in leaked])
     if fix_result != "success":
         return run.failed(pull, [f"the fix job ended with result {fix_result} (see its log)"])
     if report is None:
@@ -529,27 +693,43 @@ def publish_fix(
         head, base = fetch_bundle(repo, bundle, branch)
     except FixError as error:
         return run.failed(pull, [f"the commits could not be read from the bundle: {error}"])
-    if head == base:
-        return run.failed(pull, ["the fix job produced no commits"])
+    expected = (pull.get("head") or {}).get("sha") if pull else None
+    parent = pull_head(repo, branch, pull) if pull else base
+    if pull and not is_ancestor(repo, parent, head):
+        return run.failed(pull, ["the fix does not build on the pull request's head (the branch changed while it ran)"])
+    tree = git(repo, "rev-parse", f"{head}^{{tree}}")
+    if tree == git(repo, "rev-parse", f"{parent}^{{tree}}"):
+        return run.failed(pull, ["the fix job produced no change"])
+    title = safe_title(str(data.get("title") or ""), issue)
+    message = commit_message(title, issue, attempt, report)
+    commit = build_commit(repo, tree, parent, message)
+
     checked = valid_images(images)
-    leaks = secret_findings(repo, base, head, report, proof, checked)
+    leaks = secret_findings(repo, parent, commit, message, report, proof, checked)
     if leaks:
         return run.stop(pull, [f"secret-shaped text in {where}; nothing was published" for where in leaks])
     try:
-        fence = check_fence(repo, base, head, config.fence, config.limits)
+        fence = check_fence(repo, base, commit, config.fence, config.limits)
     except GitError as error:
         raise FixError(f"the fence could not run: {error}") from error
-    if proof is not None and proof.flaky and not proof.reproducible and FLAKY in labels:
+    flaky = FLAKY in labels
+    if proof is not None and proof.flaky and flaky and not proof.reproducible:
         return run.stop(pull, [*proof.reasons, *proof.red.values()] or ["the flaky test never failed on the base"])
+    proof_tree = tree_of(repo, proof.head_sha) if proof is not None else None
     problems = [f"fence: {reason}" for reason in fence.reasons]
-    problems += proof_problems(report, proof, base, head, FLAKY in labels)
+    problems += proof_mismatch(report, proof, base, tree, proof_tree, flaky, flaky_test_ids(data, trusted))
     if problems:
         return run.failed(pull, problems)
-    assert proof is not None  # proof_problems reports a missing proof
+    assert proof is not None  # proof_mismatch reports a missing proof
+    passing = [t for t in report.test_ids if proof.red.get(t, "").startswith("passed")]
+    if passing and not flaky:
+        return run.stop(pull, [f"the new test passes on the base, so the defect does not reproduce: {t}" for t in passing])
+    problems = proof_verdicts(report, proof)
+    if problems:
+        return run.failed(pull, problems)
 
-    review = [*fence.review, *unexplained_baselines(repo, base, head, report)]
-    files = changed_files(repo, base, head)
-    title = _title(data, issue)
+    review = [*fence.review, *unexplained_baselines(repo, base, commit, report)]
+    files = changed_files(repo, base, commit)
 
     def body(evidence: Mapping[str, str], note: str | None) -> str:
         text = render_pr_body(
@@ -561,23 +741,33 @@ def publish_fix(
         return text
 
     first = body({}, "The images are being published." if checked else None)
-    expected = (pull.get("head") or {}).get("sha") if pull else None
-    push(repo, remote or token_remote(repo_name), head, branch, expected)
-    if pull is None:
-        created = gh.request("POST", f"{api}/pulls", {"title": title, "head": branch, "base": "main", "body": first})
-        number = created["number"]
-    else:
-        number = pull["number"]
-    gh.request("POST", f"{api}/issues/{number}/labels", {"labels": [PR_LABEL, *([NEEDS_HUMAN] if review else [])]})
-    evidence, note = publish_images(checked, number, head, publish_evidence)
-    gh.request("PATCH", f"{api}/pulls/{number}", {"title": title, "body": body(evidence, note)})
-    text = f"Fix attempt {attempt} of {run.limit}: pull request #{number} for `{head[:7]}`."
-    if review:
-        text += "\n\nThe pull request needs a human review:\n\n" + _bullets(review)
-    run.comment(text)
-    gh.request("POST", f"{api}/issues/{issue}/labels", {"labels": [FIXING]})
-    run.remove_label(issue, READY)
-    print(f"#{issue}: pull request #{number} for {head[:7]}")
+    push(repo, remote or token_remote(repo_name), commit, branch, expected)
+    try:
+        if pull is None:
+            created = gh.request("POST", f"{api}/pulls", {"title": title, "head": branch, "base": "main", "body": first})
+            number = created["number"]
+        else:
+            number = pull["number"]
+        gh.request("POST", f"{api}/issues/{number}/labels", {"labels": [PR_LABEL, *([NEEDS_HUMAN] if review else [])]})
+        evidence, note = publish_images(checked, number, commit, publish_evidence)
+        gh.request("PATCH", f"{api}/pulls/{number}", {"title": title, "body": body(evidence, note)})
+        text = f"Fix attempt {attempt} of {run.limit}: pull request #{number} for `{commit[:7]}`."
+        if review:
+            text += "\n\nThe pull request needs a human review:\n\n" + _bullets(review)
+        run.comment(text)
+        gh.request("POST", f"{api}/issues/{issue}/labels", {"labels": [FIXING]})
+        run.remove_label(issue, READY)
+    except Exception as error:
+        # The branch moved already: the attempt is recorded before the error surfaces.
+        try:
+            run.comment(
+                f"Fix attempt {attempt} of {run.limit}: `{commit[:7]}` was pushed to `{branch}`, but publishing "
+                f"failed ({type(error).__name__}); see the publish job's log."
+            )
+        except GitHubError as nested:
+            print(f"warning: the attempt could not be recorded: {redact(str(nested))}", file=sys.stderr)
+        raise
+    print(f"#{issue}: pull request #{number} for {commit[:7]}")
     return number
 
 
@@ -601,6 +791,25 @@ def _collect_images(directory: Path) -> dict[str, Path]:
         if folder.is_dir() and not folder.is_symlink():
             for path in sorted(folder.glob("*.png")):
                 found[f"{side}/{path.name}"] = path
+    return found
+
+
+def _leaked(inputs: Path) -> list[str]:
+    """The artifact's JSON files that hold secret-shaped text, as written or once their escapes
+    are decoded (`\\u005f` for `_`); they are never read further, and the issue goes to a person
+    instead of another attempt."""
+    found = []
+    for name in ("report.json", "proof.json"):
+        path = inputs / name
+        if not path.is_file() or path.is_symlink():
+            continue
+        text = path.read_bytes().decode(errors="replace")
+        try:
+            decoded = json.dumps(json.loads(text), ensure_ascii=False)
+        except ValueError:
+            decoded = ""
+        if secret_shape(text) or secret_shape(decoded):
+            found.append(f"the fix job's {name}")
     return found
 
 
@@ -634,14 +843,18 @@ def main_publish(args: argparse.Namespace, config: Config) -> int:
     proof: Proof | None = None
     bundle: Path | None = None
     images: dict[str, Path] = {}
+    leaked: list[str] = []
     if args.fix_result == "success":
-        report = read_report(inputs / "report.json")
-        proof = _read_proof(inputs / "proof.json")
-        bundle = inputs / "fix.bundle" if (inputs / "fix.bundle").is_file() else None
-        images = _collect_images(inputs / "images")
+        leaked = _leaked(inputs)
+        if not leaked:
+            report = read_report(inputs / "report.json")
+            proof = _read_proof(inputs / "proof.json")
+            bundle = inputs / "fix.bundle" if (inputs / "fix.bundle").is_file() else None
+            images = _collect_images(inputs / "images")
     number = publish_fix(
         gh, Path.cwd(), args.issue, args.attempt, bundle, report, proof, images, config,
-        branch=args.branch, dispatch=dispatch, publish_evidence=publish_evidence, fix_result=args.fix_result,
+        branch=args.branch, dispatch=dispatch, publish_evidence=publish_evidence,
+        fix_result=args.fix_result, scan_result=args.scan_result, leaked=leaked,
     )
     print(f"pull request #{number}" if number else "no pull request from this attempt")
     return 0

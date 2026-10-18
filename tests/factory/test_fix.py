@@ -8,6 +8,8 @@ import io
 import json
 import os
 import subprocess
+import sys
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -22,6 +24,7 @@ from tools.factory import fix, fix_publish
 from tools.factory.config import load_config
 from tools.factory.fence import FenceReport
 from tools.factory.findings import Cell, Finding, Group
+from tools.factory.github import GitHubError
 from tools.factory.fix import (
     Baseline,
     FixReport,
@@ -47,7 +50,8 @@ APP = "factory-app[bot]"
 REVIEWER = "github-actions[bot]"
 TRUSTED = frozenset({"MBratkowski", APP})
 SNAPSHOT = Path(__file__).parent / "snapshots" / "pr.md"
-SCHEMA = Path(__file__).parents[2] / ".github" / "factory" / "schemas" / "fix-report.json"
+ROOT = Path(__file__).parents[2]
+SCHEMA = ROOT / ".github" / "factory" / "schemas" / "fix-report.json"
 TITLE = "The installation prompt fits a 375 px viewport in WebKit"
 BRANCH = "fix/7-the-installation-prompt-fits-a-375-px-vi"
 TEST_ID = "tests/e2e/test_terminal.py::test_terminal_fits"
@@ -149,6 +153,25 @@ def fix_bundle(
 def remote_head(world: World, branch: str = BRANCH) -> str:
     line = git("ls-remote", str(world.bare), f"refs/heads/{branch}")
     return line.split()[0] if line else ""
+
+
+FACTORY_AUTHOR = "deweloperuch-factory <factory@users.noreply.github.com>"
+
+
+def pushed_commit(world: World, agent_head: str, parent: str, branch: str = BRANCH) -> str:
+    """The commit publish pushed: its own, with the agent's tree, on `parent`, by the factory."""
+    pushed = remote_head(world, branch)
+    assert pushed and pushed != agent_head
+    agent_tree = git("rev-parse", f"{agent_head}^{{tree}}", cwd=world.main)
+    assert git("rev-parse", f"{pushed}^{{tree}}", cwd=world.bare) == agent_tree
+    assert git("rev-list", "--parents", "-n", "1", pushed, cwd=world.bare).split() == [pushed, parent]
+    who = git("log", "-1", "--format=%an <%ae>|%cn <%ce>", pushed, cwd=world.bare)
+    assert who == f"{FACTORY_AUTHOR}|{FACTORY_AUTHOR}"
+    return pushed
+
+
+def absent(world: World, sha: str) -> bool:
+    return subprocess.run(["git", "cat-file", "-e", sha], cwd=world.bare, capture_output=True).returncode != 0
 
 
 # --- GitHub scaffolding ---------------------------------------------------------------------
@@ -536,6 +559,7 @@ def test_prepare_continues_the_pull_request_branch_on_a_second_attempt(tmp_path:
 
 PYPROJECT = '[tool.pytest.ini_options]\ntestpaths = ["tests"]\npythonpath = ["."]\n'
 CALC_TEST = "from calc import add\n\n\ndef test_zero() -> None:\n    assert add(0, 0) == 0\n"
+SKIPPED_TEST = "import pytest\n\n\n@pytest.mark.skip(reason='needs the network')\ndef test_network() -> None:\n    pass\n"
 
 
 def pytest_repo(tmp_path: Path, head_files: Mapping[str, str]) -> tuple[Path, str, str]:
@@ -544,7 +568,13 @@ def pytest_repo(tmp_path: Path, head_files: Mapping[str, str]) -> tuple[Path, st
     base = commit(
         repo,
         "Base",
-        {"pyproject.toml": PYPROJECT, "calc.py": "def add(a, b):\n    return a - b\n", "tests/test_calc.py": CALC_TEST},
+        {
+            "pyproject.toml": PYPROJECT,
+            "calc.py": "def add(a, b):\n    return a - b\n",
+            "tests/test_calc.py": CALC_TEST,
+            # Like the repository's network tests: a skip in the suite does not make it fail.
+            "tests/test_network.py": SKIPPED_TEST,
+        },
     )
     head = commit(repo, "Fix", head_files)
     return repo, base, head
@@ -581,12 +611,19 @@ def test_prove_accepts_red_on_the_base_and_green_on_the_head(
     assert proof.red == {"tests/test_add.py::test_add": proof.red["tests/test_add.py::test_add"]}
     assert proof.red["tests/test_add.py::test_add"].startswith("failed")
     assert proof.green["tests/test_add.py::test_add"].startswith("passed")
-    assert proof.suite_passed and "2 passed" in proof.suite_summary
+    assert proof.suite_passed and "2 passed, 1 skipped" in proof.suite_summary
     assert proof.ok is True and proof.reasons == ()
     assert "assert 0 == 4" in proof.logs["base tests/test_add.py::test_add"]
     # The base worktree is gone and the checkout untouched.
     assert len(git("worktree", "list", cwd=repo).splitlines()) == 1
     assert git("status", "--porcelain", cwd=repo) == ""
+
+
+def test_a_named_test_that_only_skips_is_never_green(tmp_path: Path) -> None:
+    repo, base, _ = pytest_repo(tmp_path, {"tests/test_later.py": SKIPPED_TEST.replace("test_network", "test_later")})
+    proof = prove(fixed("tests/test_later.py::test_later"), repo, base, False)
+    assert proof.ok is False and proof.suite_passed
+    assert proof.green["tests/test_later.py::test_later"].startswith("error")
 
 
 def test_prove_refuses_a_test_the_change_did_not_add(tmp_path: Path) -> None:
@@ -614,7 +651,8 @@ def test_prove_a_flaky_fix_statistically(
         # stress() hands os.environ to pytest: no token may be in it by then.
         assert not [name for name in os.environ if "TOKEN" in name]
         calls.append((test_id, runs, throttle, cwd))
-        failures = 0 if Path(cwd) == repo else base_failures
+        fixed_here = "a + b" in (Path(cwd) / "calc.py").read_text()  # a worktree of HEAD, not the base
+        failures = 0 if fixed_here else base_failures
         return StressResult(runs, failures, "flaky failure" if failures else "")
 
     monkeypatch.setattr(fix, "stress", fake_stress)
@@ -626,7 +664,7 @@ def test_prove_a_flaky_fix_statistically(
     assert Path(calls[0][3]) != repo  # the base first, in a worktree
     assert f"{base_failures} of 50" in proof.red["tests/test_calc.py::test_zero"]
     if ok:
-        assert len(calls) == 2 and Path(calls[1][3]) == repo
+        assert len(calls) == 2 and Path(calls[1][3]) not in (repo, Path(calls[0][3]))  # HEAD, in a worktree
         assert "0 of 50" in proof.green["tests/test_calc.py::test_zero"]
     else:
         assert len(calls) == 1 and proof.reproducible is False
@@ -750,19 +788,22 @@ def test_publish_pushes_and_opens_the_pull_request(tmp_path: Path) -> None:
     )
 
     assert number == 31
-    assert remote_head(world) == head
+    pushed = pushed_commit(world, head, world.base)
+    message = git("log", "-1", "--format=%B", pushed, cwd=world.bare)
+    assert message.startswith(f"{TITLE}\n") and REPORT.change in message and "Refs #7" in message
+    assert "Keep the terminal inside the viewport" not in message  # the agent's own message stays behind
     created = next(b for m, p, b in gh.calls if (m, p) == ("POST", f"{API}/pulls"))
     assert (created["title"], created["head"], created["base"]) == (TITLE, BRANCH, "main")
     assert created["body"].startswith("Refs #7\n")
     assert labels_added(gh, 31) == ["factory"]
     (published,) = recorder.published
-    assert set(published) == {f"prs/31/{head}/{side}/landing-chromium-375-default.png" for side in ("before", "after", "diff")}
+    assert set(published) == {f"prs/31/{pushed}/{side}/landing-chromium-375-default.png" for side in ("before", "after", "diff")}
     final = [b for m, p, b in gh.calls if (m, p) == ("PATCH", f"{API}/pulls/31")][-1]["body"]
-    assert f"https://raw.test/evidence/prs/31/{head}/before/landing-chromium-375-default.png" in final
+    assert f"https://raw.test/evidence/prs/31/{pushed}/before/landing-chromium-375-default.png" in final
     assert marked_test_ids(final) == [TEST_ID] and attempt_in(final) == 1
     assert "`css/site.css`" in final and "`tests/e2e/test_terminal.py`" in final
     (comment,) = comments_on(gh, 7)
-    assert "#31" in comment and comment.endswith(f"{SENTINEL}\n<!-- factory:attempt=1 -->\n")
+    assert "#31" in comment and pushed[:7] in comment and comment.endswith(f"{SENTINEL}\n<!-- factory:attempt=1 -->\n")
     assert labels_added(gh, 7) == ["factory:fixing"]
     assert ("DELETE", f"{API}/issues/7/labels/factory%3Aready", None) in gh.calls
     assert recorder.dispatched == []
@@ -802,7 +843,8 @@ def test_publish_pushes_soft_review_reasons_and_asks_for_a_human(tmp_path: Path)
     gh, recorder = github(), Recorder()
     number = run_publish(gh, world, recorder, bundle=bundle, proof=proof_for(world.base, head))
 
-    assert number == 31 and remote_head(world) == head
+    assert number == 31
+    pushed_commit(world, head, world.base)
     assert labels_added(gh, 31) == ["factory", "factory:needs-human"]
     body = [b for m, p, b in gh.calls if (m, p) == ("PATCH", f"{API}/pulls/31")][-1]["body"]
     section = body.split("## Needs a human\n", 1)[1].split("\n## ", 1)[0]
@@ -822,19 +864,18 @@ def test_publish_flags_a_baseline_changed_without_a_reason(tmp_path: Path) -> No
     assert "baseline changed without a stated reason: tests/visual/baselines/landing-mobile.png" in body
 
 
-@pytest.mark.parametrize("where", ["diff", "message", "report", "proof", "image"])
+@pytest.mark.parametrize("where", ["diff", "file name", "baseline", "report", "proof", "image"])
 def test_publish_refuses_secret_shaped_text_before_push(where: str, tmp_path: Path) -> None:
     secret = "ghp_" + "a" * 36
     world = make_world(tmp_path)
-    changes = dict(FIX_FILES)
+    changes: dict[str, str | bytes | None] = dict(FIX_FILES)
     if where == "diff":
         changes["css/site.css"] = f".term {{\n  max-width: 100%; /* {secret} */\n}}\n"
+    if where == "file name":
+        changes[f"css/{secret}.css"] = "a {}\n"
+    if where == "baseline":  # binary bytes are scanned, not only text diffs
+        changes["tests/visual/baselines/landing-mobile.png"] = png() + secret.encode()
     bundle, head, _ = fix_bundle(tmp_path, world, changes)
-    if where == "message":
-        work = tmp_path / "work"
-        git("commit", "-q", "--amend", "-m", f"Fix {secret}", cwd=work)
-        head = git("rev-parse", "HEAD", cwd=work)
-        git("bundle", "create", str(bundle), f"origin/main..{BRANCH}", cwd=work)
     report = replace(REPORT, cause=f"The key {secret}") if where == "report" else REPORT
     proof = proof_for(world.base, head)
     if where == "proof":
@@ -856,11 +897,12 @@ def test_publish_refuses_secret_shaped_text_before_push(where: str, tmp_path: Pa
 
 def test_not_reproducible_goes_to_a_human_without_a_push(tmp_path: Path) -> None:
     world = make_world(tmp_path)
-    report = FixReport("not_reproducible", "The overflow does not appear on a local build.", (), "", "", ())
+    report = FixReport("not_reproducible", "The overflow does not appear on a local build; @owner, see.", (), "", "", ())
     gh, recorder = github(), Recorder()
     assert run_publish(gh, world, recorder, bundle=None, report=report) is None
     (comment,) = comments_on(gh, 7)
-    assert "The overflow does not appear on a local build." in comment
+    assert "The overflow does not appear on a local build" in comment
+    assert "@owner" not in comment and "@\u200downer" in comment
     assert comment.endswith(f"{SENTINEL}\n<!-- factory:attempt=1 -->\n")
     assert labels_added(gh, 7) == ["factory:needs-human"]
     assert ("DELETE", f"{API}/issues/7/labels/factory%3Aready", None) in gh.calls
@@ -911,7 +953,7 @@ def test_a_second_attempt_updates_the_pull_request(tmp_path: Path) -> None:
     recorder = Recorder()
     assert run_publish(gh, world, recorder, bundle=bundle, proof=proof_for(world.base, head), attempt=2) == 31
 
-    assert remote_head(world) == head
+    pushed_commit(world, head, previous)
     assert ("POST", f"{API}/pulls") not in [(m, p) for m, p, _ in gh.calls]
     body = [b for m, p, b in gh.calls if (m, p) == ("PATCH", f"{API}/pulls/31")][-1]["body"]
     assert attempt_in(body) == 2 and "Attempt 2 of 2" in body
@@ -922,7 +964,7 @@ def test_a_push_never_overwrites_a_branch_that_moved(tmp_path: Path) -> None:
     world = make_world(tmp_path)
     bundle, head, previous = fix_bundle(tmp_path, world, earlier={"css/site.css": ".term {}\n"})
     gh = github(pulls=(pull(31, BRANCH, "d" * 40),), comments=(marker(1),))  # the API saw another head
-    with pytest.raises(fix.FixError, match="push"):
+    with pytest.raises(fix.FixError, match="moved"):
         run_publish(gh, world, Recorder(), bundle=bundle, proof=proof_for(world.base, head), attempt=2)
     assert remote_head(world) == previous
 
@@ -977,9 +1019,10 @@ def test_invalid_images_are_left_out(tmp_path: Path, capsys: pytest.CaptureFixtu
     gh, recorder = github(), Recorder()
     assert run_publish(gh, world, recorder, bundle=bundle, proof=proof_for(world.base, head), found_images=found) == 31
     (published,) = recorder.published
+    pushed = remote_head(world)
     assert set(published) == {
-        f"prs/31/{head}/before/landing-chromium-375-default.png",
-        f"prs/31/{head}/diff/landing-chromium-375-default.png",
+        f"prs/31/{pushed}/before/landing-chromium-375-default.png",
+        f"prs/31/{pushed}/diff/landing-chromium-375-default.png",
     }
     assert "not a PNG" in capsys.readouterr().err
 
@@ -1016,3 +1059,297 @@ def test_cli_prove_writes_the_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert code == 0
     proof = Proof.from_json(json.loads((tmp_path / "proof.json").read_text()))
     assert proof.head_sha == head and proof.ok is False  # test_zero is not a test this change added
+
+
+# --- fix round 1 (R42) -----------------------------------------------------------------------
+
+
+def test_publish_pushes_only_a_commit_it_built(tmp_path: Path) -> None:
+    secret = "ghp_" + "b" * 36
+    world = make_world(tmp_path)
+    work = tmp_path / "work"
+    git("clone", "-q", str(world.bare), str(work))
+    git("checkout", "-q", "-b", BRANCH, cwd=work)
+    agent = ("-c", f"user.name=agent {secret}", "-c", f"user.email={secret}@example.com")
+    write(work, {"css/leak.css": f"/* {secret} */\n"})
+    git("add", "-A", cwd=work)
+    git(*agent, "commit", "-q", "-m", f"Add {secret}", cwd=work)
+    leaked = git("rev-parse", "HEAD:css/leak.css", cwd=work)
+    first = git("rev-parse", "HEAD", cwd=work)
+    write(work, {**FIX_FILES, "css/leak.css": None})
+    git("add", "-A", cwd=work)
+    git(*agent, "commit", "-q", "-m", "Remove the leak", cwd=work)
+    head = git("rev-parse", "HEAD", cwd=work)
+    bundle = tmp_path / "fix.bundle"
+    git("bundle", "create", str(bundle), f"origin/main..{BRANCH}", cwd=work)
+    gh, recorder = github(), Recorder()
+
+    assert run_publish(gh, world, recorder, bundle=bundle, proof=proof_for(world.base, head)) == 31
+    pushed_commit(world, head, world.base)
+    # Neither the agent's commits nor the blob it added and removed reached the remote.
+    assert absent(world, leaked) and absent(world, first) and absent(world, head)
+    assert secret not in git("log", "--all", "--format=%an %ae %cn %ce %B", cwd=world.bare)
+
+
+def test_a_new_test_that_passes_on_the_base_goes_to_a_human(tmp_path: Path) -> None:
+    world = make_world(tmp_path)
+    bundle, head, _ = fix_bundle(tmp_path, world)
+    proof = proof_for(world.base, head, ok=False, red={TEST_ID: "passed: 1 passed in 0.30s"})
+    gh, recorder = github(), Recorder()
+    assert run_publish(gh, world, recorder, bundle=bundle, proof=proof) is None
+    assert remote_head(world) == "" and recorder.dispatched == []
+    assert labels_added(gh, 7) == ["factory:needs-human"]
+    assert "passes on the base" in comments_on(gh, 7)[0]
+
+
+def test_publish_records_the_attempt_when_a_step_after_the_push_fails(tmp_path: Path) -> None:
+    world = make_world(tmp_path)
+    bundle, head, _ = fix_bundle(tmp_path, world)
+    gh, recorder = github(), Recorder()
+    gh.responses[("PATCH", f"{API}/pulls/31")] = GitHubError(502, "bad gateway")
+    with pytest.raises(GitHubError):
+        run_publish(gh, world, recorder, bundle=bundle, proof=proof_for(world.base, head))
+    pushed = remote_head(world)
+    assert pushed
+    (comment,) = comments_on(gh, 7)
+    assert pushed[:7] in comment and "publishing failed" in comment
+    assert comment.endswith(f"{SENTINEL}\n<!-- factory:attempt=1 -->\n")
+
+
+def test_a_flaky_fix_must_name_the_flaky_test(tmp_path: Path) -> None:
+    world = make_world(tmp_path)
+    bundle, head, _ = fix_bundle(tmp_path, world)
+    flaky_id = "tests/e2e/test_docs.py::test_toc[chromium-no-preference]"
+    flaky = Group("flaky", "ci", "default", flaky_id, (), (), (), note="n")
+    labels = ("factory:found", "factory:ready", "factory:flaky")
+    gh, recorder = github(labels=labels), Recorder()
+    gh.responses[("GET", f"{API}/issues/7")] = issue(labels, groups=(flaky,))
+    proof = proof_for(
+        world.base, head, flaky=True,
+        red={TEST_ID: "failed: 3 of 50 throttled runs failed"}, green={TEST_ID: "passed: 0 of 50 throttled runs failed"},
+    )
+    assert run_publish(gh, world, recorder, bundle=bundle, proof=proof) is None
+    assert remote_head(world) == "" and recorder.dispatched == [(7, 2)]
+    assert f"the report does not name the flaky test {flaky_id}" in comments_on(gh, 7)[0]
+
+
+CLOSING = [
+    "This fixes #7.",
+    "Closes: #12",
+    "resolved MBratkowski/deweloperuch-mcp-site#7",
+    "FIX #7",
+    "See https://github.com/MBratkowski/deweloperuch-mcp-site/issues/7 for the screenshots.",
+    "As in https://github.com/o/r/pull/31",
+]
+
+
+@pytest.mark.parametrize("text", CLOSING)
+def test_report_text_cannot_close_or_link_issues(text: str) -> None:
+    for field in ("cause", "change", "reason"):
+        with pytest.raises(DraftError):
+            load_report(report_dict(**{field: text}))
+    with pytest.raises(DraftError):
+        load_report(report_dict(baselines=[{"name": "landing-mobile", "reason": text}]))
+    with pytest.raises(DraftError):
+        render_pr_body(7, replace(REPORT, cause=text), proof_for("a" * 40, "b" * 40), {}, FenceReport(True, [], 2, False), 1, limit=2)
+    with pytest.raises(DraftError):
+        render_pr_body(
+            7, replace(REPORT, baselines=(Baseline("landing-mobile", text),)), proof_for("a" * 40, "b" * 40),
+            {}, FenceReport(True, [], 2, False), 1, limit=2,
+        )
+
+
+def test_a_test_id_parameter_cannot_close_an_issue() -> None:
+    with pytest.raises(DraftError):
+        load_report(report_dict(test_ids=["tests/e2e/test_terminal.py::test_fits[fixes #7]"]))
+
+
+def test_report_text_may_reference_issues_without_closing_them() -> None:
+    assert load_report(report_dict(cause="The same cause as in #5, prefixed by a fix.")).cause
+
+
+def test_mentions_in_report_text_notify_nobody() -> None:
+    report = replace(REPORT, cause="Seen by @MBratkowski on a phone.", baselines=(Baseline("landing", "Asked by @someone."),))
+    body = render_pr_body(7, report, proof_for("a" * 40, "b" * 40), {}, FenceReport(True, [], 2, False), 1, limit=2)
+    assert "@MBratkowski" not in body and "@\u200dMBratkowski" in body
+    assert "@someone" not in body
+
+
+def test_pr_body_stays_within_githubs_limit() -> None:
+    long_line = "x" * 5000
+    logs = {f"{side} {TEST_ID}": f"{long_line}\n" * 30 for side in ("base", "head")}
+    proof = proof_for("a" * 40, "b" * 40, logs=logs)
+    body = render_pr_body(7, REPORT, proof, {}, FenceReport(True, [], 2, False), 1, limit=2)
+    assert "x" * (fix_publish.MAX_LOG_LINE + 1) not in body and "x" * (fix_publish.MAX_LOG_LINE - 10) in body
+    report = replace(
+        REPORT,
+        cause="c" * 5000,
+        change="d" * 5000,
+        baselines=tuple(Baseline(f"tests/visual/baselines/b{i}.png", "r" * 4000) for i in range(50)),
+    )
+    files = [f"tests/visual/baselines/b{i}-{'y' * 60}.png" for i in range(3000)]
+    body = render_pr_body(7, report, proof, {}, FenceReport(True, [], 2, False), 1, limit=2, changed_files=files)
+    assert len(body) <= fix_publish.MAX_BODY + 300
+    assert marked_test_ids(body) == [TEST_ID] and attempt_in(body) == 1
+
+
+def test_prove_refuses_uncommitted_changes(tmp_path: Path) -> None:
+    new_test = "from calc import add\n\n\ndef test_add() -> None:\n    assert add(2, 2) == 4\n"
+    repo, base, _ = pytest_repo(tmp_path, {"tests/test_add.py": new_test})
+    write(repo, {"calc.py": "def add(a, b):\n    return a + b\n"})  # the fix, never committed
+    proof = prove(fixed("tests/test_add.py::test_add"), repo, base, False)
+    assert proof.ok is False and proof.green == {}
+    assert any("uncommitted" in reason for reason in proof.reasons)
+
+
+def test_prove_runs_green_and_the_suite_in_a_worktree_of_head(tmp_path: Path) -> None:
+    repo_path = (tmp_path / "project").resolve()
+    new_test = (
+        "from pathlib import Path\n\nfrom calc import add\n\n\ndef test_add() -> None:\n"
+        "    assert add(2, 2) == 4\n"
+        f"    assert not Path(__file__).resolve().is_relative_to({str(repo_path)!r})\n"
+    )
+    repo, base, _ = pytest_repo(tmp_path, {"calc.py": "def add(a, b):\n    return a + b\n", "tests/test_add.py": new_test})
+    proof = prove(fixed("tests/test_add.py::test_add"), repo, base, False)
+    assert proof.green["tests/test_add.py::test_add"].startswith("passed") and proof.suite_passed and proof.ok
+
+
+def real_pytest_options() -> str:
+    """The repository's own [tool.pytest.ini_options], addopts `-m 'not visual'` included."""
+    options = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["pytest"]["ini_options"]
+    assert "not visual" in options["addopts"]
+    return "[tool.pytest.ini_options]\n" + "".join(f"{key} = {json.dumps(value)}\n" for key, value in options.items())
+
+
+VISUAL_TEST = """import json
+from pathlib import Path
+
+import pytest
+
+from swatch import color
+
+BASELINES = Path(__file__).parent / "baselines"
+
+
+@pytest.fixture
+def expected() -> str:
+    assert json.loads((BASELINES / "renderer.json").read_text()) == {"renderer": "pinned"}
+    return (BASELINES / "swatch.png").read_text()
+
+
+@pytest.mark.visual
+def test_swatch(expected: str) -> None:
+    assert color() == expected
+"""
+
+
+def test_prove_runs_a_visual_test_against_the_baselines_it_changed(tmp_path: Path) -> None:
+    repo = tmp_path / "project"
+    git("init", "-q", "-b", "main", str(repo))
+    base = commit(
+        repo,
+        "Base",
+        {
+            "pyproject.toml": real_pytest_options(),
+            "swatch.py": "def color() -> str:\n    return 'red'\n",
+            "tests/test_unit.py": "def test_unit() -> None:\n    assert True\n",
+            "tests/visual/baselines/swatch.png": "red",
+            "tests/visual/baselines/renderer.json": "{}\n",
+        },
+    )
+    commit(
+        repo,
+        "Fix",
+        {
+            "swatch.py": "def color() -> str:\n    return 'green'\n",
+            "tests/visual/baselines/swatch.png": "green",
+            "tests/visual/baselines/renderer.json": '{"renderer": "pinned"}\n',
+            "tests/visual/test_swatch.py": VISUAL_TEST,
+        },
+    )
+    test_id = "tests/visual/test_swatch.py::test_swatch"
+    # The real addopts deselect it when it is named alone: the proof has to select it with -m visual.
+    plain = subprocess.run(
+        [sys.executable, "-m", "pytest", test_id, "-q", "-p", "no:cacheprovider"], cwd=repo, capture_output=True, text=True
+    )
+    assert plain.returncode == 5 and "deselected" in plain.stdout, plain.stdout
+    report = replace(
+        REPORT, test_ids=(test_id,), baselines=(Baseline("tests/visual/baselines/swatch.png", "The swatch is green."),)
+    )
+    proof = prove(report, repo, base, False)
+    assert proof.red[test_id].startswith("failed"), proof.logs
+    assert "'red' == 'green'" in proof.logs[f"base {test_id}"]
+    assert proof.green[test_id].startswith("passed") and proof.ok
+
+
+def cli_clients(monkeypatch: pytest.MonkeyPatch, gh: FakeGitHub) -> FakeGitHub:
+    dispatches = FakeGitHub()
+    monkeypatch.setattr(
+        fix_publish, "GitHub", lambda repo, token=None: dispatches if token == "dispatch" else gh
+    )
+    monkeypatch.setenv("GH_TOKEN", "app")
+    monkeypatch.setenv("DISPATCH_TOKEN", "dispatch")
+    monkeypatch.setenv("FACTORY_APP_SLUG", "factory-app")
+    return dispatches
+
+
+def test_cli_publish_sends_a_secret_shaped_report_to_a_human(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    (inputs / "report.json").write_text(json.dumps(report_dict(cause="key ghp_" + "c" * 36)))
+    gh = github()
+    dispatches = cli_clients(monkeypatch, gh)
+    args = ["publish", "--issue", "7", "--attempt", "1", "--branch", BRANCH, "--in", str(inputs)]
+    assert fix.main([*args, "--fix-result", "success"]) == 0
+    assert labels_added(gh, 7) == ["factory:needs-human"] and dispatches.calls == []
+    assert "ghp_" not in comments_on(gh, 7)[0]
+
+
+def test_cli_publish_sends_a_failed_secret_scan_to_a_human(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    gh = github()
+    dispatches = cli_clients(monkeypatch, gh)
+    args = ["publish", "--issue", "7", "--attempt", "1", "--branch", BRANCH, "--in", str(tmp_path / "none")]
+    assert fix.main([*args, "--fix-result", "failure", "--scan-result", "failure"]) == 0
+    assert labels_added(gh, 7) == ["factory:needs-human"] and dispatches.calls == []
+    assert "secret scan" in comments_on(gh, 7)[0]
+
+
+def test_a_proof_counts_by_its_tree_not_its_sha(tmp_path: Path) -> None:
+    world = make_world(tmp_path)
+    bundle, proved, _ = fix_bundle(tmp_path, world)
+    work = tmp_path / "work"
+    git("commit", "-q", "--allow-empty", "-m", "Note the fix", cwd=work)  # another SHA, the same files
+    head = git("rev-parse", "HEAD", cwd=work)
+    git("bundle", "create", str(bundle), f"origin/main..{BRANCH}", cwd=work)
+    gh, recorder = github(), Recorder()
+    assert run_publish(gh, world, recorder, bundle=bundle, proof=proof_for(world.base, proved)) == 31
+    pushed_commit(world, head, world.base)
+
+
+def test_a_proof_of_an_earlier_tree_is_refused(tmp_path: Path) -> None:
+    world = make_world(tmp_path)
+    bundle, proved, _ = fix_bundle(tmp_path, world)
+    work = tmp_path / "work"
+    commit(work, "More", {"css/site.css": ".term {\n  max-width: 90%;\n}\n"})  # after the proof ran
+    git("bundle", "create", str(bundle), f"origin/main..{BRANCH}", cwd=work)
+    gh, recorder = github(), Recorder()
+    assert run_publish(gh, world, recorder, bundle=bundle, proof=proof_for(world.base, proved)) is None
+    assert remote_head(world) == "" and recorder.dispatched == [(7, 2)]
+    assert "whose files are not the fix's" in comments_on(gh, 7)[0]
+
+
+def test_cli_publish_sends_an_escaped_secret_in_the_report_to_a_human(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = tmp_path / "in"
+    inputs.mkdir()
+    # JSON escapes hide the shape from a scan of the raw file; read_report would refuse it.
+    raw = json.dumps(report_dict(cause="key ghp_" + "c" * 36)).replace("ghp_", "ghp\\u005f")
+    assert "ghp_" not in raw
+    (inputs / "report.json").write_text(raw)
+    gh = github()
+    dispatches = cli_clients(monkeypatch, gh)
+    args = ["publish", "--issue", "7", "--attempt", "1", "--branch", BRANCH, "--in", str(inputs)]
+    assert fix.main([*args, "--fix-result", "success"]) == 0
+    assert labels_added(gh, 7) == ["factory:needs-human"] and dispatches.calls == []
+    assert "report.json" in comments_on(gh, 7)[0] and "ghp_" not in comments_on(gh, 7)[0]

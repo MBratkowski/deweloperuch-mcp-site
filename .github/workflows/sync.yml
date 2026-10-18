@@ -56,6 +56,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # This job holds a write token: it never restores a cache another job could have seeded.
+          enable-cache: false
       - run: uv sync --locked
 
       # List MCP metadata and inspect the pinned CLI; neither invokes data callbacks.

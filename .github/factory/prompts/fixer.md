@@ -15,7 +15,8 @@ You push nothing and open nothing. After you, deterministic steps run your test 
 ## The fix
 
 1. **Red first.** Turn the issue's reproduction into a permanent test before you touch the cause: a pytest test in a new module `tests/e2e/test_<topic>.py`, or lines added to an existing test module; for a purely visual defect, a new crop in `tests/visual/test_visual.py` with its baseline. The test measures the defect the way the reproduction does (the same page, engine, width and mode) and fails with a message that names the measurement.
-   - The proof runs the base commit with only your test files copied in, so a new test may import only what already exists on the base: no new helper module, no new fixture, no `conftest.py` change.
+   - The proof runs the base commit with only your test files copied in (and, for a visual test, the baselines your report lists), so a new test may use only what already exists on the base: no new helper module, no new fixture, no new data file it reads, no `conftest.py` change. A test that depends on anything else that only your branch has fails on the base for the wrong reason, and the proof is refused.
+   - The proof also runs only what you committed, on a clean checkout of your branch: uncommitted changes make it refuse the attempt.
    - Run it with `uv run pytest <path>::<test> --browser chromium` and see it fail for the reason the issue describes before you fix anything.
    - If you cannot make a test fail on the base, the defect does not reproduce: change nothing, commit nothing, and return `not_reproducible` with what you ran and saw.
 2. **Fix the cause** in the sources: the stylesheets (`css/`), the scripts (`js/`), the templates (`tools/templates/`) or the renderers (`tools/html_helpers.py`, `tools/page_fragments.py`, `tools/docs_renderer.py`, `tools/docs_content.py`, `tools/page_config.py`, `tools/build_docs.py`). Never edit the published `index.html` or `docs/index.html` by hand: regenerate them with `python3 -m tools.build_docs` and commit what it writes. Fix the cause, not the symptom: no `!important`, no unexplained magic numbers, no hiding the element, no `overflow: hidden` over an overflow.
@@ -39,6 +40,7 @@ Return it as structured output:
 
 - `status`: `fixed` when you committed a test and a fix; `not_reproducible` when no test fails on the base; `needs_human` when the fix needs something the fence forbids (copy, configuration, the factory itself) or a decision only the owner can make.
 - `reason`: one or two sentences; for `not_reproducible` and `needs_human`, what you ran and why you stopped.
+- Never write a closing keyword before an issue reference (`fixes #12`, `closes #12`, `resolves #12`) or a link to an issue or pull request, and never mention anyone with `@`: the pull request says `Refs #N` on its own, and the issue closes only after the fix is verified on the live site.
 - `test_ids`: the pytest node ids of the tests that prove the fix, for example `tests/e2e/test_terminal.py::test_terminal_fits_the_viewport`; empty unless `fixed`.
 - `cause`: the cause of the defect, in the source, in a few sentences.
 - `change`: what you changed and why it removes the cause.
