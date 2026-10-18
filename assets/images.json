@@ -17,11 +17,11 @@
     "index.html": "fa3a3876adef5f47ece5d772fa71456f0c96e5100da09b1541fc20f7de1b4742",
     "js/site.js": "dbf0d2a59ebbde913baf26eec16087a6f6a3761002cf453045839ee41c28b450",
     "tools/render_images.py": "e5ef25fd6a89675480599182eaee8ab8e1f6df183fc4a3a10e48bb78c8c3bb8c",
-    "uv.lock": "9af73ecbfe41b9e2d38506b129abb4007ad063f1b4dae1e0dd8fefa26e6a01f2"
+    "uv.lock": "787d4c6f51542a4678fe6746656e6ae0fd877f027e2b1a73adec339b501b0c99"
   },
   "outputs": {
     "apple-touch-icon.png": "bdcfe9167700ca1606b002dfa3dffa65843653f6ce04de647612c21285afea04",
-    "assets/og.png": "87804da498a8956bf417f2d090996369f0556990edbb81485ddf0343f9d8ace7",
+    "assets/og.png": "8450b20ecd25688fbda6818cc4c50ff4a954101796faaa613d3548fd418ce9aa",
     "favicon.png": "925c21bc64fc4712e3d6640ac7c019d6d11c2c6ed4e73a8c5a00db0ad1c7e98a"
   },
   "renderer": {
