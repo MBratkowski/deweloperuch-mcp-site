@@ -1,0 +1,297 @@
+"""Issue drafts are validated, rendered with hidden markers and deduplicated by fingerprint."""
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from tools.factory import issues
+from tools.factory.findings import Cell, Finding, Group
+from tools.factory.issues import (
+    Dedup,
+    DraftError,
+    Where,
+    dedup,
+    fingerprints_in,
+    groups_in,
+    load_drafts,
+    render_issue,
+    script_in,
+)
+
+SNAPSHOT = Path(__file__).parent / "snapshots" / "issue.md"
+SCHEMA = Path(__file__).parents[2] / ".github" / "factory" / "schemas" / "drafts.json"
+TRUSTED = frozenset({"MBratkowski", "deweloperuch-factory[bot]"})
+SCRIPT_URL = "https://raw.githubusercontent.com/o/r/abc123/issues/f1/9/measure.py"
+
+
+def make_group() -> Group:
+    cell = Cell("index", "webkit", 375, 800, "default")
+    finding = Finding(
+        "overflow",
+        cell,
+        "div.term",
+        "scrollWidth 640 > clientWidth 375",
+        (0, 0, 640, 20),
+    )
+    return Group(
+        "overflow", "index", "default", "div.term", ("webkit",), (375,), (finding,)
+    )
+
+
+def draft_dict(**changes: Any) -> dict[str, Any]:
+    draft: dict[str, Any] = {
+        "title": "Installation prompt fits a 375 px viewport in WebKit",
+        "severity": "S3",
+        "fingerprints": ["aaaaaaaaaaaa"],
+        "problem": "The installation prompt overflows horizontally.",
+        "actual": "scrollWidth 640 px in a 375 px viewport.",
+        "expected": "No horizontal overflow.",
+        "why": "Visitors must scroll sideways; WCAG 1.4.10 Reflow.",
+        "acceptance": [
+            "The reproduction passes in webkit at 375 px",
+            "No new finding on index",
+        ],
+        "sources": ["css/site.css", "tools/html_helpers.py"],
+        "reproduction": {
+            "kind": "detector",
+            "groups": [make_group().to_json()],
+            "script": None,
+        },
+    }
+    draft.update(changes)
+    return draft
+
+
+def payload(**changes: Any) -> dict[str, Any]:
+    return {"drafts": [draft_dict(**changes)], "suggestions": [], "dropped": []}
+
+
+WHERE = Where(
+    pages=("index",),
+    engines=("webkit",),
+    widths=(375,),
+    mode="default",
+    live_sha="1" * 40,
+    main_sha="2" * 40,
+    url="https://example.test/",
+)
+COMMAND = "uv run python -m tools.factory.probe --reproduce finding.json --target https://example.test/"
+EVIDENCE = {
+    "viewport.png": "https://raw.example/viewport.png",
+    "crop.png": "https://raw.example/crop.png",
+}
+
+
+def render(**changes: Any) -> tuple[str, str]:
+    (draft,), _, _ = load_drafts(payload(**changes))
+    return render_issue(draft, WHERE, EVIDENCE, COMMAND)
+
+
+def test_render_issue_matches_snapshot() -> None:
+    title, body = render()
+    assert title == "Installation prompt fits a 375 px viewport in WebKit"
+    assert body == SNAPSHOT.read_text()
+
+
+def test_body_headings_in_order() -> None:
+    _, body = render()
+    headings = [line[3:] for line in body.splitlines() if line.startswith("## ")]
+    assert headings == [
+        "Problem",
+        "Where",
+        "Reproduce",
+        "Actual and expected",
+        "Why it matters",
+        "Evidence",
+        "Acceptance criteria",
+        "Likely sources",
+    ]
+    assert "![viewport.png](https://raw.example/viewport.png)" in body
+
+
+def test_markers_round_trip() -> None:
+    _, body = render(fingerprints=["aaaaaaaaaaaa", "bbbbbbbbbbbb"])
+    assert fingerprints_in(body) == {"aaaaaaaaaaaa", "bbbbbbbbbbbb"}
+    assert groups_in(body) == [make_group()]
+    assert script_in(body) is None
+
+
+def test_script_draft_renders_script_marker() -> None:
+    script = {"kind": "script", "groups": [], "script": "factory-out/repros/measure.py"}
+    (draft,), _, _ = load_drafts(payload(reproduction=script))
+    evidence = {**EVIDENCE, "measure.py": SCRIPT_URL}
+    _, body = render_issue(
+        draft, WHERE, evidence, "python3 measure.py", script_source="print(1)"
+    )
+    assert script_in(body) == SCRIPT_URL
+    assert groups_in(body) == []
+    assert "<details>" in body and "print(1)" in body
+    assert "![measure.py]" not in body
+
+
+def issue(
+    number: int,
+    fingerprint: str = "aaaaaaaaaaaa",
+    state: str = "open",
+    reason: str | None = None,
+    labels: tuple[str, ...] = (),
+    login: str = "MBratkowski",
+    pull_request: bool = False,
+) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "number": number,
+        "state": state,
+        "state_reason": reason,
+        "labels": [{"name": name} for name in labels],
+        "user": {"login": login},
+        "body": f"text\n<!-- factory:fp={fingerprint} -->\n",
+    }
+    if pull_request:
+        data["pull_request"] = {"url": "x"}
+    return data
+
+
+@pytest.mark.parametrize(
+    ("existing", "expected"),
+    [
+        ([issue(5)], Dedup("skip", 5)),
+        ([issue(5, state="closed", reason="not_planned")], Dedup("skip", 5)),
+        (
+            [issue(5, state="closed", reason="completed", labels=("wontfix",))],
+            Dedup("skip", 5),
+        ),
+        (
+            [issue(5, state="closed", reason="completed", labels=("invalid",))],
+            Dedup("skip", 5),
+        ),
+        (
+            [issue(5, state="closed", reason="completed", labels=("duplicate",))],
+            Dedup("skip", 5),
+        ),
+        ([issue(5, state="closed", reason="completed")], Dedup("regression", 5)),
+        (
+            [
+                issue(5, state="closed", reason="completed"),
+                issue(8, state="closed", reason="completed"),
+            ],
+            Dedup("regression", 8),
+        ),
+        ([issue(5, state="closed", reason="completed"), issue(9)], Dedup("skip", 9)),
+        ([issue(5, fingerprint="zzzzzzzzzzzz")], Dedup("new", None)),
+        ([], Dedup("new", None)),
+        ([issue(5, pull_request=True)], Dedup("new", None)),
+    ],
+)
+def test_dedup(existing: list[dict[str, Any]], expected: Dedup) -> None:
+    assert dedup({"aaaaaaaaaaaa"}, existing, TRUSTED) == expected
+
+
+def test_forged_marker_is_ignored() -> None:
+    forged = [
+        issue(5, login="stranger"),
+        issue(6, login="stranger", state="closed", reason="completed"),
+    ]
+    assert dedup({"aaaaaaaaaaaa"}, forged, TRUSTED) == Dedup("new", None)
+
+
+def test_issue_without_marker_is_ignored() -> None:
+    unmarked = issue(5)
+    unmarked["body"] = "no marker"
+    assert dedup({"aaaaaaaaaaaa"}, [unmarked], TRUSTED) == Dedup("new", None)
+
+
+def test_load_drafts_accepts_valid_input() -> None:
+    data = payload()
+    data["suggestions"] = [{"title": "t", "problem": "p", "screenshot": "s.png"}]
+    data["dropped"] = [{"fingerprint": "cccccccccccc", "reason": "noise"}]
+    drafts, suggestions, dropped = load_drafts(data)
+    assert drafts[0].severity == "S3"
+    assert drafts[0].reproduction.kind == "detector"
+    assert suggestions[0].screenshot == "s.png"
+    assert dropped[0].reason == "noise"
+
+
+@pytest.mark.parametrize(
+    ("changes", "path"),
+    [
+        ({"severity": "S5"}, "drafts[0].severity"),
+        ({"fingerprints": []}, "drafts[0].fingerprints"),
+        ({"problem": "  "}, "drafts[0].problem"),
+        ({"acceptance": []}, "drafts[0].acceptance"),
+        ({"sources": "css/site.css"}, "drafts[0].sources"),
+        ({"extra": 1}, "drafts[0].extra"),
+        (
+            {"reproduction": {"kind": "script", "groups": [], "script": "tmp/x.py"}},
+            "drafts[0].reproduction.script",
+        ),
+        (
+            {
+                "reproduction": {
+                    "kind": "script",
+                    "groups": [],
+                    "script": "factory-out/repros/../x.py",
+                }
+            },
+            "drafts[0].reproduction.script",
+        ),
+        (
+            {
+                "reproduction": {
+                    "kind": "script",
+                    "groups": [],
+                    "script": "/factory-out/repros/x.py",
+                }
+            },
+            "drafts[0].reproduction.script",
+        ),
+        (
+            {"reproduction": {"kind": "script", "groups": [], "script": None}},
+            "drafts[0].reproduction.script",
+        ),
+        (
+            {"reproduction": {"kind": "other", "groups": [], "script": None}},
+            "drafts[0].reproduction.kind",
+        ),
+        (
+            {"reproduction": {"kind": "detector", "groups": [], "script": None}},
+            "drafts[0].reproduction.groups",
+        ),
+    ],
+)
+def test_load_drafts_rejects_bad_input(changes: dict[str, Any], path: str) -> None:
+    with pytest.raises(DraftError) as caught:
+        load_drafts(payload(**changes))
+    assert caught.value.path == path
+
+
+def test_load_drafts_rejects_missing_sections() -> None:
+    with pytest.raises(DraftError) as caught:
+        load_drafts({"drafts": [], "suggestions": []})
+    assert caught.value.path == "dropped"
+    bad = payload()
+    del bad["drafts"][0]["why"]
+    with pytest.raises(DraftError) as caught:
+        load_drafts(bad)
+    assert caught.value.path == "drafts[0].why"
+
+
+def test_schema_matches_validator() -> None:
+    schema = json.loads(SCHEMA.read_text())
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
+    assert set(schema["required"]) == set(issues.TOP_LEVEL)
+    draft = schema["properties"]["drafts"]["items"]
+    assert set(draft["required"]) == set(issues.DRAFT_FIELDS)
+    assert set(draft["properties"]) == set(issues.DRAFT_FIELDS)
+    assert draft["properties"]["severity"]["enum"] == list(issues.SEVERITIES)
+    repro = draft["properties"]["reproduction"]
+    assert set(repro["required"]) == set(issues.REPRODUCTION_FIELDS)
+    assert repro["properties"]["kind"]["enum"] == list(issues.KINDS)
+    suggestion = schema["properties"]["suggestions"]["items"]
+    assert set(suggestion["required"]) == set(issues.SUGGESTION_FIELDS)
+    dropped = schema["properties"]["dropped"]["items"]
+    assert set(dropped["required"]) == set(issues.DROPPED_FIELDS)
+    assert draft["properties"]["fingerprints"]["minItems"] == 1
+    assert draft["properties"]["acceptance"]["minItems"] == 1
+    assert issues.SCRIPT_PATTERN.pattern == repro["properties"]["script"]["pattern"]
