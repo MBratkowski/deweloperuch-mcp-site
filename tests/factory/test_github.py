@@ -125,3 +125,10 @@ def test_download_follows_redirect_without_leaking_the_token(api_url: str) -> No
     first, second = _Stub.seen
     assert first["headers"]["authorization"] == "Bearer t"
     assert "authorization" not in second["headers"]
+
+
+def test_anonymous_client_sends_no_authorization(monkeypatch):
+    monkeypatch.setenv("GH_TOKEN", "secret")
+    monkeypatch.setenv("GITHUB_TOKEN", "secret")
+    assert "Authorization" in GitHub("o/r")._headers()
+    assert "Authorization" not in GitHub("o/r", anonymous=True)._headers()

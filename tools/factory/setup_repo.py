@@ -110,8 +110,8 @@ def write_pem(slug: str, pem: str) -> Path:
     return path
 
 
-def _client(repo: str) -> GitHub:
-    return GitHub(repo)
+def _client(repo: str, anonymous: bool = False) -> GitHub:
+    return GitHub(repo, anonymous=anonymous)
 
 
 def cmd_labels(gh: GitHub, apply: bool) -> None:
@@ -136,10 +136,10 @@ def cmd_app_form(output: Path) -> None:
 
 
 def cmd_app_convert(code: str) -> None:
-    result = GitHub("-").request("POST", f"/app-manifests/{code}/conversions")
+    repo = load_config().site.repo
+    result = _client(repo, anonymous=True).request("POST", f"/app-manifests/{code}/conversions")
     slug = result["slug"]
     path = write_pem(slug, result["pem"])
-    repo = load_config().site.repo
     print(f"id: {result['id']}\nslug: {slug}\nclient_id: {result['client_id']}")
     print(f"private key written to {path} (mode 600)")
     print("next, run:")

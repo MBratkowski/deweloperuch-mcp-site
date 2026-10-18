@@ -30,10 +30,17 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 class GitHub:
     def __init__(
-        self, repo: str, token: str | None = None, api_url: str = "https://api.github.com"
+        self,
+        repo: str,
+        token: str | None = None,
+        api_url: str = "https://api.github.com",
+        anonymous: bool = False,
     ) -> None:
         self.repo = repo
-        self.token = token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
+        if anonymous:
+            self.token = None
+        else:
+            self.token = token or os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         self.api_url = api_url.rstrip("/")
         self._opener = urllib.request.build_opener(_NoRedirect)
 
