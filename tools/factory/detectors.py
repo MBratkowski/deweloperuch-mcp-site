@@ -196,8 +196,11 @@ FOCUS_OBSCURED = """() => {""" + DESCRIBE + """
   return problems;
 }"""
 
-# Scrolling boxes (overflow auto or scroll, content larger than the box) that a keyboard user
-# cannot scroll: neither the box nor anything inside it is focusable.
+# Candidates for a scrollable region keyboard focus cannot reach: scrolling boxes (overflow
+# auto or scroll, content larger than the box) with no author focus target in or on them.
+# Engines differ (Chromium and Firefox focus scrollers natively, WebKit does not), so the
+# check confirms each candidate with a real Tab press. Each candidate gets a temporary
+# `data-factory-scroll` attribute as a handle; SCROLL_CLEANUP removes it.
 SCROLL_UNREACHABLE = """() => {""" + DESCRIBE + """
   const FOCUSABLE = 'a[href], button, summary, input:not([type="hidden"]), select, textarea, iframe, [contenteditable], [tabindex]:not([tabindex="-1"])';
   const scrolls = (value) => value === 'auto' || value === 'scroll';
@@ -210,9 +213,36 @@ SCROLL_UNREACHABLE = """() => {""" + DESCRIBE + """
       return x || y;
     })
     .filter(e => !e.matches(FOCUSABLE) && !(e.tabIndex >= 0) && !e.querySelector(FOCUSABLE))
-    .map(e => ({
-      selector: describe(e),
-      measurement: `scroll ${e.scrollWidth}x${e.scrollHeight} > client ${e.clientWidth}x${e.clientHeight}, not focusable`,
-      box: boxOf(e),
-    }));
+    .slice(0, 5)
+    .map((e, index) => {
+      e.setAttribute('data-factory-scroll', String(index));
+      return {
+        selector: describe(e),
+        measurement: `scroll ${e.scrollWidth}x${e.scrollHeight} > client ${e.clientWidth}x${e.clientHeight}`,
+        box: boxOf(e),
+      };
+    });
+}"""
+
+# Puts a temporary focusable button right before the candidate and focuses it, so the next
+# Tab press lands on whatever the engine considers the next stop.
+SCROLL_SENTINEL = """index => {
+  const target = document.querySelector(`[data-factory-scroll="${index}"]`);
+  const sentinel = document.createElement('button');
+  sentinel.setAttribute('data-factory-sentinel', '');
+  target.before(sentinel);
+  sentinel.focus();
+}"""
+
+# True when focus is on the candidate or inside it; removes the sentinel.
+SCROLL_REACHED = """index => {
+  const target = document.querySelector(`[data-factory-scroll="${index}"]`);
+  const reached = target.contains(document.activeElement);
+  document.querySelectorAll('[data-factory-sentinel]').forEach(e => e.remove());
+  return reached;
+}"""
+
+SCROLL_CLEANUP = """() => {
+  document.querySelectorAll('[data-factory-scroll]').forEach(e => e.removeAttribute('data-factory-scroll'));
+  document.querySelectorAll('[data-factory-sentinel]').forEach(e => e.remove());
 }"""

@@ -1,6 +1,7 @@
 """Accessibility checks against canary pages: each planted defect is found, the clean page is not."""
 
 from collections.abc import Callable
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import Browser
@@ -67,7 +68,6 @@ def test_target_size_exempts_inline_links(browser, fixtures_url, probe_cell) -> 
     [
         ("focus-ring", "button#planted"),
         ("focus-obscured", "a#planted"),
-        ("scroll-unreachable", "pre#planted"),
     ],
 )
 def test_focus_canary_is_found(name, fragment, browser, fixtures_url, probe_cell) -> None:
@@ -87,3 +87,37 @@ def test_focus_works_in_keyboard_mode(browser, fixtures_url, probe_cell) -> None
 @pytest.mark.parametrize("check", A11Y)
 def test_clean_page_has_no_findings(check, browser, fixtures_url, probe_cell) -> None:
     assert _check(browser, fixtures_url, probe_cell("clean", 375), "clean/index.html", check) == []
+
+
+def test_scroll_unreachable_is_not_reported_where_the_engine_focuses_scrollers(
+    browser, fixtures_url, probe_cell
+) -> None:
+    # Chromium makes a scroll container without focusable content keyboard-focusable itself.
+    found = _check(
+        browser, fixtures_url, probe_cell("scroll-unreachable", 375), "canary/scroll-unreachable.html", "focus"
+    )
+    assert not any(f.selector.endswith("pre#planted") for f in found)
+
+
+@pytest.fixture
+def webkit(playwright):
+    if not Path(playwright.webkit.executable_path).exists():
+        pytest.skip("WebKit is not installed")
+    browser = playwright.webkit.launch()
+    yield browser
+    browser.close()
+
+
+@pytest.mark.multi_engine
+def test_scroll_unreachable_is_reported_in_webkit(webkit, fixtures_url, probe_cell) -> None:
+    cell = probe_cell("scroll-unreachable", 375, engine="webkit")
+    found = _check(webkit, fixtures_url, cell, "canary/scroll-unreachable.html", "focus")
+    hit = [f for f in found if f.selector.endswith("pre#planted")]
+    assert hit
+    assert "not reached by Tab in webkit" in hit[0].measurement
+
+
+@pytest.mark.multi_engine
+def test_clean_page_is_clean_in_webkit(webkit, fixtures_url, probe_cell) -> None:
+    cell = probe_cell("clean", 375, engine="webkit")
+    assert _check(webkit, fixtures_url, cell, "clean/index.html", "focus") == []

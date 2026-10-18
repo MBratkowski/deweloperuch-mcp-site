@@ -11,6 +11,9 @@ from tools.factory.detectors import (
     FOCUS_OBSCURED,
     FOCUS_PROBLEMS,
     OVERLAPS,
+    SCROLL_CLEANUP,
+    SCROLL_REACHED,
+    SCROLL_SENTINEL,
     SCROLL_UNREACHABLE,
     TARGET_SIZES,
     WIDE_ELEMENTS,
@@ -74,6 +77,25 @@ def target_size(run: PageRun) -> list[Finding]:
     return _findings(run, "target-size", run.page.evaluate(TARGET_SIZES, sizes))
 
 
+def _scroll_unreachable(run: PageRun) -> list[dict]:
+    """Candidates from the static scan that a real Tab press does not reach in this engine."""
+    page = run.page
+    engine = run.cell.engine
+    candidates = page.evaluate(SCROLL_UNREACHABLE)
+    unreachable = []
+    try:
+        for index, candidate in enumerate(candidates):
+            page.evaluate(SCROLL_SENTINEL, index)
+            page.keyboard.press("Tab")
+            if not page.evaluate(SCROLL_REACHED, index):
+                measurement = f"scrollable region not reached by Tab in {engine} ({candidate['measurement']})"
+                unreachable.append({**candidate, "measurement": measurement})
+    finally:
+        page.evaluate(SCROLL_CLEANUP)
+        page.evaluate("() => { document.activeElement?.blur(); window.scrollTo(0, 0); }")
+    return unreachable
+
+
 def focus(run: PageRun) -> list[Finding]:
     if run.cell.mode != "keyboard":
         # focus() only matches :focus-visible after a keyboard interaction.
@@ -81,7 +103,7 @@ def focus(run: PageRun) -> list[Finding]:
     problems = run.page.evaluate(FOCUS_PROBLEMS)["problems"]
     run.page.evaluate("() => window.scrollTo({ left: 0, top: 0, behavior: 'instant' })")
     problems += run.page.evaluate(FOCUS_OBSCURED)
-    problems += run.page.evaluate(SCROLL_UNREACHABLE)
+    problems += _scroll_unreachable(run)
     return _findings(run, "focus", problems)
 
 

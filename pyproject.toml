@@ -23,4 +23,5 @@ addopts = "-ra -m 'not visual'"
 markers = [
     "network: needs PyPI and uvx; runs only with LANDING_NETWORK=1",
     "visual: canonical Linux Chromium image comparisons; run explicitly with -m visual",
+    "multi_engine: needs Firefox or WebKit installed; CI runs these in the browser smoke job",
 ]
