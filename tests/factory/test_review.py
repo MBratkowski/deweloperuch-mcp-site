@@ -346,6 +346,14 @@ def test_act_hands_the_issue_to_a_person_after_the_last_attempt() -> None:
     assert comments_on(gh, 7) and dispatches(gh, "factory-fix.yml") == []
 
 
+def test_act_hands_a_failed_revert_to_a_person() -> None:
+    gh = github()
+    assert review.act(gh, routed("needs-human", attempt=0, revert=True, merged=MERGED), CONFIG) == "needs-human"
+    (summary,) = comments_on(gh, 12)
+    assert "revert pull request #12" in summary and dispatches(gh, "factory-fix.yml") == []
+    assert labels_added(gh, 7) == ["factory:needs-human"]
+
+
 def test_act_does_nothing_for_a_review_or_ignore_route() -> None:
     gh = github()
     assert review.act(gh, routed("ignore"), CONFIG) == "ignore"
@@ -762,6 +770,13 @@ def test_no_named_test_is_not_green(tmp_path: Path) -> None:
     assert proof.ok is False and "names no test" in proof.reasons[0]
 
 
+def test_flaky_selectors_are_the_issues_flaky_test_ids() -> None:
+    cell = Cell("ci", "chromium", 0, 0, "default")
+    flaky = Group("flaky", "ci", "default", TEST_ID, (), (), (Finding("flaky", cell, TEST_ID, "failed and passed", None),))
+    job = replace(flaky, selector="Validate this commit / Tests (pytest, Playwright)")
+    assert review_evidence.flaky_selectors(groups_body([flaky, job, overflow_group()])) == [TEST_ID]
+
+
 @pytest.mark.parametrize(("base_failures", "head_failures", "ok"), [(3, 0, True), (0, 0, False), (3, 1, False)])
 def test_a_flaky_fix_is_proven_statistically(
     base_failures: int, head_failures: int, ok: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -940,6 +955,13 @@ def test_evidence_files_round_trip_and_reject_bad_data(tmp_path: Path) -> None:
         assert load(broken.to_json()).green is False
     assert load(proof.to_json(), tests=[TEST_ID, "tests/e2e/test_more.py::test_more"]).green is False
     assert load(proof.to_json(), flaky=True).green is False
+    # A flaky issue's pull request must name the issue's flaky test, whatever the proof says.
+    flaky_proof = replace(proof, flaky=True, red={TEST_ID: "failed: 3 of 50 throttled runs failed"},
+                          green={TEST_ID: "passed: 0 of 50 throttled runs failed"})
+    assert load(flaky_proof.to_json(), flaky=True, flaky_tests=[TEST_ID]).green is True
+    other = "tests/e2e/test_docs.py::test_toc_tracks_anchor_navigation_and_history"
+    unnamed = load(flaky_proof.to_json(), flaky=True, flaky_tests=[other])
+    assert unnamed.green is False and f"does not name the flaky test {other}" in unnamed.reasons[0]
     unreadable = load('{"green": true}')
     assert unreadable.green is False and unreadable.reasons
     # A revert needs no proof at all.

@@ -51,6 +51,7 @@ from tools.factory.fix import (
     SUITE_TIMEOUT_SECONDS,
     VISUAL_TESTS,
     FixError,
+    check_test_id,
     _changed_test_files,
     _copy_from,
     _git_bytes,
@@ -63,7 +64,7 @@ from tools.factory.fix import (
     worktree,
 )
 from tools.factory.fix_publish import marked_test_ids
-from tools.factory.issues import groups_in, script_in
+from tools.factory.issues import DraftError, groups_in, script_in
 from tools.factory.stress import StressError, StressResult, stress
 from tools.factory.verify import download_script, pages_changed, script_url_ok
 from tools.package_site import PUBLIC_DIRECTORIES, PUBLIC_FILES
@@ -782,8 +783,17 @@ def gather_decisive(
 
 
 def flaky_selectors(issue_body: str) -> list[str]:
+    """The test ids the issue's flaky groups name (a flaky job's selector is not a test id)."""
     groups, _ = _issue_groups(issue_body)
-    return [g.selector for g in groups if g.check == "flaky"]
+    ids = []
+    for group in groups:
+        if group.check != "flaky":
+            continue
+        try:
+            ids.append(check_test_id(group.selector, "selector"))
+        except DraftError:
+            continue
+    return ids
 
 
 def gather_proof(
@@ -824,11 +834,14 @@ class Evidence:
 
 def evaluate(
     decisive: Decisive, proof: HeadProof | None, *, revert: bool, tests: Sequence[str], flaky: bool,
-    missing_proof: str = "no proof of the head's own tests",
+    flaky_tests: Sequence[str] = (), missing_proof: str = "no proof of the head's own tests",
 ) -> Evidence:
     """Combine the phases; the proof's verdicts are read from its data, never from its own reasons
-    alone, and must cover the tests the pull request names, for its head and base."""
+    alone, and must cover the tests the pull request names, for its head and base. A flaky issue's
+    pull request must name the issue's flaky tests (`flaky_tests`, from the trusted issue)."""
     reasons = decisive.problems()
+    if flaky and not revert:
+        reasons += [f"the pull request does not name the flaky test {t}" for t in flaky_tests if t not in tests]
     if decisive.revert != revert:
         reasons.append("the evidence is for another kind of pull request")
     red_green: dict[str, Any] = {}
@@ -873,11 +886,14 @@ def gather_evidence(
         tests = marked_test_ids(pr_body)
     except ValueError:
         tests = []
-    return evaluate(decisive, proof, revert=route.revert, tests=tests, flaky=route.flaky)
+    return evaluate(
+        decisive, proof, revert=route.revert, tests=tests, flaky=route.flaky, flaky_tests=flaky_selectors(issue_body)
+    )
 
 
 def load_evidence(
-    decisive_path: Path, proof_path: Path, *, revert: bool, tests: Sequence[str], flaky: bool
+    decisive_path: Path, proof_path: Path, *, revert: bool, tests: Sequence[str], flaky: bool,
+    flaky_tests: Sequence[str] = (),
 ) -> Evidence:
     """The evidence artifacts as `post` reads them. Unreadable decisive evidence leaves no head to
     post for; an unreadable proof is simply not green."""
@@ -893,7 +909,9 @@ def load_evidence(
             proof = HeadProof.from_json(json.loads(_read(proof_path)))
         except (OSError, ValueError, KeyError, TypeError) as error:
             missing = f"the proof of the head's tests is unreadable: {type(error).__name__}"
-    return evaluate(decisive, proof, revert=revert, tests=tests, flaky=flaky, missing_proof=missing)
+    return evaluate(
+        decisive, proof, revert=revert, tests=tests, flaky=flaky, flaky_tests=flaky_tests, missing_proof=missing
+    )
 
 
 def _read(path: Path) -> str:

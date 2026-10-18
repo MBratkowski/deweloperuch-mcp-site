@@ -61,6 +61,7 @@ from tools.factory.review_evidence import (
     DECISIVE_FILE,
     PROOF_FILE,
     Evidence,
+    flaky_selectors,
     gather_decisive,
     gather_proof,
     load_evidence,
@@ -819,6 +820,7 @@ def _post_command(args: argparse.Namespace, config: Config) -> int:
         revert=fresh.revert,
         tests=tests,
         flaky=fresh.flaky,
+        flaky_tests=flaky_selectors(fresh.issue_body) if fresh.flaky else (),
     )
     try:
         data: Any = json.loads(args.verdict.read_text(encoding="utf-8"))
