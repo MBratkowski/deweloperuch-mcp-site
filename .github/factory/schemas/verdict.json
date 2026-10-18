@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Factory reviewer verdict",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sha", "verdict", "summary", "checklist", "comments"],
+  "properties": {
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "verdict": {"enum": ["approve", "request_changes"]},
+    "summary": {"type": "string", "minLength": 1, "maxLength": 5000},
+    "checklist": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cause_not_symptom",
+        "evidence_green",
+        "no_weakened_tests",
+        "baselines_match",
+        "fence_and_copy",
+        "minimal_diff"
+      ],
+      "properties": {
+        "cause_not_symptom": {"type": "boolean"},
+        "evidence_green": {"type": "boolean"},
+        "no_weakened_tests": {"type": "boolean"},
+        "baselines_match": {"type": "boolean"},
+        "fence_and_copy": {"type": "boolean"},
+        "minimal_diff": {"type": "boolean"}
+      }
+    },
+    "comments": {
+      "type": "array",
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "line", "body"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1, "maxLength": 300},
+          "line": {"type": "integer", "minimum": 1},
+          "body": {"type": "string", "minLength": 1, "maxLength": 2000}
+        }
+      }
+    }
+  }
+}

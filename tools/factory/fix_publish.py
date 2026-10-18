@@ -10,7 +10,9 @@ intermediate commits, author fields or messages leaves the job. The report, the 
 images come from the fix job, which ran the agent's code, so they are data: the report is validated
 again, proof output is neutralised, images must be PNG files, and everything is scanned for secret
 shapes before anything reaches GitHub. Hidden markers are rendered by this module after the sentinel
-line; agent text can never contain one, close an issue or mention anyone.
+line; agent text can never contain one, close an issue or mention anyone. The pull request body names
+the commit it describes (`factory:head`), so the reviewer never reads an older body's markers as the
+claims about a newer head (R44).
 
 Outcomes, each with a comment carrying `<!-- factory:attempt=K -->` on the issue:
 
@@ -103,6 +105,7 @@ CONVERT_TO_DRAFT = (
 _IMAGE_KEY = re.compile(r"(before|after|diff)/[A-Za-z0-9._-]+\.png")
 _TESTS = re.compile(r"^<!-- factory:tests=([A-Za-z0-9+/=]*) -->$", re.MULTILINE)
 _ATTEMPT = re.compile(r"^<!-- factory:attempt=([0-9]+) -->$", re.MULTILINE)
+_HEAD = re.compile(r"^<!-- factory:head=([0-9a-f]{40}) -->$", re.MULTILINE)
 _SHA = re.compile(r"[0-9a-f]{40}")
 _URL = re.compile(r"https://[^\s()<>\[\]]+")
 _BACKTICKS = re.compile(r"`+")
@@ -129,6 +132,13 @@ def marked_test_ids(body: str) -> list[str]:
 def attempt_in(body: str) -> int | None:
     match = _ATTEMPT.search(_marker_block(body))
     return int(match.group(1)) if match else None
+
+
+def head_in(body: str) -> str | None:
+    """The commit publish pushed when it rendered this body (R44): the reviewer trusts the other
+    markers only while the pull request's head is still that commit."""
+    match = _HEAD.search(_marker_block(body))
+    return match.group(1) if match else None
 
 
 # --- text ------------------------------------------------------------------------------------
@@ -198,15 +208,19 @@ def render_pr_body(
     limit: int | None = None,
     review: Sequence[str] | None = None,
     images_note: str | None = None,
+    head: str = "",
 ) -> str:
     """`Refs #N`, the cause, the change, the proof, the images, the baselines, the files, what needs
-    a human and the attempt; then the sentinel and the `factory:attempt` and `factory:tests` markers.
+    a human and the attempt; then the sentinel and the `factory:attempt` and `factory:tests` markers,
+    and with `head` (the commit publish pushes) the `factory:head` marker the reviewer checks (R44).
 
     The report's text is checked again (it may not come from load_report): no marker, no secret
     shape, no closing reference, no issue link; mentions are neutralised. Tool output is neutralised
     and kept inside code blocks and spans. The text stays within MAX_BODY characters: the output is
     left out first, then the rest is cut.
     """
+    if head and not _SHA.fullmatch(head):
+        raise ValueError(f"the pushed head is not a commit SHA: {head!r}")
     limit = load_config().limits.attempts_per_issue if limit is None else limit
     for name in ("cause", "change", "reason"):
         check_text(getattr(report, name), name)
@@ -240,6 +254,8 @@ def render_pr_body(
         body = body[: MAX_BODY - len(CUT)].rstrip() + CUT
     encoded = base64.b64encode(json.dumps(test_ids).encode()).decode()
     markers = [SENTINEL, f"<!-- factory:attempt={attempt} -->", f"<!-- factory:tests={encoded} -->"]
+    if head:
+        markers.append(f"<!-- factory:head={head} -->")
     return body + "\n\n" + "\n".join(markers) + "\n"
 
 
@@ -734,7 +750,7 @@ def publish_fix(
     def body(evidence: Mapping[str, str], note: str | None) -> str:
         text = render_pr_body(
             issue, report, proof, evidence, fence, attempt,
-            changed_files=files, limit=run.limit, review=review, images_note=note,
+            changed_files=files, limit=run.limit, review=review, images_note=note, head=commit,
         )
         if secret_shape(text):  # everything in it was scanned; never publish if that ever changes
             raise FixError("the pull request body holds secret-shaped text")

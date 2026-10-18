@@ -1,0 +1,398 @@
+name: Factory review
+
+# The agent factory's reviewer (docs/superpowers/specs/2026-10-18-agent-factory-design.md, "Reviewer"):
+# after Check completes on a factory pull request, route decides what happens. A failed Check sends
+# the issue to the fixer's next attempt or to a person (act). A passed Check gets a review: evidence
+# proves the fix again in a job without secrets or a write token; the reviewer agent judges the diff
+# against the rubric with a read-only token; post, a job that runs nothing from the pull request or
+# the agent, checks the verdict and posts it with GITHUB_TOKEN for the exact head the evidence tested,
+# then dispatches the merger (approval) or the fixer (requested changes). Agents propose, code disposes.
+#
+#   route -> act                      (Check failed)
+#   route -> evidence -> review -> post (Check passed)
+#
+# Artifacts of this run are downloaded by id, never by name: the evidence job runs the pull request's
+# code, and an id cannot be replaced by an artifact uploaded later under the same name.
+on:
+  workflow_run:
+    workflows: [Check]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (routes again on Check's latest run of its head)
+        type: number
+        required: true
+
+permissions: {}
+
+# One review per pull request at a time. GitHub keeps one pending run per group, so runs that route
+# to nothing (a push's Check, a cancelled or skipped Check) get a group of their own and never replace
+# a pending review.
+concurrency:
+  group: ${{ (github.event_name == 'workflow_dispatch' || (github.event.workflow_run.event == 'pull_request' && contains(fromJSON('["success", "failure", "timed_out", "startup_failure"]'), github.event.workflow_run.conclusion))) && format('factory-review-{0}', github.event.workflow_run.pull_requests[0].number || inputs.pr) || format('factory-review-ignored-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  route:
+    name: Route the pull request
+    if: vars.FACTORY_MODE != 'off' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      action: ${{ steps.route.outputs.action }}
+      pr: ${{ steps.route.outputs.pr }}
+      issue: ${{ steps.route.outputs.issue }}
+      head: ${{ steps.route.outputs.head }}
+      base: ${{ steps.route.outputs.base }}
+      attempt: ${{ steps.route.outputs.attempt }}
+      revert: ${{ steps.route.outputs.revert }}
+      check_run: ${{ steps.route.outputs.check_run }}
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+      reviewer_model: ${{ steps.config.outputs.reviewer_model }}
+      reviewer_max_turns: ${{ steps.config.outputs.reviewer_max_turns }}
+      verdict_schema: ${{ steps.config.outputs.verdict_schema }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what a write-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      # The model and the turn limit come from .github/factory/config.json, never from this file.
+      - name: Read the configuration
+        id: config
+        run: |
+          config=.github/factory/config.json
+          reviewer_model=$(jq -er '.models.reviewer' "$config")
+          reviewer_max_turns=$(jq -er '.max_turns.reviewer' "$config")
+          # claude_args takes the schema inline and splits it like a shell line, inside single quotes.
+          # "$schema" names the 2020-12 dialect; the schema uses nothing newer than draft 7, so it goes.
+          verdict_schema=$(jq -c 'del(."$schema")' .github/factory/schemas/verdict.json)
+          [[ $reviewer_model =~ ^[a-z0-9.-]+$ ]] || { echo "::error::models.reviewer is not a model id: $reviewer_model"; exit 1; }
+          [[ $reviewer_max_turns =~ ^[0-9]+$ ]] || { echo "::error::max_turns.reviewer is not a number: $reviewer_max_turns"; exit 1; }
+          [[ $verdict_schema != *"'"* ]] || { echo "::error::the verdict schema must not contain a single quote"; exit 1; }
+          {
+            echo "reviewer_model=$reviewer_model"
+            echo "reviewer_max_turns=$reviewer_max_turns"
+            echo "verdict_schema=$verdict_schema"
+          } >> "$GITHUB_OUTPUT"
+      # Ignore unless the pull request is the App's, from this repository, labelled factory, its head is
+      # the commit Check ran on, and its body's markers name that head (R44).
+      - name: Route
+        id: route
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+        run: uv run python -m tools.factory.review route --event "$GITHUB_EVENT_PATH" --out factory-out/route >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: review-route
+          path: factory-out/route/
+          if-no-files-found: error
+          retention-days: 1
+
+  act:
+    name: Dispatch the next attempt or hand over
+    needs: route
+    if: vars.FACTORY_MODE != 'off' && (needs.route.outputs.action == 'fix' || needs.route.outputs.action == 'needs-human')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # GITHUB_TOKEN dispatches the fixer, labels the issue and turns the pull request into a draft; the
+    # job runs nothing from the pull request and routes again from GitHub before it writes.
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what a write-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      - name: Act on the failed check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+        run: uv run python -m tools.factory.review act --event "$GITHUB_EVENT_PATH"
+
+  evidence:
+    name: Prove the fix again (no secrets)
+    needs: route
+    if: vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review'
+    runs-on: ubuntu-24.04
+    # Two sessions of the base's suites, the probe on two builds, the head's tests (for a flaky test
+    # 100 throttled runs).
+    timeout-minutes: 120
+    # No environment and no token beyond reading this public repository: this job runs the pull
+    # request's code (its tests, its site in a browser) and the QA agent's reproduction script.
+    permissions:
+      contents: read
+    container:
+      # The image of validate.yml's visual job: the base's visual tests need the canonical renderer.
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --ipc=host
+    env:
+      # GitHub mounts /github/home with another owner; Firefox requires the container user's actual home.
+      HOME: /root
+      VISUAL_RENDERER: playwright-1.64.0-noble-amd64
+    outputs:
+      decisive: ${{ steps.decisive.outputs.artifact-id }}
+      proof: ${{ steps.proof.outputs.artifact-id }}
+    steps:
+      # main's code checks the pull request; the head is fetched as git objects into a private ref.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Configure git for the container
+        run: |
+          # The checkout belongs to the runner's user, not to root in the container.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # No hook from the pull request runs on a later git command.
+          git config --global core.hooksPath /dev/null
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what a write-token job restores.
+          enable-cache: false
+      - run: uv sync --locked --python 3.12
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.route.outputs.artifact }}
+          path: factory-in/route
+          merge-multiple: true
+      - name: Fetch the pull request's head
+        env:
+          PR: ${{ needs.route.outputs.pr }}
+          HEAD_SHA: ${{ needs.route.outputs.head }}
+        run: |
+          [[ $PR =~ ^[1-9][0-9]*$ ]] || { echo "::error::not a pull request number: $PR"; exit 1; }
+          [[ $HEAD_SHA =~ ^[0-9a-f]{40}$ ]] || { echo "::error::not a commit SHA: $HEAD_SHA"; exit 1; }
+          git fetch --no-tags origin "+refs/pull/$PR/head:refs/factory/pr-head"
+          [ "$(git rev-parse refs/factory/pr-head)" = "$HEAD_SHA" ] || { echo "::error::#$PR moved since Check ran; a later event reviews the new head"; exit 1; }
+      # The fence, the copy guard, the base's tests against the head's site (R43), the original
+      # reproduction and the neighbourhood: no Python code from the pull request runs here.
+      - name: Gather the decisive evidence
+        run: uv run python -m tools.factory.review evidence --route factory-in/route/route.json --phase decisive --out factory-out/decisive
+      - name: Scan the decisive evidence for secret shapes
+        run: uv run python -I -S tools/factory/secret_scan.py factory-out/decisive
+      # Uploaded before the pull request's code runs, so nothing it does can change it.
+      - uses: actions/upload-artifact@v7
+        id: decisive
+        with:
+          name: evidence-decisive
+          path: factory-out/decisive/
+          if-no-files-found: error
+          retention-days: 1
+      # From here on the pull request's own tests run: what this writes is a claim that post re-reads.
+      - name: Prove the head's own tests
+        run: uv run python -m tools.factory.review evidence --route factory-in/route/route.json --phase proof --out factory-out/proof
+      - name: Scan the proof for secret shapes
+        run: uv run python -I -S tools/factory/secret_scan.py factory-out/proof
+      - uses: actions/upload-artifact@v7
+        id: proof
+        with:
+          name: evidence-proof
+          path: factory-out/proof/
+          if-no-files-found: error
+          retention-days: 1
+
+  review:
+    name: Review the pull request (reviewer agent)
+    needs: [route, evidence]
+    if: vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: factory
+    # The agent holds no write token: this GITHUB_TOKEN is read-only; post holds the write scopes.
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      verdict: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          # The base's history for git log and git diff.
+          fetch-depth: 0
+          # No token in .git/config: the agent runs git diff, git show and git log.
+          persist-credentials: false
+      # The head is read with git, never checked out or run.
+      - name: Fetch the pull request's head to read it
+        env:
+          PR: ${{ needs.route.outputs.pr }}
+          HEAD_SHA: ${{ needs.route.outputs.head }}
+        run: |
+          [[ $PR =~ ^[1-9][0-9]*$ ]] || { echo "::error::not a pull request number: $PR"; exit 1; }
+          [[ $HEAD_SHA =~ ^[0-9a-f]{40}$ ]] || { echo "::error::not a commit SHA: $HEAD_SHA"; exit 1; }
+          git fetch --no-tags origin "+refs/pull/$PR/head:refs/factory/pr-head"
+          [ "$(git rev-parse refs/factory/pr-head)" = "$HEAD_SHA" ] || { echo "::error::#$PR moved since Check ran; a later event reviews the new head"; exit 1; }
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what a write-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      # Inputs land in factory-in/, never at the repository root (the Python import root).
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.route.outputs.artifact }}
+          path: factory-in/route
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.evidence.outputs.decisive }}
+          path: factory-in/decisive
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.evidence.outputs.proof }}
+          path: factory-in/proof
+          merge-multiple: true
+      # Check's visual comparison of the head (actual, expected and diff images), when it uploaded one.
+      - uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: visual-results
+          run-id: ${{ needs.route.outputs.check_run }}
+          github-token: ${{ github.token }}
+          path: factory-in/visual-results
+      - name: Write the prompt
+        id: prompt
+        env:
+          PR: ${{ needs.route.outputs.pr }}
+          ISSUE: ${{ needs.route.outputs.issue }}
+          HEAD_SHA: ${{ needs.route.outputs.head }}
+          BASE_SHA: ${{ needs.route.outputs.base }}
+          REVERT: ${{ needs.route.outputs.revert }}
+        run: |
+          {
+            echo "text<<FACTORY_REVIEW_PROMPT_END"
+            cat .github/factory/prompts/reviewer.md
+            cat <<EOF
+
+          ## This run
+
+          - Pull request #$PR for issue #$ISSUE. A revert (\`factory:revert\`): $REVERT.
+          - The head commit, the \`sha\` of your verdict: \`$HEAD_SHA\`. The base commit: \`$BASE_SHA\`.
+          - The change: \`git diff $BASE_SHA $HEAD_SHA\`, \`git log $BASE_SHA..$HEAD_SHA\` and \`git show $HEAD_SHA:<path>\`.
+          - The issue and the pull request (title and body): \`factory-in/route/context.md\`
+          - The decisive evidence: \`factory-in/decisive/decisive.json\`; the test sessions' reports and output: \`factory-in/decisive/sessions/\`; each changed baseline on the base and on the head: \`factory-in/decisive/baselines/\`; the neighbourhood probe on the head and on the base: \`factory-in/decisive/probe-head/\` and \`factory-in/decisive/probe-base/\`
+          - The proof of the head's own tests: \`factory-in/proof/proof.json\`
+          - Check's visual comparison of the head: \`factory-in/visual-results/visual/<name>/\` (\`actual.png\`, \`expected.png\`, \`diff.png\` on a mismatch); absent when Check uploaded none.
+          - The factory spec: \`docs/superpowers/specs/2026-10-18-agent-factory-design.md\`
+          EOF
+            echo "FACTORY_REVIEW_PROMPT_END"
+          } >> "$GITHUB_OUTPUT"
+      # The agent reads the change with git and judges it; it runs nothing from the pull request.
+      - name: Reviewer agent
+        id: claude
+        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+        env:
+          # Keep the Claude and GitHub tokens out of the environment of every command the agent runs.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Check runs started by the App's pushes reach this job through workflow_run.
+          allowed_bots: "${{ vars.FACTORY_APP_SLUG }}[bot],github-actions[bot]"
+          prompt: ${{ steps.prompt.outputs.text }}
+          # Read, Grep and Glob refuse every path outside the workspace (Claude Code 2.1.257 and later).
+          settings: '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
+          # The reviewer reads and judges: no edits, no network, git only to read, and the denies of
+          # the places a token can sit and of the commands that can print an environment.
+          claude_args: |
+            --model ${{ needs.route.outputs.reviewer_model }}
+            --max-turns ${{ needs.route.outputs.reviewer_max_turns }}
+            --json-schema '${{ needs.route.outputs.verdict_schema }}'
+            --allowedTools "Read(./**),Glob,Grep,Bash(git diff:*),Bash(git show:*),Bash(git log:*)"
+            --disallowedTools "Edit,Write,WebFetch,WebSearch,Read(//proc/**),Read(//sys/**),Read(//etc/**),Read(//root/**),Read(//home/**),Read(//github/**),Read(//tmp/**),Read(~/**),Read(./.git/**),Bash(ps:*),Bash(env:*),Bash(printenv:*),Bash(set:*),Bash(declare:*),Bash(export:*),Bash(compgen:*),Bash(git push:*),Bash(gh:*),Bash(curl:*)"
+      - name: Save the verdict
+        env:
+          VERDICT: ${{ steps.claude.outputs.structured_output }}
+        run: |
+          mkdir -p factory-out
+          printf '%s' "$VERDICT" > factory-out/verdict.json
+      # Artifacts of a public repository can be downloaded by any signed-in user: a verdict shaped like
+      # a token or a key fails the job instead. post checks every text again before it posts.
+      - name: Scan the verdict for secret shapes
+        run: uv run python -I -S tools/factory/secret_scan.py factory-out/verdict.json
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: verdict
+          path: factory-out/verdict.json
+          if-no-files-found: error
+          retention-days: 1
+
+  post:
+    name: Post the review
+    needs: [route, evidence, review]
+    if: vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # The only write token of a review, used by `review post` alone: it posts the review as
+    # github-actions[bot] (not the pull request's author, so its approval counts) and dispatches the
+    # merger or the fixer. The job runs nothing from the pull request or the agent and routes again
+    # from GitHub before it writes.
+    permissions:
+      actions: write
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what a write-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.review.outputs.verdict }}
+          path: factory-in/verdict
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.evidence.outputs.decisive }}
+          path: factory-in/decisive
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.evidence.outputs.proof }}
+          path: factory-in/proof
+          merge-multiple: true
+      # Refuses an approval without green evidence, with a false checklist item or for another
+      # commit; refuses any text with a secret shape, a hidden marker, a closing keyword or an issue
+      # link, and hands the issue to a person instead.
+      - name: Post the review for the head the evidence tested
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+        run: >-
+          uv run python -m tools.factory.review post --event "$GITHUB_EVENT_PATH"
+          --verdict factory-in/verdict/verdict.json --decisive factory-in/decisive --proof factory-in/proof

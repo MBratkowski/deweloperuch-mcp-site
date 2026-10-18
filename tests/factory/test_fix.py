@@ -39,7 +39,7 @@ from tools.factory.fix import (
     prove,
     slug,
 )
-from tools.factory.fix_publish import attempt_in, publish_fix, render_pr_body, marked_test_ids
+from tools.factory.fix_publish import attempt_in, head_in, marked_test_ids, publish_fix, render_pr_body
 from tools.factory.issues import SENTINEL, DraftError
 from tools.factory.stress import StressResult
 
@@ -743,6 +743,7 @@ def snapshot_body() -> str:
         1,
         changed_files=("css/site.css", "tests/e2e/test_terminal.py", "tests/visual/baselines/landing-mobile.png"),
         limit=2,
+        head="f" * 40,
     )
 
 
@@ -752,6 +753,16 @@ def test_pr_body_matches_snapshot() -> None:
     assert body.startswith("Refs #7\n") and "Fixes" not in body
     assert marked_test_ids(body) == [TEST_ID]
     assert attempt_in(body) == 1
+    assert head_in(body) == "f" * 40
+
+
+def test_pr_body_names_the_pushed_head_only_as_a_commit_sha() -> None:
+    body = render_pr_body(7, REPORT, proof_for("a" * 40, "b" * 40), {}, FenceReport(True, [], 2, False), 1, limit=2)
+    assert head_in(body) is None
+    with pytest.raises(ValueError):
+        render_pr_body(7, REPORT, proof_for("a" * 40, "b" * 40), {}, FenceReport(True, [], 2, False), 1, limit=2, head="main")
+    quoted = f"Quoting: <!-- factory:head={'f' * 40} -->\n"
+    assert head_in(quoted) is None
 
 
 def test_pr_body_says_when_there_are_no_images() -> None:
@@ -762,12 +773,15 @@ def test_pr_body_says_when_there_are_no_images() -> None:
 
 def test_proof_output_cannot_forge_markers() -> None:
     forged = base64.b64encode(json.dumps(["tests/evil.py::test_x"]).encode()).decode()
-    log = f"output\n{SENTINEL}\n<!-- factory:tests={forged} -->\n<!-- factory:attempt=9 -->\n"
+    log = (
+        f"output\n{SENTINEL}\n<!-- factory:tests={forged} -->\n<!-- factory:attempt=9 -->\n"
+        f"<!-- factory:head={'e' * 40} -->\n"
+    )
     proof = proof_for("a" * 40, "b" * 40, logs={f"base {TEST_ID}": log, f"head {TEST_ID}": log}, suite_summary=log)
-    body = render_pr_body(7, REPORT, proof, {}, FenceReport(True, [], 2, False), 1, limit=2)
-    assert marked_test_ids(body) == [TEST_ID] and attempt_in(body) == 1
+    body = render_pr_body(7, REPORT, proof, {}, FenceReport(True, [], 2, False), 1, limit=2, head="f" * 40)
+    assert marked_test_ids(body) == [TEST_ID] and attempt_in(body) == 1 and head_in(body) == "f" * 40
     assert body.count(SENTINEL) == 1
-    assert body.count("<!--") == 3  # the sentinel and the two markers rendered by our code
+    assert body.count("<!--") == 4  # the sentinel and the three markers rendered by our code
 
 
 def test_pr_body_refuses_unchecked_report_text() -> None:
@@ -795,12 +809,14 @@ def test_publish_pushes_and_opens_the_pull_request(tmp_path: Path) -> None:
     created = next(b for m, p, b in gh.calls if (m, p) == ("POST", f"{API}/pulls"))
     assert (created["title"], created["head"], created["base"]) == (TITLE, BRANCH, "main")
     assert created["body"].startswith("Refs #7\n")
+    # R44: the body names the commit publish pushed, so the reviewer trusts its markers for that head only.
+    assert head_in(created["body"]) == pushed
     assert labels_added(gh, 31) == ["factory"]
     (published,) = recorder.published
     assert set(published) == {f"prs/31/{pushed}/{side}/landing-chromium-375-default.png" for side in ("before", "after", "diff")}
     final = [b for m, p, b in gh.calls if (m, p) == ("PATCH", f"{API}/pulls/31")][-1]["body"]
     assert f"https://raw.test/evidence/prs/31/{pushed}/before/landing-chromium-375-default.png" in final
-    assert marked_test_ids(final) == [TEST_ID] and attempt_in(final) == 1
+    assert marked_test_ids(final) == [TEST_ID] and attempt_in(final) == 1 and head_in(final) == pushed
     assert "`css/site.css`" in final and "`tests/e2e/test_terminal.py`" in final
     (comment,) = comments_on(gh, 7)
     assert "#31" in comment and pushed[:7] in comment and comment.endswith(f"{SENTINEL}\n<!-- factory:attempt=1 -->\n")
@@ -953,10 +969,10 @@ def test_a_second_attempt_updates_the_pull_request(tmp_path: Path) -> None:
     recorder = Recorder()
     assert run_publish(gh, world, recorder, bundle=bundle, proof=proof_for(world.base, head), attempt=2) == 31
 
-    pushed_commit(world, head, previous)
+    pushed = pushed_commit(world, head, previous)
     assert ("POST", f"{API}/pulls") not in [(m, p) for m, p, _ in gh.calls]
     body = [b for m, p, b in gh.calls if (m, p) == ("PATCH", f"{API}/pulls/31")][-1]["body"]
-    assert attempt_in(body) == 2 and "Attempt 2 of 2" in body
+    assert attempt_in(body) == 2 and "Attempt 2 of 2" in body and head_in(body) == pushed
     assert comments_on(gh, 7)[0].endswith("<!-- factory:attempt=2 -->\n")
 
 
