@@ -10,6 +10,11 @@ Two kinds of reasons (Ruling R37, an allow-list for tests/):
 - review reasons (`review`, `needs_human`): existing files under tests/ may only gain lines;
   any removed or changed line asks for a human.
 
+Honest scope: the static checks catch careless weakening of tests. Deliberate tampering
+(code that runs at import or definition time, patching of pytest or of the test helpers) is
+routed to a human as a soft review reason, and is defeated for real by the behavioural check of
+Task 20, which runs the base commit's tests against the head site in their own pytest session.
+
 Command line: `python -m tools.factory.fence --base SHA --head SHA [--repo PATH]` prints the
 report as JSON. Exit codes: 0 ok and nothing to review, 1 not ok, 2 errors (git or
 configuration), 3 ok but review reasons exist.
@@ -46,6 +51,15 @@ MARKUP_PATTERNS = tuple(
         r"<!--", r"-->", r"--!>", r"<!\[CDATA\[",
     )
 )
+DIVERGENT_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (r"</(?:script|style)\b(?!\s*>)", r"<!---?>", r"--!>", r"--\s+!?>")
+)
+SETUP_NAMES = frozenset(
+    "setup_module teardown_module setup_function teardown_function setup_class teardown_class "
+    "setup_method teardown_method setUpModule tearDownModule".split()
+)
+ALLOWED_DECORATOR_NAMES = frozenset({"staticmethod", "classmethod", "property"})
 DYNAMIC_CALLS = frozenset("eval exec compile __import__ globals locals vars setattr delattr".split())
 INFRASTRUCTURE_NAMES = ("pytest.ini", "tox.ini", "setup.cfg", ".gitattributes")
 SYMLINK, GITLINK = "120000", "160000"
@@ -228,6 +242,11 @@ def _markup_counts(html: str) -> list[int]:
     return [len(pattern.findall(html)) for pattern in MARKUP_PATTERNS]
 
 
+def _divergent_counts(html: str) -> list[int]:
+    """Counts of forms that HTML parsers read differently; a new one may hide copy."""
+    return [len(pattern.findall(html)) for pattern in DIVERGENT_PATTERNS]
+
+
 def _decode_escapes(body: str) -> str:
     out: list[str] = []
     i = 0
@@ -312,6 +331,11 @@ def _copy_changed(repo: Path, base: str, head: str, files: list[Change]) -> bool
                 return True
             if _markup_counts(old_text) != _markup_counts(new_text):
                 return True
+            if any(
+                new > old
+                for old, new in zip(_divergent_counts(old_text), _divergent_counts(new_text))
+            ):
+                return True
         elif any(name.startswith("js/") for name in names):
             if js_polish_strings(_show(repo, base, source)) != js_polish_strings(
                 _show(repo, head, change.path)
@@ -355,22 +379,24 @@ def _parse(source: str) -> ast.Module | None:
         return None
 
 
-def _skeleton(tree: ast.Module) -> dict[str, tuple[int, int, str]]:
-    """Per function and class: (definitions, early exits, decorators).
+def _skeleton(tree: ast.Module) -> dict[str, tuple[int, int, int, str]]:
+    """Per function and class: (definitions, early exits, raises, decorators).
 
-    The key is the qualified name. An early exit is a `return`, a `raise` or an
-    `if False:`/`if 0:` block. Definitions inside any compound statement are found.
+    The key is the qualified name. An early exit is a `return` or an `if False:`/`if 0:` block.
+    Definitions inside any compound statement are found.
     """
-    result: dict[str, tuple[int, int, str]] = {}
+    result: dict[str, tuple[int, int, int, str]] = {}
 
-    def exits(node: ast.AST) -> int:
-        count = 0
+    def exits(node: ast.AST) -> tuple[int, int]:
+        count = raises = 0
         stack = list(ast.iter_child_nodes(node))
         while stack:
             child = stack.pop()
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 continue
-            if isinstance(child, (ast.Return, ast.Raise)):
+            if isinstance(child, ast.Raise):
+                raises += 1
+            elif isinstance(child, ast.Return):
                 count += 1
             elif (
                 isinstance(child, (ast.If, ast.While))
@@ -379,15 +405,16 @@ def _skeleton(tree: ast.Module) -> dict[str, tuple[int, int, str]]:
             ):
                 count += 1
             stack.extend(ast.iter_child_nodes(child))
-        return count
+        return count, raises
 
     def visit(body: list[ast.stmt], prefix: str) -> None:
         for node in body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 name = prefix + node.name
-                definitions, _, _ = result.get(name, (0, 0, ""))
+                definitions = result.get(name, (0, 0, 0, ""))[0]
                 decorators = "|".join(ast.dump(d) for d in node.decorator_list)
-                result[name] = (definitions + 1, exits(node), decorators)
+                early, raises = exits(node)
+                result[name] = (definitions + 1, early, raises, decorators)
                 visit(node.body, name + ".")
             else:
                 for block in _blocks(node):
@@ -449,29 +476,98 @@ def _top_level_problem(stmt: ast.stmt) -> str | None:
     return type(stmt).__name__
 
 
-def _hazards(tree: ast.Module, names: set[str], tests: set[str]) -> Counter[str]:
-    """Counts of constructs that can rewire other tests from inside a function body."""
-    imported = {
-        (a.asname or a.name.split(".")[0])
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for a in node.names
-    }
-    bound = names | imported
+def _dotted(node: ast.expr) -> str:
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        parts.append(node.id)
+        return ".".join(reversed(parts))
+    return ""
+
+
+def _allowed_name(name: str) -> bool:
+    return name == "pytest.fixture" or name == "pytest.param" or name.startswith("pytest.mark.")
+
+
+def _suspicious(expr: ast.AST | None) -> bool:
+    """True when `expr` can run code: a lambda, a walrus or a call outside pytest's markers."""
+    if expr is None:
+        return False
+    for node in ast.walk(expr):
+        if isinstance(node, (ast.Lambda, ast.NamedExpr)):
+            return True
+        if isinstance(node, ast.Call) and not _allowed_name(_dotted(node.func)):
+            return True
+    return False
+
+
+def _decorator_suspicious(node: ast.expr) -> bool:
+    if isinstance(node, ast.Call):
+        return _suspicious(node)
+    name = _dotted(node)
+    return not (_allowed_name(name) or name in ALLOWED_DECORATOR_NAMES)
+
+
+def _is_autouse(node: ast.expr) -> bool:
+    return isinstance(node, ast.Call) and any(
+        k.arg == "autouse" and not (isinstance(k.value, ast.Constant) and k.value.value is False)
+        for k in node.keywords
+    )
+
+
+def _class_body_problem(stmt: ast.stmt) -> bool:
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Pass)):
+        return False
+    if isinstance(stmt, ast.Assign):
+        return not (all(isinstance(t, ast.Name) for t in stmt.targets) and _literal(stmt.value))
+    if isinstance(stmt, ast.AnnAssign):
+        return not (isinstance(stmt.target, ast.Name) and _literal(stmt.value))
+    return not (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Constant)
+        and isinstance(stmt.value.value, str)
+    )
+
+
+def _soft_counts(tree: ast.Module) -> Counter[str]:
+    """Counts of constructs that run code at definition time or rewire state; a human reads them."""
     counts: Counter[str] = Counter()
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            if node.id in tests:
-                counts["a test name is rebound or deleted"] += 1
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id in DYNAMIC_CALLS:
-                counts["dynamic code or attribute access"] += 1
-            elif node.func.id == "getattr" and not (
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            counts["decorator"] += sum(_decorator_suspicious(d) for d in node.decorator_list)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            arguments = node.args
+            every = [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+            every += [a for a in (arguments.vararg, arguments.kwarg) if a]
+            counts["annotation"] += sum(_suspicious(a.annotation) for a in every)
+            counts["annotation"] += _suspicious(node.returns)
+            counts["default argument"] += sum(
+                _suspicious(d) for d in [*arguments.defaults, *arguments.kw_defaults] if d
+            )
+            if node.name in SETUP_NAMES:
+                counts["setup or teardown function"] += 1
+            if any(_is_autouse(d) for d in node.decorator_list):
+                counts["autouse fixture"] += 1
+        elif isinstance(node, ast.ClassDef):
+            counts["class bases"] += sum(_suspicious(b) for b in node.bases) + sum(
+                _suspicious(k.value) for k in node.keywords
+            )
+            counts["class body statement"] += sum(_class_body_problem(s) for s in node.body)
+        elif isinstance(node, ast.AnnAssign):
+            counts["annotation"] += _suspicious(node.annotation)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and not (
                 len(node.args) > 1
                 and isinstance(node.args[1], ast.Constant)
                 and isinstance(node.args[1].value, str)
-            ):
-                counts["dynamic code or attribute access"] += 1
+            )
+        ):
+            counts["non-literal getattr"] += 1
         targets: list[ast.expr] = []
         if isinstance(node, ast.Assign):
             targets = list(node.targets)
@@ -480,11 +576,47 @@ def _hazards(tree: ast.Module, names: set[str], tests: set[str]) -> Counter[str]
         elif isinstance(node, ast.Delete):
             targets = list(node.targets)
         for target in targets:
-            while isinstance(target, (ast.Attribute, ast.Subscript)):
-                target = target.value
-                if isinstance(target, ast.Name) and target.id in bound:
-                    counts["a module attribute is assigned"] += 1
+            if isinstance(target, (ast.Attribute, ast.Subscript)):
+                root = target
+                while isinstance(root, (ast.Attribute, ast.Subscript)):
+                    root = root.value
+                if not (isinstance(root, ast.Name) and root.id in ("self", "cls")):
+                    counts["attribute or item assigned"] += 1
     return counts
+
+
+def _hazards(tree: ast.Module, tests: set[str]) -> Counter[str]:
+    """Counts of constructs that can rewire other tests; any increase is a hard reason."""
+    counts: Counter[str] = Counter()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if node.id in tests:
+                counts["a test name is rebound or deleted"] += 1
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in DYNAMIC_CALLS
+        ):
+            counts["dynamic code access"] += 1
+    return counts
+
+
+def _binding_counts(tree: ast.Module) -> Counter[str]:
+    return Counter(name for stmt in tree.body for name in _bound_names(stmt))
+
+
+def _import_sources(tree: ast.Module) -> dict[str, set[tuple]]:
+    sources: dict[str, set[tuple]] = {}
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Import):
+            for a in stmt.names:
+                sources.setdefault(a.asname or a.name.split(".")[0], set()).add((a.name,))
+        elif isinstance(stmt, ast.ImportFrom):
+            for a in stmt.names:
+                sources.setdefault(a.asname or a.name, set()).add(
+                    (stmt.module, stmt.level, a.name)
+                )
+    return sources
 
 
 def _top_names(tree: ast.Module) -> set[str]:
@@ -511,24 +643,18 @@ def _conftest_fixtures(repo: Path, head: str) -> set[str]:
 
 def _module_findings(
     old: str, new: str, path: str, fixtures: set[str]
-) -> tuple[list[str], list[str]]:
-    """(infrastructure reasons, weakened-test details) for one new or changed test module."""
+) -> tuple[list[str], list[str], list[str]]:
+    """(infrastructure, weakened-test, human-review) details for one new or changed test module."""
     after = _parse(new)
     if after is None:
-        return [], [f"{path}: does not parse"]
+        return [], [f"{path}: does not parse"], []
     before = _parse(old) if old else ast.Module(body=[], type_ignores=[])
     if before is None:
-        return [], []
+        return [], [], []
     infra: list[str] = []
     weak: list[str] = []
+    soft: list[str] = []
 
-    base_bound = _top_names(before)
-    base_defs = Counter(
-        s.name for s in before.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    )
-    head_defs = Counter(
-        s.name for s in after.body if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    )
     seen = Counter(ast.dump(stmt) for stmt in before.body)
     for stmt in after.body:
         dump = ast.dump(stmt)
@@ -538,34 +664,60 @@ def _module_findings(
         problem = _top_level_problem(stmt)
         if problem:
             infra.append(f"{path}: {problem} at the top level")
-        in_place = isinstance(
-            stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-        ) and stmt.name in base_defs and head_defs[stmt.name] <= base_defs[stmt.name]
-        if not in_place and any(n in base_bound or n in fixtures for n in _bound_names(stmt)):
+
+    base_count, head_count = _binding_counts(before), _binding_counts(after)
+    if any(
+        head_count[n] > base_count[n] and (base_count[n] > 0 or n in fixtures)
+        for n in head_count
+    ):
+        infra.append(f"{path}: rebinds an existing name")
+    base_sources = _import_sources(before)
+    for name, sources in _import_sources(after).items():
+        if name in base_sources and not sources <= base_sources[name]:
             infra.append(f"{path}: rebinds an existing name")
 
-    tests = {n for n in base_defs if _is_test_name(n)}
-    names = base_bound | _top_names(after)
-    old_hazards, new_hazards = _hazards(before, names, tests), _hazards(after, names, tests)
+    tests = {
+        s.name
+        for s in before.body
+        if isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and _is_test_name(s.name)
+    }
+    old_hazards, new_hazards = _hazards(before, tests), _hazards(after, tests)
     for kind, count in new_hazards.items():
         if count > old_hazards[kind]:
             weak.append(f"{path}: {kind}")
 
+    old_soft, new_soft = _soft_counts(before), _soft_counts(after)
+    for kind, count in new_soft.items():
+        if kind == "autouse fixture" and not old:
+            continue
+        if count > old_soft[kind]:
+            soft.append(f"{path}: {kind}")
+
     if old:
         old_skeleton, new_skeleton = _skeleton(before), _skeleton(after)
-        for name, (definitions, exits, decorators) in old_skeleton.items():
+        for name, (definitions, exits, raises, decorators) in old_skeleton.items():
             if name not in new_skeleton:
                 if _is_test_name(name):
                     weak.append(f"{path}: test removed")
                 continue
-            new_definitions, new_exits, new_decorators = new_skeleton[name]
+            new_definitions, new_exits, new_raises, new_decorators = new_skeleton[name]
             if new_definitions > definitions:
                 weak.append(f"{path}: definition repeated")
             if new_exits > exits:
                 weak.append(f"{path}: early exit added")
+            if new_raises > raises:
+                if name.rsplit(".", 1)[-1].startswith("test"):
+                    weak.append(f"{path}: early exit added")
+                else:
+                    soft.append(f"{path}: raise added in a helper")
             if new_decorators != decorators:
-                weak.append(f"{path}: decorators changed")
-    return list(dict.fromkeys(infra)), list(dict.fromkeys(weak))
+                soft.append(f"{path}: decorators changed")
+    return (
+        list(dict.fromkeys(infra)),
+        list(dict.fromkeys(weak)),
+        list(dict.fromkeys(soft)),
+    )
 
 
 def _is_test_module(path: str) -> bool:
@@ -581,10 +733,11 @@ def _new_test_path(path: str) -> bool:
 
 def _test_findings(
     repo: Path, base: str, head: str, files: list[Change]
-) -> tuple[list[str], list[str]]:
-    """(infrastructure reasons, weakened-test details) for the test modules in the diff."""
+) -> tuple[list[str], list[str], list[str]]:
+    """(infrastructure, weakened-test, human-review) details for the test modules in the diff."""
     infra: list[str] = []
     weak: list[str] = []
+    soft: list[str] = []
     fixtures: set[str] | None = None
     for change in files:
         if COMPARISON in (change.path, change.old_path):
@@ -599,10 +752,11 @@ def _test_findings(
             weak.append(f"{change.path}: skip, marker or collection change added")
         if fixtures is None:
             fixtures = _conftest_fixtures(repo, head)
-        found_infra, found_weak = _module_findings(old, new, change.path, fixtures)
+        found_infra, found_weak, found_soft = _module_findings(old, new, change.path, fixtures)
         infra += found_infra
         weak += found_weak
-    return infra, weak
+        soft += found_soft
+    return infra, weak, soft
 
 
 def weakened_tests(repo: Path, base: str, head: str) -> list[str]:
@@ -680,7 +834,11 @@ def check_fence(
     if changed_lines > limits.max_changed_lines:
         add("size")
 
-    infra, weakened = _test_findings(repo, base, head, files)
+    infra, weakened, human = _test_findings(repo, base, head, files)
+    for detail in human:
+        reason = f"test code needs a human: {detail}"
+        if reason not in review:
+            review.append(reason)
     for reason in infra:
         add(f"test infrastructure: {reason}")
     if weakened:

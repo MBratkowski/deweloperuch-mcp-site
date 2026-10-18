@@ -191,7 +191,7 @@ def test_changed_baseline_png_is_ok(tmp_path: Path) -> None:
 )
 def test_changes_to_existing_lines_need_a_human(tmp_path: Path, edit: str) -> None:
     report = check(tmp_path, {"tests/test_x.py": TEST_BASE}, {"tests/test_x.py": edit})
-    assert report.review == ["existing tests changed: tests/test_x.py"] or hard(report, "weakened")
+    assert "existing tests changed: tests/test_x.py" in report.review or hard(report, "weakened")
     assert report.needs_human
 
 
@@ -212,10 +212,11 @@ def test_inserted_if_false_is_hard(tmp_path: Path) -> None:
     assert hard(check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head}), "early exit")
 
 
-def test_added_decorator_is_hard(tmp_path: Path) -> None:
+def test_added_decorator_needs_a_human(tmp_path: Path) -> None:
     base = "def test_x(n):\n    assert n\n"
     head = "@pytest.mark.parametrize('n', [])\ndef test_x(n):\n    assert n\n"
-    assert hard(check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head}), "decorators")
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head})
+    assert report.ok and "test code needs a human: tests/test_x.py: decorators changed" in report.review
 
 
 def test_redefined_test_is_hard(tmp_path: Path) -> None:
@@ -360,9 +361,7 @@ def module_check(tmp_path: Path, head: str, base: str | None = MODULE, extra=Non
         "@pytest.mark.skip\ndef test_other():\n    pass",
         "def test_other():\n    raise pytest.skip.Exception('x')",
         "def test_other():\n    import unittest\n    raise unittest.SkipTest('x')",
-        "def test_other():\n    getattr(object, 'a' + 'b')",
         "def test_other():\n    eval('1')",
-        "def test_other():\n    import tests.visual.conftest as c\n    c.compare_image = None",
     ],
 )
 def test_added_code_in_existing_test_module_is_hard(tmp_path: Path, addition: str) -> None:
@@ -381,8 +380,6 @@ def test_added_code_in_existing_test_module_is_hard(tmp_path: Path, addition: st
         "import tests.visual.conftest as _c\n_c.compare_image = None",
         "def pytest_runtest_call(item):\n    pass",
         "@pytest.fixture\ndef assert_visual():\n    return None",
-        "def test_other():\n    import tests.visual.conftest as c\n    c.compare_image = None",
-        "def test_other():\n    getattr(object, 'a' + 'b')",
         "if True:\n    pass",
     ],
 )
@@ -390,6 +387,80 @@ def test_new_test_module_is_scanned(tmp_path: Path, addition: str) -> None:
     head = "import pytest\n\ndef test_new(page):\n    assert page\n\n" + addition + "\n"
     report = module_check(tmp_path, head, base=None)
     assert not report.ok, report.reasons
+
+
+def soft(report, needle: str) -> bool:
+    return report.ok and report.needs_human and any(
+        r.startswith("test code needs a human") and needle in r for r in report.review
+    )
+
+
+@pytest.mark.parametrize(
+    ("addition", "needle"),
+    [
+        ("@U or (lambda f: f)\ndef test_o():\n    assert 1", "decorator"),
+        ("@make()\ndef test_o():\n    assert 1", "decorator"),
+        ("def test_o(x=compute()):\n    assert 1", "default argument"),
+        ("def test_o(*, x=(lambda: 1)):\n    assert 1", "default argument"),
+        ("def test_o(x: compute()):\n    assert 1", "annotation"),
+        ("def test_o() -> compute():\n    assert 1", "annotation"),
+        ("y: compute() = 1", "annotation"),
+        ("class TestA(make()):\n    pass", "class bases"),
+        ("class TestA(metaclass=make()):\n    pass", "class bases"),
+        ("@dec\nclass TestA:\n    pass", "decorator"),
+        ("class TestA:\n    type.__setattr__(object, 'x', 1)", "class body statement"),
+        ("class TestA:\n    x = compute()", "class body statement"),
+        ("class TestA:\n    @dec\n    def test_a(self):\n        assert 1", "decorator"),
+        ("def setup_module():\n    pass", "setup or teardown function"),
+        ("def teardown_function(f):\n    pass", "setup or teardown function"),
+        ("@pytest.fixture(autouse=True)\ndef _auto():\n    pass", "autouse fixture"),
+        ("def test_o():\n    getattr(object, 'a' + 'b')", "non-literal getattr"),
+        ("def test_o():\n    os.environ['X'] = '1'", "attribute or item assigned"),
+        ("def test_o(card_data):\n    card_data['headline'] = 'x'", "attribute or item assigned"),
+        ("def test_o():\n    import tests.visual.conftest as c\n    c.compare_image = None", "attribute or item assigned"),
+        ("def _helper2():\n    raise ValueError", None),
+    ],
+)
+def test_definition_time_and_state_code_needs_a_human(tmp_path: Path, addition: str, needle) -> None:
+    head = MODULE + "\n" + addition + "\n"
+    report = module_check(tmp_path, head)
+    if needle is None:  # a new helper that raises is fine on its own
+        assert report.ok and not report.needs_human
+        return
+    assert soft(report, needle), (report.reasons, report.review)
+
+
+def test_raise_added_in_an_existing_helper_needs_a_human(tmp_path: Path) -> None:
+    head = MODULE.replace("    return x\n", "    if x is None:\n        raise ValueError\n    return x\n")
+    report = module_check(tmp_path, head)
+    assert soft(report, "raise added in a helper")
+
+
+def test_extending_an_import_is_review_not_hard(tmp_path: Path) -> None:
+    base = "from playwright.sync_api import Page\n\ndef test_x(page: Page):\n    assert page\n"
+    head = base.replace("import Page", "import Page, expect")
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head})
+    assert report.ok and report.review == ["existing tests changed: tests/test_x.py"]
+
+
+def test_separate_added_import_is_ok(tmp_path: Path) -> None:
+    base = "from playwright.sync_api import Page\n\ndef test_x(page: Page):\n    assert page\n"
+    head = base.replace("\n\ndef", "\nfrom playwright.sync_api import expect\n\ndef", 1)
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head})
+    assert report.ok and not report.needs_human, report.reasons
+
+
+@pytest.mark.parametrize("old, new", [("[1, 2]", "[1, 2, 3]"), ("(1, 2)", "(1, 2, 3)")])
+def test_extending_a_constant_is_review_not_hard(tmp_path: Path, old: str, new: str) -> None:
+    base = f"VALUES = {old}\n\ndef test_x():\n    assert VALUES\n"
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": base.replace(old, new)})
+    assert report.ok and report.review == ["existing tests changed: tests/test_x.py"]
+
+
+def test_import_from_another_module_is_hard(tmp_path: Path) -> None:
+    base = "from tests.helpers import expect\n\ndef test_x():\n    assert 1\n"
+    head = base.replace("tests.helpers", "evil.helpers")
+    assert hard(check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head}), "rebinds")
 
 
 def test_inserted_raise_in_existing_test_is_hard(tmp_path: Path) -> None:
@@ -496,8 +567,22 @@ def test_hidden_or_extra_copy_is_seen(tmp_path: Path, extra: str) -> None:
 
 def test_reused_script_end_tag_is_seen(tmp_path: Path) -> None:
     base = PAGE.replace("</body>", "<script>1</script></body>")
-    head = PAGE.replace("</body>", "<script>1</script x><script>2</script></body>")
+    head = PAGE.replace("</body>", "<script>1</script x><p>Nowy tekst</p></body>")
+    # same count of `</script`, but one of them is not a plain end tag
+    assert _counts_equal(base, head)
     assert check(tmp_path, {"index.html": base}, {"index.html": head}).copy_changed
+
+
+def test_count_preserving_comment_trick_is_seen(tmp_path: Path) -> None:
+    base = PAGE.replace("</body>", "<!-- a --></body>")
+    head = PAGE.replace("</body>", "<!-->Nowy tekst-- ></body>")
+    assert check(tmp_path, {"index.html": base}, {"index.html": head}).copy_changed
+
+
+def _counts_equal(a: str, b: str) -> bool:
+    from tools.factory.fence import _markup_counts
+
+    return _markup_counts(a) == _markup_counts(b)
 
 
 def test_markup_only_page_change_keeps_copy(tmp_path: Path) -> None:
