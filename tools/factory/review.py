@@ -1,27 +1,32 @@
-"""The reviewer's deterministic steps (factory-review.yml): route, act, evidence and post.
+"""The reviewer's deterministic steps (factory-review.yml): route, act, evidence, prepare, post and
+hand-over.
 
 After Check completes on a factory pull request, `route` decides with a read-only token what happens:
 nothing (`ignore`), the fixer's next attempt or a person (`fix`, `needs-human`: `act` does it with
 GITHUB_TOKEN), or a review (`review`): the evidence job proves the fix again without secrets
-(tools/factory/review_evidence.py), the reviewer agent judges the diff against the rubric and returns a
-verdict, and `post`, in a job that runs nothing from the pull request or the agent, checks that verdict
-and posts it with GITHUB_TOKEN for exactly the head the evidence tested, then dispatches the merger
-after an approval, or the fixer (or a person) after requested changes.
+(tools/factory/review_evidence.py), `prepare` writes the change out as data, the reviewer agent (which
+runs no command at all) reads it and judges it against the rubric, and `post`, in a job that runs
+nothing from the pull request or the agent, checks that verdict and posts it with GITHUB_TOKEN for
+exactly the head the evidence tested, then dispatches the merger after an approval, or the fixer (or a
+person) after requested changes. When the evidence, the review or post fails, `hand-over` leaves one
+comment on the pull request naming the failed jobs and the run.
 
-Trust (R44): the pull request must be the App's, from this repository, labelled `factory`, open and
-not a draft, and its current head must be the commit Check ran on. Its body's markers
-(`factory:attempt`, `factory:tests`, `factory:head`) count only in the block our code renders and
-only while `factory:head` names that head; otherwise the route is `ignore` and a later event retries.
-A revert (`factory:revert`, from `revert/<N>`) carries no markers: the merge it must exactly undo
-comes from the issue's trusted `factory:merged` marker. `act` and `post` route again from GitHub
-instead of trusting what an earlier job wrote.
+Trust (R44): the pull request must be the App's, from this repository, labelled `factory` and not
+`factory:needs-human`, open and not a draft, and its current head must be the commit Check ran on. Its
+body's markers (`factory:attempt`, `factory:tests`, `factory:head`) count only in the block our code
+renders and only while `factory:head` names that head; otherwise the route is `ignore` and a later
+event retries. A revert (`factory:revert`, from `revert/<N>`) carries no markers: the merge it must
+exactly undo comes from the issue's trusted `factory:merged` marker. `act`, `post` and `hand-over`
+route again from GitHub instead of trusting what an earlier job wrote.
 
 Command line, `python -m tools.factory.review`:
 
   route --event FILE --out DIR          print key=value outputs; write DIR/route.json and DIR/context.md
   act --event FILE                      route again; dispatch the next attempt or hand the issue over
-  evidence --route FILE --phase decisive|proof --out DIR
-  post --event FILE --verdict FILE --decisive DIR --proof DIR
+  evidence --route FILE --phase decisive|script|proof --out DIR
+  prepare --route FILE --out DIR        write the diff, the log and the head's changed files as data
+  post --event FILE --verdict FILE --decisive DIR --script DIR --proof DIR
+  hand-over --event FILE --head SHA --run-id N --job NAME=RESULT ...
 
 Exit 2 on errors (GitHub, git, configuration).
 """
@@ -43,12 +48,13 @@ from typing import Any
 from tools.factory.config import Config, ConfigError, load_config
 from tools.factory.evidence import redact
 from tools.factory.fence import GitError
-from tools.factory.fix import FIXING, FLAKY, NEEDS_HUMAN, READY, FixError, check_text
+from tools.factory.fix import FIXING, FLAKY, NEEDS_HUMAN, READY, REVIEWER, FixError, _git_bytes, check_text
 from tools.factory.fix_publish import (
     _TESTS,
     CONVERT_TO_DRAFT,
     WITHHELD,
     _bullets,
+    _code,
     _line,
     _neutral,
     attempt_in,
@@ -56,14 +62,17 @@ from tools.factory.fix_publish import (
     marked_test_ids,
 )
 from tools.factory.github import GitHub, GitHubError
-from tools.factory.issues import DraftError, _marker_block, _object
+from tools.factory.issues import DraftError, _marker_block, _object, script_in
 from tools.factory.review_evidence import (
     DECISIVE_FILE,
     PROOF_FILE,
+    SCRIPT_FILE,
     Evidence,
+    _tree_entries,
     flaky_selectors,
     gather_decisive,
     gather_proof,
+    gather_script,
     load_evidence,
 )
 from tools.factory.secret_scan import secret_shape
@@ -330,6 +339,8 @@ def _decide(
     labels = _labels(pull)
     if FACTORY not in labels:
         return _ignore(f"#{number} is not labelled {FACTORY}", **known)
+    if NEEDS_HUMAN in labels:
+        return _ignore(f"#{number} is labelled {NEEDS_HUMAN}: the factory stops touching it", **known)
     current = str((pull.get("head") or {}).get("sha") or "")
     if current != head:
         return _ignore(f"#{number} moved to {_short(current)} since Check ran on {_short(head)}", **known)
@@ -566,6 +577,16 @@ def diff_lines(files: Sequence[Mapping[str, Any]]) -> dict[str, set[int]]:
     return lines
 
 
+def evidence_item(text: str) -> str:
+    """One evidence line for a review or a comment. Our own label (the text before the first `: `)
+    stays plain; what follows it (paths and baseline names the head chose, test ids, detail from
+    the artifacts) goes into a code span, so no name can render as markdown, a link or a mention."""
+    label, separator, rest = str(text).partition(": ")
+    if not separator or not rest.strip():
+        return _line(text, 400)
+    return f"{_line(label, 120)}: {_code(_line(rest, 300))}"
+
+
 def _evidence_lines(evidence: Evidence, route: Route) -> list[str]:
     base, head = _short(evidence.base), _short(evidence.head)
     parts = [f"Evidence for `{head}` on the base `{base}`: {'green' if evidence.green else 'not green'}."]
@@ -573,14 +594,16 @@ def _evidence_lines(evidence: Evidence, route: Route) -> list[str]:
         holds = "yes" if evidence.exact_revert else "no"
         parts.append(f"An exact revert of `{_short(route.merged or '')}`: {holds}.")
     if evidence.reasons:
-        parts.append("Why it is not green:\n\n" + _bullets(list(evidence.reasons)))
+        parts.append("Why it is not green:\n\n" + _bullets([evidence_item(r) for r in evidence.reasons]))
+    if evidence.notes:
+        parts.append("Accepted with a remark:\n\n" + _bullets([evidence_item(n) for n in evidence.notes]))
     if evidence.fence is not None and evidence.fence.review:
         parts.append(
             "The fence asks a person to look at these before a merge (the merger blocks on them):\n\n"
-            + _bullets(list(evidence.fence.review))
+            + _bullets([evidence_item(r) for r in evidence.fence.review])
         )
     if evidence.changed_baselines:
-        parts.append("Changed baselines:\n\n" + _bullets(list(evidence.changed_baselines)))
+        parts.append("Changed baselines:\n\n" + _bullets([_code(name) for name in evidence.changed_baselines]))
     return parts
 
 
@@ -623,8 +646,10 @@ def post(
     comes next. Returns "approved", "changes" or "refused".
 
     Refused without a word when the route is no longer a review of `head` (a later event reviews the
-    new head). Refused and handed to a person when the verdict is invalid or fails the text checks,
-    names another commit, or approves while the evidence is not green or a checklist item is false.
+    new head), or when the reviewer (github-actions[bot]) already reviewed `head`: a second review
+    would dispatch the merger or the fixer a second time. Refused and handed to a person when the
+    verdict is invalid or fails the text checks, names another commit, or approves while the evidence
+    is not green or a checklist item is false.
     """
     api = f"/repos/{config.site.repo}"
     if route.action != "review" or route.pr != pr or route.head != head:
@@ -632,6 +657,9 @@ def post(
         return "refused"
     if (evidence.pr, evidence.head, evidence.base, evidence.revert) != (pr, head, route.base, route.revert):
         print(f"#{pr}: the evidence is for another commit or pull request; nothing posted")
+        return "refused"
+    if already_reviewed(gh, api, pr, head):
+        print(f"#{pr}: {REVIEWER} already reviewed {_short(head)}; nothing posted or dispatched again")
         return "refused"
     try:
         checked = load_verdict(verdict.to_json() if isinstance(verdict, Verdict) else verdict)
@@ -644,7 +672,7 @@ def post(
         problems = []
         if not evidence.green:
             problems.append("the reviewer approved, but the evidence is not green")
-            problems += list(evidence.reasons)
+            problems += [evidence_item(reason) for reason in evidence.reasons]
         problems += [f"the reviewer approved with a false checklist item: {RUBRIC[n]}" for n in CHECKLIST if not checked.checklist[n]]
         if problems:
             return _refuse(gh, api, route, problems)
@@ -675,10 +703,122 @@ def post(
     return "changes"
 
 
+def already_reviewed(gh: Any, api: str, pr: int, head: str) -> bool:
+    """Whether the reviewer (github-actions[bot]) has a review of `head` on the pull request, in any
+    state."""
+    reviews = gh.paginate(f"{api}/pulls/{pr}/reviews", {"per_page": 100})
+    return any(isinstance(r, dict) and _login(r) == REVIEWER and r.get("commit_id") == head for r in reviews)
+
+
 def _refuse(gh: Any, api: str, route: Route, reasons: Sequence[str]) -> str:
     headline = f"The factory's reviewer posted no review of `{_short(route.head)}`: a person decides."
     hand_over(gh, api, route, headline, [WITHHELD if secret_shape(r) else r for r in reasons])
     return "refused"
+
+
+# --- a failed job of the review ---------------------------------------------------------------------
+
+REVIEW_JOBS = ("evidence", "review", "post")
+JOB_RESULTS = frozenset({"success", "failure", "cancelled", "skipped"})
+# A job that ran out of its timeout-minutes may be reported as cancelled rather than failed.
+STOPPED = ("failure", "cancelled")
+
+
+def report_failure(
+    gh: Any, route: Route, head: str, results: Mapping[str, str], run_id: int, config: Config
+) -> bool:
+    """After the evidence, the review or post failed (or was cancelled, as a timeout may be): one
+    comment on the pull request naming those jobs and the run, while the fresh route is still the
+    review of `head` (otherwise a later event reviews the new head and nothing is said). It writes
+    nothing else and starts nothing."""
+    failed = [name for name in REVIEW_JOBS if results.get(name) in STOPPED]
+    if not failed:
+        print("no job of the review failed; nothing to say")
+        return False
+    if route.action != "review" or route.pr is None or route.head != head:
+        print(f"the route is {route.action} for {_short(route.head)}, not the review of {_short(head)}; nothing said")
+        return False
+    url = f"https://github.com/{config.site.repo}/actions/runs/{run_id}"
+    jobs = ", ".join(f"`{name}` ({results[name]})" for name in failed)
+    _comment(
+        gh, f"/repos/{config.site.repo}", route.pr,
+        f"The factory's review of `{_short(head)}` stopped: {jobs} in run {url}.\n\n"
+        "The factory does not retry on its own. A person reads the run, then dispatches the review again "
+        f"(`gh workflow run factory-review.yml --ref main -f pr={route.pr}`) or takes the pull request over "
+        f"(`{NEEDS_HUMAN}`). A review that was already posted for this commit is never posted twice; what "
+        "follows it (the merger or the fixer's next attempt) is then dispatched by hand.",
+    )
+    print(f"#{route.pr}: reported the failed jobs {', '.join(failed)}")
+    return True
+
+
+# --- the change, written out for an agent that runs nothing -------------------------------------------
+
+REVIEW_DIFF = "diff.patch"
+REVIEW_LOG = "log.txt"
+REVIEW_CHANGED = "changed.json"
+REVIEW_FILES = "files"
+MAX_REVIEW_BYTES = 5_000_000
+# No external diff driver and no textconv filter runs; renames show as a deletion and an addition,
+# as the fence sees them.
+_READ_OPTIONS = ("--no-ext-diff", "--no-textconv", "--no-color", "--no-renames")
+
+
+def _write_capped(path: Path, data: bytes) -> None:
+    if len(data) > MAX_REVIEW_BYTES:
+        data = data[:MAX_REVIEW_BYTES] + f"\n(cut at {MAX_REVIEW_BYTES} bytes)\n".encode()
+    path.write_bytes(data)
+
+
+def _unsafe(path: str) -> bool:
+    parts = path.split("/")
+    return not path or "\\" in path or bool({"", ".", "..", ".git"} & set(parts))
+
+
+def write_change(repo: Path, base: str, head: str, out: Path) -> list[dict[str, Any]]:
+    """The change as data for the reviewer agent, which runs no command (R45): `diff.patch` (the
+    diff base..head), `log.txt` (its commits with their file stats), and the head's version of every
+    file the change adds or modifies under `files/<path>`, read as git objects (nothing is checked
+    out, no filter or hook runs). Symbolic links, submodules, unsafe paths and files over
+    MAX_REVIEW_BYTES are listed in `changed.json` with a note, never written. Returns that list."""
+    for value, what in ((base, "the base"), (head, "the head")):
+        if not _SHA.fullmatch(value or ""):
+            raise ValueError(f"{what} is not a commit SHA: {value!r}")
+    out.mkdir(parents=True, exist_ok=True)
+    _write_capped(out / REVIEW_DIFF, _git_bytes(repo, "diff", *_READ_OPTIONS, base, head))
+    _write_capped(out / REVIEW_LOG, _git_bytes(repo, "log", "--no-decorate", "--stat", *_READ_OPTIONS, f"{base}..{head}"))
+    fields = _git_bytes(repo, "diff", "--name-status", "--no-renames", "-z", base, head)
+    names = fields.decode(errors="surrogateescape").split("\0")
+    pairs = list(zip(names[0::2], names[1::2]))
+    present = [path for status, path in pairs if status != "D" and not _unsafe(path)]
+    entries = {path: (mode, kind, sha) for mode, kind, sha, path in _tree_entries(repo, head, present)} if present else {}
+    files = out / REVIEW_FILES
+    changed: list[dict[str, Any]] = []
+    for status, path in pairs:
+        item: dict[str, Any] = {"status": status, "path": path, "file": None, "note": ""}
+        entry = entries.get(path)
+        if status == "D":
+            item["note"] = "deleted: not on the head"
+        elif _unsafe(path):
+            item["note"] = "not written: an unsafe path"
+        elif entry is None:
+            item["note"] = "not written: not a file on the head"
+        elif entry[1] == "commit":
+            item["note"] = "not written: a submodule"
+        elif entry[0] == "120000":
+            item["note"] = "not written: a symbolic link"
+        else:
+            data = _git_bytes(repo, "cat-file", "blob", entry[2])
+            if len(data) > MAX_REVIEW_BYTES:
+                item["note"] = f"not written: {len(data)} bytes"
+            else:
+                target = files.joinpath(*path.split("/"))
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(data)
+                item["file"] = f"{REVIEW_FILES}/{path}"
+        changed.append(item)
+    (out / REVIEW_CHANGED).write_text(json.dumps(changed, indent=2) + "\n", encoding="utf-8")
+    return changed
 
 
 # --- the agent's context ------------------------------------------------------------------------------
@@ -727,13 +867,22 @@ def _parser() -> argparse.ArgumentParser:
     command.add_argument("--event", type=Path, required=True)
     command = commands.add_parser("evidence", help="prove the fix again (no secret)")
     command.add_argument("--route", type=Path, required=True, help="route.json of the route job")
-    command.add_argument("--phase", choices=("decisive", "proof"), required=True)
+    command.add_argument("--phase", choices=("decisive", "script", "proof"), required=True)
+    command.add_argument("--out", type=Path, required=True)
+    command = commands.add_parser("prepare", help="write the change out as data for the reviewer agent")
+    command.add_argument("--route", type=Path, required=True, help="route.json of the route job")
     command.add_argument("--out", type=Path, required=True)
     command = commands.add_parser("post", help="post the verdict and start what comes next")
     command.add_argument("--event", type=Path, required=True)
     command.add_argument("--verdict", type=Path, required=True)
     command.add_argument("--decisive", type=Path, required=True, help="the evidence-decisive artifact")
+    command.add_argument("--script", type=Path, required=True, help="the evidence-script artifact")
     command.add_argument("--proof", type=Path, required=True, help="the evidence-proof artifact")
+    command = commands.add_parser("hand-over", help="comment on the pull request when a job of the review failed")
+    command.add_argument("--event", type=Path, required=True)
+    command.add_argument("--head", required=True, help="the head the route job routed")
+    command.add_argument("--run-id", required=True, help="this run ($GITHUB_RUN_ID)")
+    command.add_argument("--job", action="append", default=[], help="NAME=RESULT of a needed job")
     return parser
 
 
@@ -775,10 +924,15 @@ def _act_command(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
-def _evidence_command(args: argparse.Namespace, config: Config) -> int:
-    saved = Route.from_json(json.loads(args.route.read_text(encoding="utf-8")))
+def _saved_route(path: Path) -> Route:
+    saved = Route.from_json(json.loads(path.read_text(encoding="utf-8")))
     if saved.action != "review":
         raise ValueError(f"the route is {saved.action}, not a review")
+    return saved
+
+
+def _evidence_command(args: argparse.Namespace, config: Config) -> int:
+    saved = _saved_route(args.route)
     repo = Path.cwd()
     args.out.mkdir(parents=True, exist_ok=True)
     if args.phase == "decisive":
@@ -787,6 +941,11 @@ def _evidence_command(args: argparse.Namespace, config: Config) -> int:
         print(f"decisive evidence: {'green' if decisive.green else 'not green'}")
         for reason in decisive.problems():
             print(f"  {_line(reason, 300)}")
+        return 0
+    if args.phase == "script":
+        script = gather_script(repo, saved, saved.issue_body, config)
+        (args.out / SCRIPT_FILE).write_text(json.dumps(script.to_json(), indent=2) + "\n", encoding="utf-8")
+        print(f"reproduction script: {script.reason}")
         return 0
     proof = gather_proof(repo, saved, saved.issue_body, saved.pr_body)
     (args.out / PROOF_FILE).write_text(json.dumps(proof.to_json(), indent=2) + "\n", encoding="utf-8")
@@ -821,6 +980,8 @@ def _post_command(args: argparse.Namespace, config: Config) -> int:
         tests=tests,
         flaky=fresh.flaky,
         flaky_tests=flaky_selectors(fresh.issue_body) if fresh.flaky else (),
+        script_path=_artifact_file(args.script, "evidence-script", SCRIPT_FILE),
+        script_required=not fresh.revert and script_in(fresh.issue_body) is not None,
     )
     try:
         data: Any = json.loads(args.verdict.read_text(encoding="utf-8"))
@@ -828,6 +989,32 @@ def _post_command(args: argparse.Namespace, config: Config) -> int:
         print(f"the verdict is unreadable: {type(error).__name__}", file=sys.stderr)
         data = None
     print(f"#{fresh.pr}: {post(gh, fresh.pr, fresh.head, data, found, route=fresh, config=config)}")
+    return 0
+
+
+def _prepare_command(args: argparse.Namespace) -> int:
+    saved = _saved_route(args.route)
+    changed = write_change(Path.cwd(), saved.base, saved.head, args.out)
+    print(f"the change of #{saved.pr}: {len(changed)} paths, {sum(1 for c in changed if c['file'])} files written")
+    return 0
+
+
+def _job_results(values: Sequence[str]) -> dict[str, str]:
+    results = {}
+    for value in values:
+        name, separator, result = value.partition("=")
+        if not separator or name not in REVIEW_JOBS or result not in JOB_RESULTS:
+            raise ValueError(f"not a job result: {value!r}")
+        results[name] = result
+    return results
+
+
+def _hand_over_command(args: argparse.Namespace, config: Config) -> int:
+    results = _job_results(args.job)
+    if not _SHA.fullmatch(args.head) or not _NUMBER.fullmatch(args.run_id):
+        raise ValueError("--head must be a commit SHA and --run-id a run number")
+    gh, fresh = _fresh_route(args, config)
+    report_failure(gh, fresh, args.head, results, int(args.run_id), config)
     return 0
 
 
@@ -841,6 +1028,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _act_command(args, config)
         if args.command == "evidence":
             return _evidence_command(args, config)
+        if args.command == "prepare":
+            return _prepare_command(args)
+        if args.command == "hand-over":
+            return _hand_over_command(args, config)
         return _post_command(args, config)
     except (GitHubError, ConfigError, FixError, GitError, OSError, ValueError) as error:
         print(f"review {args.command} failed: {redact(str(error))}", file=sys.stderr)

@@ -49,11 +49,11 @@ AGENT_DENIES = (
     "Bash(export:*)",
     "Bash(compgen:*)",
 )
-# Agents that must run git: the fixer commits its fix, the reviewer reads the diff. Their .git
-# stays, so git itself cannot be denied; instead the checkout holds no token, the only git commands
-# allowed are these, pushing, gh and curl are denied, and edits stay out of .git and the paths that
-# set the factory's rules (the reviewer may not edit at all).
-GIT_AGENTS = {("factory-fix.yml", "fix"), ("factory-review.yml", "review")}
+# The agent that must run git: the fixer commits its fix. Its .git stays, so git itself cannot be
+# denied; instead the checkout holds no token, the only git commands allowed are these, pushing, gh
+# and curl are denied, and edits stay out of .git and the paths that set the factory's rules. The
+# reviewer runs no command at all (R45): a step writes the change out for it and drops .git.
+GIT_AGENTS = {("factory-fix.yml", "fix")}
 GIT_RULES = (
     "Bash(git status:*)",
     "Bash(git diff:*)",
@@ -73,16 +73,9 @@ GIT_AGENT_DENIES = (
     "Bash(gh:*)",
     "Bash(curl:*)",
 )
-# The reviewer reads and never edits: Edit and Write are denied outright (R43/R44 isolation).
-REVIEWER_GIT_RULES = ("Bash(git diff:*)", "Bash(git show:*)", "Bash(git log:*)")
-REVIEWER_DENIES = (
-    "Edit",
-    "Write",
-    *(rule for rule in AGENT_DENIES if rule != "Bash(git:*)"),
-    "Bash(git push:*)",
-    "Bash(gh:*)",
-    "Bash(curl:*)",
-)
+# The reviewer only reads (R45): the shell, Edit and Write are denied outright, besides every
+# agent's denies; even a read-only git command can write a file (`git diff --output=<file>`).
+REVIEWER_DENIES = ("Bash", "Edit", "Write", *AGENT_DENIES)
 # The denies each agent must carry; AGENT_DENIES for any agent not named here.
 AGENT_DENY_RULES = {("factory-fix.yml", "fix"): GIT_AGENT_DENIES, ("factory-review.yml", "review"): REVIEWER_DENIES}
 # Artifacts that hold agent output, or output of code an agent or a pull request wrote, by
@@ -92,6 +85,7 @@ AGENT_ARTIFACTS = {
     ("factory-qa.yml", "validated"): "check",
     ("factory-fix.yml", "fix"): "fix",
     ("factory-review.yml", "evidence-decisive"): "evidence",
+    ("factory-review.yml", "evidence-script"): "evidence",
     ("factory-review.yml", "evidence-proof"): "evidence",
     ("factory-review.yml", "verdict"): "review",
 }
@@ -111,7 +105,7 @@ REVIEWER_CLAUDE_ARGS = (
     "--model ${{ needs.route.outputs.reviewer_model }}\n"
     "--max-turns ${{ needs.route.outputs.reviewer_max_turns }}\n"
     "--json-schema '${{ needs.route.outputs.verdict_schema }}'\n"
-    '--allowedTools "Read(./**),Glob,Grep,' + ",".join(REVIEWER_GIT_RULES) + '"\n'
+    '--allowedTools "Read(./**),Glob,Grep"\n'
     '--disallowedTools "' + ",".join(REVIEWER_DENIES) + '"\n'
 )
 FIXER_CLAUDE_ARGS = (
@@ -134,6 +128,12 @@ _INTERPRETER_RULE = re.compile(r"(?:uv run )?python3?(?: -[A-Za-z]+)*:\*")
 # `review post` (see test_review_write_token_reaches_only_post_and_act), never next to the agent.
 AGENT_WRITE_ALLOWED: dict[tuple[str, str], frozenset[str]] = {}
 REVIEW_WRITE_SCOPES = {"actions": "write", "contents": "read", "issues": "write", "pull-requests": "write"}
+# The hand-over job only comments (and routes again first).
+HAND_OVER_SCOPES = {"actions": "read", "contents": "read", "issues": "write", "pull-requests": "write"}
+# What the evidence job's timeout must leave for everything but the test sessions: setup 10, the
+# browser checks 30, the script 5, the proof 40, the scans and uploads 5 (minutes).
+EVIDENCE_OTHER_MINUTES = 90
+NO_HOOKS = {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.hooksPath", "GIT_CONFIG_VALUE_0": "/dev/null"}
 
 
 def _workflow_files() -> list[Path]:
@@ -338,14 +338,21 @@ def test_review_workflow_triggers_jobs_and_concurrency() -> None:
     assert "format('factory-review-ignored-{0}', github.run_id)" in group
     assert workflow["concurrency"]["cancel-in-progress"] is False
     jobs = workflow["jobs"]
-    assert set(jobs) == {"route", "act", "evidence", "review", "post"}
+    assert set(jobs) == {"route", "act", "evidence", "review", "post", "hand-over"}
     assert (jobs["act"]["needs"], jobs["evidence"]["needs"]) == ("route", "route")
     assert (jobs["review"]["needs"], jobs["post"]["needs"]) == (["route", "evidence"], ["route", "evidence", "review"])
+    assert jobs["hand-over"]["needs"] == ["route", "evidence", "review", "post"]
     assert "github.event.workflow_run.event == 'pull_request'" in jobs["route"]["if"]
     assert "needs.route.outputs.action == 'fix'" in jobs["act"]["if"]
     assert "needs.route.outputs.action == 'needs-human'" in jobs["act"]["if"]
-    for name in ("evidence", "review", "post"):
+    for name in ("evidence", "review", "post", "hand-over"):
         assert "needs.route.outputs.action == 'review'" in jobs[name]["if"], name
+    # The hand-over runs only after a failure (or a cancellation: a timeout) of a needed job; nothing
+    # else runs then.
+    assert "(failure() || cancelled())" in jobs["hand-over"]["if"]
+    for name, job in jobs.items():
+        if name != "hand-over":
+            assert not re.search(r"failure\(\)|cancelled\(\)|always\(\)", str(job.get("if"))), name
     route = jobs["route"]
     assert route["permissions"] == {"actions": "read", "contents": "read", "issues": "read", "pull-requests": "read"}
     assert "environment" not in route and "container" not in route
@@ -374,20 +381,49 @@ def test_evidence_job_runs_pull_request_code_without_any_token() -> None:
     runs = [str(s.get("run", "")) for s in steps]
     hooks = next(i for i, r in enumerate(runs) if "core.hooksPath /dev/null" in r)
     fetch = next(i for i, r in enumerate(runs) if "git fetch --no-tags origin" in r)
-    decisive = next(i for i, r in enumerate(runs) if "tools.factory.review evidence" in r and "--phase decisive" in r)
-    proof = next(i for i, r in enumerate(runs) if "tools.factory.review evidence" in r and "--phase proof" in r)
-    uploaded = next(i for i, s in enumerate(steps) if _uses(s, "actions/upload-artifact") and s["with"]["name"] == "evidence-decisive")
-    # The decisive evidence leaves the job before any code from the pull request runs.
-    assert hooks < fetch < decisive < uploaded < proof
+
+    def phase(name: str) -> int:
+        (index,) = [i for i, r in enumerate(runs) if "tools.factory.review evidence" in r and f"--phase {name}" in r]
+        return index
+
+    def upload(name: str) -> int:
+        (index,) = [i for i, s in enumerate(steps) if _uses(s, "actions/upload-artifact") and s["with"]["name"] == name]
+        return index
+
+    # The decisive evidence leaves the job before the QA agent's script runs (R45), the script's
+    # result before the pull request's own tests run, and nothing else runs the script.
+    assert hooks < fetch < phase("decisive") < upload("evidence-decisive") < phase("script")
+    assert phase("script") < upload("evidence-script") < phase("proof") < upload("evidence-proof")
+    assert [r for r in runs if "tools.factory.review evidence" in r] == [runs[phase(p)] for p in ("decisive", "script", "proof")]
     assert "refs/pull/$PR/head" in runs[fetch] and '"$HEAD_SHA"' in runs[fetch]
     assert job["outputs"] == {
         "decisive": "${{ steps.decisive.outputs.artifact-id }}",
+        "script": "${{ steps.script.outputs.artifact-id }}",
         "proof": "${{ steps.proof.outputs.artifact-id }}",
     }
     (download,) = [s for s in steps if _uses(s, "actions/download-artifact")]
     assert download["with"] == {
         "artifact-ids": "${{ needs.route.outputs.artifact }}", "path": "factory-in/route", "merge-multiple": True
     }
+
+
+def test_evidence_job_timeout_fits_the_test_sessions_and_the_rerun() -> None:
+    from tools.factory import review_evidence
+
+    minutes = _review_jobs()["evidence"]["timeout-minutes"]
+    sessions = review_evidence.SESSIONS_PER_REVIEW * review_evidence.SESSION_TIMEOUT_SECONDS / 60
+    # Four sessions (the base and the head site, e2e and visual) and the rerun.
+    assert review_evidence.SESSIONS_PER_REVIEW == 2 * len(review_evidence.SUITES) + 1
+    assert sessions + EVIDENCE_OTHER_MINUTES <= minutes, (sessions, minutes)
+
+
+def test_review_workflow_runs_git_without_hooks_in_every_job() -> None:
+    workflow = load_yaml(WORKFLOWS / "factory-review.yml")
+    for name, job in workflow["jobs"].items():
+        env = {**(workflow.get("env") or {}), **(job.get("env") or {})}
+        assert {key: env.get(key) for key in NO_HOOKS} == NO_HOOKS, name
+        for step in job["steps"]:
+            assert not set(step.get("env") or {}) & {"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"}, name
 
 
 def test_reviewer_agent_arguments_are_pinned() -> None:
@@ -399,12 +435,18 @@ def test_reviewer_agent_arguments_are_pinned() -> None:
     assert step["with"]["github_token"] == "${{ secrets.GITHUB_TOKEN }}"
     assert step["with"]["prompt"] == "${{ steps.prompt.outputs.text }}"
     assert str(step["env"][ENV_SCRUB]) == "1"
-    allowed = _allowed_tools(REVIEWER_CLAUDE_ARGS)
-    assert not [rule for rule in allowed if rule.startswith(("Edit", "Write"))]
+    # R45: the reviewer reads and runs nothing, not even git.
+    allowed = _allowed_tools(step["with"]["claude_args"])
+    assert allowed == ["Read(./**)", "Glob", "Grep"]
+    denied = _tool_rules(step["with"]["claude_args"], ("--disallowedTools", "--disallowed-tools"))
+    assert {"Bash", "Edit", "Write", "WebFetch", "WebSearch"} <= set(denied)
     (prompt,) = [s for s in steps if s.get("id") == "prompt"]
     for needed in ("cat .github/factory/prompts/reviewer.md", "factory-in/route/context.md", "factory-in/decisive",
-                   "factory-in/proof", "factory-in/visual-results"):
+                   "factory-in/script/script.json", "factory-in/proof", "factory-in/visual-results",
+                   "factory-in/review/diff.patch", "factory-in/review/log.txt", "factory-in/review/changed.json",
+                   "factory-in/review/files/<path>"):
         assert needed in prompt["run"], needed
+    assert "git diff" not in prompt["run"] and "git show" not in prompt["run"]
 
 
 def test_review_job_reads_the_pull_request_and_runs_none_of_it() -> None:
@@ -420,13 +462,27 @@ def test_review_job_reads_the_pull_request_and_runs_none_of_it() -> None:
     assert checkouts and all(s["with"]["persist-credentials"] is False for s in checkouts)
     downloads = [s for s in steps if _uses(s, "actions/download-artifact")]
     this_run = [s for s in downloads if "run-id" not in s["with"]]
-    assert {s["with"]["path"] for s in this_run} == {"factory-in/route", "factory-in/decisive", "factory-in/proof"}
+    assert {s["with"]["path"] for s in this_run} == {
+        "factory-in/route", "factory-in/decisive", "factory-in/script", "factory-in/proof"
+    }
     assert all("artifact-ids" in s["with"] and "name" not in s["with"] for s in this_run)
     (check,) = [s for s in downloads if "run-id" in s["with"]]
     assert check["with"]["name"] == "visual-results" and check["with"]["run-id"] == "${{ needs.route.outputs.check_run }}"
     assert check["with"]["path"] == "factory-in/visual-results" and check.get("continue-on-error") is True
     assert job["outputs"] == {"verdict": "${{ steps.upload.outputs.artifact-id }}"}
     agent = next(i for i, s in enumerate(steps) if _uses_agent(s))
+    # R45: main's code writes the change out after the head is fetched and the route is in; then
+    # .git goes, and only then the agent starts. No other step before the agent runs git.
+    commands = [str(s.get("run", "")) for s in steps]
+    fetch = next(i for i, r in enumerate(commands) if "git fetch --no-tags origin" in r)
+    route = next(i for i, s in enumerate(steps) if _uses(s, "actions/download-artifact") and s["with"]["path"] == "factory-in/route")
+    (prepare,) = [i for i, r in enumerate(commands) if "tools.factory.review prepare" in r]
+    (dropped,) = [i for i, r in enumerate(commands) if r.strip() == "rm -rf .git"]
+    assert max(fetch, route) < prepare < dropped < agent
+    assert commands[prepare] == (
+        "uv run python -m tools.factory.review prepare --route factory-in/route/route.json --out factory-in/review"
+    )
+    assert not [r for r in commands[:agent] if re.search(r"\bgit\b", r) and r not in (commands[fetch], commands[dropped])]
     # Before the agent only the downloads touch a token (the read-only one, for Check's artifact).
     for step in steps[:agent]:
         if any(reference in json.dumps(step) for reference in TOKEN_REFERENCES):
@@ -435,13 +491,13 @@ def test_review_job_reads_the_pull_request_and_runs_none_of_it() -> None:
         assert not any(reference in json.dumps(step) for reference in TOKEN_REFERENCES), step
 
 
-def test_review_write_token_reaches_only_post_and_act() -> None:
+def test_review_write_token_reaches_only_post_act_and_hand_over() -> None:
     jobs = _review_jobs()
     writers = {name for name, job in jobs.items() if _write_scopes(job.get("permissions"), name)}
-    assert writers == {"act", "post"}
+    assert writers == {"act", "post", "hand-over"}
     for name in writers:
         job = jobs[name]
-        assert job["permissions"] == REVIEW_WRITE_SCOPES
+        assert job["permissions"] == (HAND_OVER_SCOPES if name == "hand-over" else REVIEW_WRITE_SCOPES), name
         assert "environment" not in job and "container" not in job, name
         steps = job["steps"]
         assert not any(_uses_agent(s) or _uses(s, APP_TOKEN_ACTION) for s in steps), name
@@ -457,10 +513,24 @@ def test_review_write_token_reaches_only_post_and_act() -> None:
         assert all("artifact-ids" in s["with"] and "name" not in s["with"] for s in downloads), name
     post = jobs["post"]["steps"]
     paths = {s["with"]["path"] for s in post if _uses(s, "actions/download-artifact")}
-    assert paths == {"factory-in/verdict", "factory-in/decisive", "factory-in/proof"}
+    assert paths == {"factory-in/verdict", "factory-in/decisive", "factory-in/script", "factory-in/proof"}
     command = next(s["run"] for s in post if "tools.factory.review post" in str(s.get("run", "")))
-    for argument in ("--verdict factory-in/verdict/verdict.json", "--decisive factory-in/decisive", "--proof factory-in/proof"):
+    for argument in ("--verdict factory-in/verdict/verdict.json", "--decisive factory-in/decisive",
+                     "--script factory-in/script", "--proof factory-in/proof"):
         assert argument in command
+    # The hand-over reads no artifact: the job results and the routed head, from the run itself.
+    hand_over = jobs["hand-over"]["steps"]
+    assert not [s for s in hand_over if _uses(s, "actions/download-artifact")]
+    (step,) = [s for s in hand_over if "tools.factory.review hand-over" in str(s.get("run", ""))]
+    assert {k: step["env"][k] for k in ("HEAD_SHA", "EVIDENCE", "REVIEW", "POST")} == {
+        "HEAD_SHA": "${{ needs.route.outputs.head }}",
+        "EVIDENCE": "${{ needs.evidence.result }}",
+        "REVIEW": "${{ needs.review.result }}",
+        "POST": "${{ needs.post.result }}",
+    }
+    for argument in ('--head "$HEAD_SHA"', '--run-id "$GITHUB_RUN_ID"', '--job "evidence=$EVIDENCE"',
+                     '--job "review=$REVIEW"', '--job "post=$POST"'):
+        assert argument in step["run"], argument
 
 
 def test_agents_read_only_the_workspace() -> None:

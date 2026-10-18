@@ -1,21 +1,26 @@
 """The reviewer's evidence job: what the factory proves about a pull request again, without a secret.
 
-Two phases, each uploaded as its own artifact before the next starts (factory-review.yml, job
-`evidence`), so nothing the pull request's code does in the second can touch the first:
+Three phases, each uploaded as its own artifact before the next starts (factory-review.yml, job
+`evidence`), so nothing that runs in a later phase can touch what an earlier one wrote:
 
-decisive (`gather_decisive`), in which no Python code from the pull request runs:
+decisive (`gather_decisive`), in which no Python code from the pull request or from an agent runs:
 - the fence and the copy guard over base..head, run from this checkout of main (never the head's code);
 - a revert (`factory:revert`) gets only the exact-revert check: base..head must be exactly the
   inverse of the merge commit the issue's trusted `factory:merged` marker names;
 - the behavioural check (R43): the BASE commit's tests/e2e (Chromium) and tests/visual (`-m visual`)
   run in pytest sessions of their own, once on a pure worktree of the base and once on a worktree of
   the base with only the head's published site files and visual baselines copied in. Every test that
-  passed on the pure base must be collected and pass against the head site. The head's tests/ and
-  tools/ never run in these sessions, so whatever they do cannot rewire them;
-- the issue's original reproduction on a local build of the head must no longer find the defect
-  (probe groups exit 0; an AI-review script, downloaded by verify's rules, says NOT REPRODUCED);
+  passed on the pure base must be collected and pass against the head site; one that does not runs
+  once more in a fresh head-site session (R46), and a pass there is recorded as flaked once. The
+  head's tests/ and tools/ never run in these sessions, so whatever they do cannot rewire them;
+- the issue's browser reproduction (its probe groups) on a local build of the head must no longer
+  find the defect;
 - the neighbourhood: the probe on the head and on the base for the issue's pages across every width
   of its engines; a group on the head whose fingerprint the base does not have is new.
+
+script (`gather_script`): the issue's AI-review reproduction script, downloaded by verify's rules,
+runs against a local build of the head and must say NOT REPRODUCED. An agent wrote it, so it runs
+only after the decisive evidence has left the job (R45), and what this phase writes is a claim.
 
 proof (`gather_proof`), which runs the head's code: its own new tests (the `factory:tests` marker)
 fail on a worktree of the base with only their test files taken from the head and pass on a worktree
@@ -48,7 +53,6 @@ from tools.factory.fix import (
     FLAKY_RUNS,
     FLAKY_THROTTLE,
     RENDERER,
-    SUITE_TIMEOUT_SECONDS,
     VISUAL_TESTS,
     FixError,
     check_test_id,
@@ -77,12 +81,19 @@ SUITES: dict[str, tuple[str, ...]] = {
     "e2e": ("tests/e2e", "--browser", "chromium"),
     "visual": ("tests/visual", "-m", "visual", "--browser", "chromium"),
 }
+# A rerun names its test ids itself; this expression keeps the visual ones `-m visual` selected.
+RERUN_MARKERS = "visual or not visual"
 # pytest exit codes of a base session that ran: all passed, some failed, nothing collected.
 CLEAN_BASE_CODES = frozenset({0, 1, 5})
+# Each of the four sessions (the base and the head site, e2e and visual) and the rerun stops after
+# this long; factory-review.yml budgets the evidence job's timeout for all of them (a test pins it).
+SESSION_TIMEOUT_SECONDS: float = 900
+SESSIONS_PER_REVIEW = 5
 MAX_REASONS = 20
 CI_CHECKS = frozenset({"flaky", "deploy-stale"})
 ENGINE_DIFF = "engine-diff"
 DECISIVE_FILE = "decisive.json"
+SCRIPT_FILE = "script.json"
 PROOF_FILE = "proof.json"
 _BASELINE_PNG = re.compile(re.escape(BASELINE_DIR) + r"[^/]+\.png")
 _SHA = re.compile(r"[0-9a-f]{40}")
@@ -90,6 +101,7 @@ _STATUS_RANK = {"passed": 0, "skipped": 1, "failed": 2, "error": 3}
 _HEAD_SITE_VERB = {"failed": "failed", "error": "errored", "skipped": "skipped"}
 
 SessionRunner = Callable[[Path, str, Path], int]
+RerunRunner = Callable[[Path, Sequence[str], Path], int]
 StressFn = Callable[[str, int, int, Path], StressResult]
 FetchScript = Callable[[str], bytes]
 RunScript = Callable[[str, str], int]
@@ -126,32 +138,43 @@ def junit_results(path: Path) -> dict[str, str] | None:
     return results
 
 
-def compare_sessions(base: Mapping[str, str], head: Mapping[str, str]) -> list[str]:
+def _status(status: str | None) -> str:
+    return "not collected" if status is None else _HEAD_SITE_VERB.get(status, status)
+
+
+def compare_sessions(
+    base: Mapping[str, str], head: Mapping[str, str], rerun: Mapping[str, str] | None = None
+) -> list[str]:
     """Why the head site loses a test the base passed: every test id that passed on the pure base
-    must be collected and pass in the head-site session. Tests only the head session has, and tests
-    the base did not pass, are not part of the check."""
+    must be collected and pass in the head-site session, or pass in `rerun` (the fresh head-site
+    session that ran only the lost ids once more). Tests only the head session has, and tests the
+    base did not pass, are not part of the check."""
     reasons = []
     for test_id, status in base.items():
         if status != "passed":
             continue
         other = head.get(test_id)
-        if other is None:
-            reasons.append(f"not collected on the head site: {test_id}")
-        elif other != "passed":
-            reasons.append(f"{_HEAD_SITE_VERB[other]} on the head site: {test_id}")
+        if other == "passed":
+            continue
+        if rerun is not None and rerun.get(test_id) == "passed":
+            continue  # flaked once: accepted, and recorded by the caller
+        what = f"{_status(other)} on the head site"
+        if rerun is not None:
+            what += f" and {_status(rerun.get(test_id))} on the rerun"
+        reasons.append(f"{what}: {test_id}")
     if len(reasons) > MAX_REASONS:
         reasons = [*reasons[:MAX_REASONS], f"and {len(reasons) - MAX_REASONS} more"]
     return reasons
 
 
-def run_session(tree: Path, suite: str, report: Path) -> int:
-    """One pytest session of a base worktree's suite, without any credential in its environment;
-    the JUnit report goes to `report`, the output's tail next to it. Returns pytest's exit code."""
-    command = [sys.executable, "-m", "pytest", *SUITES[suite], "-q", "-p", "no:cacheprovider", f"--junitxml={report}"]
+def _session(tree: Path, arguments: Sequence[str], report: Path) -> int:
+    """One pytest session in `tree` without any credential in its environment; the JUnit report goes
+    to `report`, the output's tail next to it. Returns pytest's exit code (-1 after the timeout)."""
+    command = [sys.executable, "-m", "pytest", *arguments, "-q", "-p", "no:cacheprovider", f"--junitxml={report}"]
     env = {**clean_environment(), "PYTHONDONTWRITEBYTECODE": "1"}
     try:
         done = subprocess.run(
-            command, cwd=tree, env=env, capture_output=True, text=True, timeout=SUITE_TIMEOUT_SECONDS, check=False
+            command, cwd=tree, env=env, capture_output=True, text=True, timeout=SESSION_TIMEOUT_SECONDS, check=False
         )
     except subprocess.TimeoutExpired as error:
         output = error.stdout.decode(errors="replace") if isinstance(error.stdout, bytes) else error.stdout or ""
@@ -159,6 +182,32 @@ def run_session(tree: Path, suite: str, report: Path) -> int:
         return -1
     report.with_suffix(".log").write_text(_tail(done.stdout + done.stderr) + "\n", encoding="utf-8")
     return done.returncode
+
+
+def run_session(tree: Path, suite: str, report: Path) -> int:
+    """One pytest session of a base worktree's suite (SUITES)."""
+    return _session(tree, SUITES[suite], report)
+
+
+def rerun_session(tree: Path, nodes: Sequence[str], report: Path) -> int:
+    """One pytest session of only the named tests, end-to-end and visual alike, in Chromium."""
+    return _session(tree, [*nodes, "-m", RERUN_MARKERS, "--browser", "chromium"], report)
+
+
+def node_id(tree: Path, test_id: str) -> str | None:
+    """The pytest node id of a JUnit `classname::name` id in `tree`: the longest dotted prefix of the
+    classname that names a module there, then the classes, then the name. None when none does."""
+    classname, separator, name = test_id.partition("::")
+    if not separator or not classname or not name:
+        return None
+    parts = classname.split(".")
+    if {"", ".", ".."} & set(parts) or "/" in classname or "\\" in classname:
+        return None
+    for end in range(len(parts), 0, -1):
+        path = "/".join(parts[:end]) + ".py"
+        if (tree / path).is_file():
+            return "::".join([path, *parts[end:], name])
+    return None
 
 
 # --- the head's site in a base worktree ---------------------------------------------------------
@@ -209,16 +258,23 @@ def changed_baselines(repo: Path, base: str, head: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class Behaviour:
-    """The behavioural check (R43): the base's tests against the head's site."""
+    """The behavioural check (R43): the base's tests against the head's site. `flaked` lists the
+    tests that failed (or went missing) in the head-site session and passed in the rerun."""
 
     green: bool
     reasons: tuple[str, ...]
     base_passed: int
     head_passed: int
     changed_baselines: tuple[str, ...]
+    flaked: tuple[str, ...] = ()
 
     def to_json(self) -> dict[str, Any]:
-        return {**asdict(self), "reasons": list(self.reasons), "changed_baselines": list(self.changed_baselines)}
+        return {
+            **asdict(self),
+            "reasons": list(self.reasons),
+            "changed_baselines": list(self.changed_baselines),
+            "flaked": list(self.flaked),
+        }
 
     @classmethod
     def from_json(cls, data: Any) -> Behaviour:
@@ -229,12 +285,17 @@ class Behaviour:
             base_passed=_count(top, "base_passed"),
             head_passed=_count(top, "head_passed"),
             changed_baselines=_texts(top, "changed_baselines"),
+            flaked=_texts(top, "flaked"),
         )
 
 
-def behaviour_check(repo: Path, base: str, head: str, out: Path, run: SessionRunner = run_session) -> Behaviour:
+def behaviour_check(
+    repo: Path, base: str, head: str, out: Path, run: SessionRunner = run_session, rerun: RerunRunner = rerun_session
+) -> Behaviour:
     """Run the base's suites on a pure base worktree and on a base worktree with the head's site, in
-    separate sessions, one after the other; compare what passed."""
+    separate sessions, one after the other; compare what passed. The base-passing tests the head
+    site loses run once more in a fresh head-site session (R46): a pass there is accepted and
+    recorded in `flaked`, anything else keeps the check red."""
     out = out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     reasons: list[str] = []
@@ -257,9 +318,28 @@ def behaviour_check(repo: Path, base: str, head: str, out: Path, run: SessionRun
     passed = [test_id for test_id, status in base_results.items() if status == "passed"]
     if not passed and not reasons:
         reasons.append("no test passed on the base: the behavioural check proves nothing")
-    reasons += compare_sessions(base_results, head_results)
-    head_passed = sum(1 for test_id in passed if head_results.get(test_id) == "passed")
-    return Behaviour(not reasons, tuple(reasons), len(passed), head_passed, changed_baselines(repo, base, head))
+    lost = [test_id for test_id in passed if head_results.get(test_id) != "passed"]
+    again: dict[str, str] | None = None
+    if lost and not reasons:  # a base that did not run cleanly is red anyway: no rerun
+        again = _rerun_lost(repo, base, head, lost, out / "head-site-rerun.xml", rerun)
+    flaked = tuple(test_id for test_id in lost if again is not None and again.get(test_id) == "passed")
+    reasons += compare_sessions(base_results, head_results, again)
+    head_passed = sum(1 for test_id in passed if head_results.get(test_id) == "passed" or test_id in flaked)
+    return Behaviour(
+        not reasons, tuple(reasons), len(passed), head_passed, changed_baselines(repo, base, head), flaked
+    )
+
+
+def _rerun_lost(repo: Path, base: str, head: str, lost: Sequence[str], report: Path, rerun: RerunRunner) -> dict[str, str]:
+    """The lost tests once more, in a fresh worktree of the base with the head's site: the base's
+    tests, the head's site, this checkout's code. Results by JUnit id; {} when none could run."""
+    with worktree(repo, base) as fresh:
+        install_head_site(repo, head, fresh)
+        nodes = [node for node in (node_id(fresh, test_id) for test_id in lost) if node is not None]
+        if not nodes:
+            return {}
+        rerun(fresh, nodes, report)
+    return junit_results(report) or {}
 
 
 def export_baselines(repo: Path, base: str, head: str, names: Sequence[str], out: Path) -> None:
@@ -534,21 +614,11 @@ def _describe(group: Group) -> str:
     return f"{group.check} {group.fingerprint} ({group.page}, {', '.join(group.engines)})"
 
 
-def original_reproduction(
-    groups: Sequence[Group],
-    script_url: str | None,
-    head_url: str,
-    lab: Lab,
-    *,
-    repo_name: str,
-    name: str,
-    fetch_script: FetchScript,
-    run_script: RunScript,
-    script_root: Path,
-) -> tuple[int, str]:
-    """(0, why) when the issue's reproduction no longer finds the defect on the head, (1, why) when
-    it still does, (2, why) when it cannot tell. A flaky issue's proof is statistical (the proof
-    phase), so its CI groups have no browser reproduction."""
+def original_reproduction(groups: Sequence[Group], script: bool, head_url: str, lab: Lab) -> tuple[int, str]:
+    """(0, why) when the issue's browser reproduction no longer finds the defect on the head, (1, why)
+    when it still does, (2, why) when it cannot tell. The reproduction script (`script`: the issue
+    has one) runs in a phase of its own after this evidence is uploaded; a flaky issue's proof is
+    statistical (the proof phase), so its CI groups have no browser reproduction."""
     browser = [g for g in groups if g.check not in CI_CHECKS]
     parts: list[tuple[int, str]] = []
     for group in browser:
@@ -557,10 +627,9 @@ def original_reproduction(
         except ValueError:
             code = 2
         parts.append((code, _describe(group)))
-    if script_url:
-        parts.append((_script_code(script_url, head_url, repo_name, name, fetch_script, run_script, script_root),
-                      "the reproduction script"))
     if not parts:
+        if script:
+            return 0, "no probe groups: the reproduction script decides, in the script phase"
         if groups and all(g.check == "flaky" for g in groups):
             return 0, "a flaky test: the statistical proof stands in for a browser reproduction"
         return 2, "the issue carries no reproduction (no probe groups and no script)"
@@ -570,7 +639,7 @@ def original_reproduction(
     failed = [what for code, what in parts if code != 0]
     if failed:
         return 2, f"the reproduction of {'; '.join(failed)} failed on the head"
-    return 0, "the original reproduction no longer finds the defect on the head"
+    return 0, "the browser reproduction no longer finds the defect on the head"
 
 
 def _script_code(
@@ -639,6 +708,8 @@ class Decisive:
     original_reason: str
     new_groups: tuple[dict[str, Any], ...]
     reasons: tuple[str, ...]
+    # The issue carries a reproduction script: the script phase's result must say NOT REPRODUCED.
+    script: bool = False
 
     def problems(self) -> list[str]:
         """Why this is not green: the recorded reasons, and a generic one should a recorded field
@@ -677,6 +748,7 @@ class Decisive:
             "original_reason": self.original_reason,
             "new_groups": list(self.new_groups),
             "reasons": list(self.reasons),
+            "script": self.script,
         }
 
     @classmethod
@@ -703,6 +775,7 @@ class Decisive:
             original_reason=_text(top, "original_reason"),
             new_groups=tuple(groups),
             reasons=_texts(top, "reasons"),
+            script=_flag(top, "script"),
         )
 
 
@@ -722,12 +795,10 @@ def gather_decisive(
     *,
     lab: Lab | None = None,
     run: SessionRunner = run_session,
-    fetch_script: FetchScript = download_script,
-    run_script: RunScript = check_drafts.run_script,
-    script_root: Path = check_drafts.ROOT,
+    rerun: RerunRunner = rerun_session,
 ) -> Decisive:
-    """Everything that decides, with no Python code from the pull request running (see the module
-    docstring). `issue_body` counts only when the route found its author trusted."""
+    """Everything that decides, with no Python code from the pull request or an agent running (see
+    the module docstring). `issue_body` counts only when the route found its author trusted."""
     base, head = _sha(route.base, "the base"), _sha(route.head, "the head")
     out.mkdir(parents=True, exist_ok=True)
     reasons: list[str] = []
@@ -750,21 +821,18 @@ def gather_decisive(
                         reasons=tuple(reasons))
     if fence is not None and not fence.ok:
         reasons += [f"fence: {reason}" for reason in fence.reasons]
-    behaviour = behaviour_check(repo, base, head, out / "sessions", run)
+    behaviour = behaviour_check(repo, base, head, out / "sessions", run, rerun)
     reasons += behaviour.reasons
     export_baselines(repo, base, head, behaviour.changed_baselines, out)
     groups, problem = _issue_groups(issue_body)
-    script = script_in(issue_body)
+    script = script_in(issue_body) is not None
     found: list[Group] = []
     original, original_reason = 2, problem or "not run"
     with ExitStack() as stack:
         lab = lab or stack.enter_context(PlaywrightLab(repo))
         try:
             if problem is None:
-                original, original_reason = original_reproduction(
-                    groups, script, lab.site(head), lab, repo_name=config.site.repo, name=f"review-{route.issue}",
-                    fetch_script=fetch_script, run_script=run_script, script_root=script_root,
-                )
+                original, original_reason = original_reproduction(groups, script, lab.site(head), lab)
             changed = [p for p in _git_bytes(repo, "diff", "--name-only", "--no-renames", "-z", base, head)
                        .decode(errors="replace").split("\0") if p]
             cells = neighbourhood_cells(groups, changed, config)
@@ -776,7 +844,81 @@ def gather_decisive(
         reasons.append(original_reason)
     reasons += [f"new finding on the head: {_describe(g)}" for g in found]
     return Decisive(**common, exact_revert=None, behaviour=behaviour, original=original, original_reason=original_reason,
-                    new_groups=tuple(g.to_json() for g in found), reasons=tuple(reasons))
+                    new_groups=tuple(g.to_json() for g in found), reasons=tuple(reasons), script=script)
+
+
+# --- the script phase -----------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ScriptResult:
+    """The issue's reproduction script on the head: `code` 0 (NOT REPRODUCED), 1 (REPRODUCED) or 2
+    (cannot tell); `ran` is false when the issue carries no script. Written in the job where the
+    script ran, so it is a claim."""
+
+    pr: int
+    issue: int
+    base: str
+    head: str
+    ran: bool
+    code: int
+    reason: str
+
+    def to_json(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_json(cls, data: Any) -> ScriptResult:
+        top = _mapping(data, "script")
+        code = _count(top, "code")
+        if code not in (0, 1, 2):
+            raise ValueError("script.code must be 0, 1 or 2")
+        return cls(
+            pr=_count(top, "pr"),
+            issue=_count(top, "issue"),
+            base=_sha(_text(top, "base"), "script.base"),
+            head=_sha(_text(top, "head"), "script.head"),
+            ran=_flag(top, "ran"),
+            code=code,
+            reason=_text(top, "reason"),
+        )
+
+
+_SCRIPT_REASONS = {
+    0: "the reproduction script no longer finds the defect on the head",
+    1: "the reproduction script still finds the defect on the head",
+    2: "the reproduction script could not tell on the head (a refused or failed download, an error or a timeout)",
+}
+
+
+def gather_script(
+    repo: Path,
+    route: Route,
+    issue_body: str,
+    config: Config,
+    *,
+    lab: Lab | None = None,
+    fetch_script: FetchScript = download_script,
+    run_script: RunScript = check_drafts.run_script,
+    script_root: Path = check_drafts.ROOT,
+) -> ScriptResult:
+    """The AI-review reproduction script of a trusted issue against a local build of the head. It
+    runs after the decisive evidence has been uploaded: whatever it does cannot reach that."""
+    base, head = _sha(route.base, "the base"), _sha(route.head, "the head")
+    common: dict[str, Any] = {"pr": route.pr or 0, "issue": route.issue or 0, "base": base, "head": head}
+    url = None if route.revert else script_in(issue_body)
+    if url is None:
+        return ScriptResult(**common, ran=False, code=0, reason="the issue carries no reproduction script")
+    with ExitStack() as stack:
+        lab = lab or stack.enter_context(PlaywrightLab(repo))
+        try:
+            site = lab.site(head)
+        except Exception as error:  # a build failure is infrastructure, never green
+            reason = f"the head could not be built: {type(error).__name__}: {redact(str(error))[:300]}"
+            return ScriptResult(**common, ran=True, code=2, reason=reason)
+        code = _script_code(url, site, config.site.repo, f"review-{route.issue}", fetch_script, run_script, script_root)
+    code = code if code in (0, 1) else 2
+    return ScriptResult(**common, ran=True, code=code, reason=_SCRIPT_REASONS[code])
 
 
 # --- the proof phase and the whole -------------------------------------------------------------------
@@ -816,7 +958,9 @@ def gather_proof(
 
 @dataclass(frozen=True)
 class Evidence:
-    """What `post` and the reviewer agent decide on: the decisive evidence and the proof together."""
+    """What `post` and the reviewer agent decide on: the decisive evidence, the script's result and
+    the proof together. `original` combines the browser reproduction and the script; `notes` holds
+    what was accepted with a remark (a test that flaked once in the behavioural check)."""
 
     green: bool
     red_green: dict[str, Any]
@@ -830,20 +974,41 @@ class Evidence:
     revert: bool = False
     reasons: tuple[str, ...] = ()
     changed_baselines: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+
+
+def _script_reasons(decisive: Decisive, script: ScriptResult | None, missing: str) -> tuple[int, list[str]]:
+    """The script phase's code and why it is not green, for an issue that carries a script."""
+    if script is None:
+        return 2, [missing]
+    if (script.pr, script.head, script.base) != (decisive.pr, decisive.head, decisive.base):
+        return 2, ["the reproduction script's result is for another commit"]
+    if not script.ran:
+        return 2, ["the reproduction script did not run, though the issue carries one"]
+    return script.code, [] if script.code == 0 else [_SCRIPT_REASONS[script.code]]
 
 
 def evaluate(
     decisive: Decisive, proof: HeadProof | None, *, revert: bool, tests: Sequence[str], flaky: bool,
     flaky_tests: Sequence[str] = (), missing_proof: str = "no proof of the head's own tests",
+    script: ScriptResult | None = None, script_required: bool = False,
+    missing_script: str = "no result of the reproduction script",
 ) -> Evidence:
     """Combine the phases; the proof's verdicts are read from its data, never from its own reasons
     alone, and must cover the tests the pull request names, for its head and base. A flaky issue's
-    pull request must name the issue's flaky tests (`flaky_tests`, from the trusted issue)."""
+    pull request must name the issue's flaky tests (`flaky_tests`, from the trusted issue). When the
+    issue carries a reproduction script (the decisive evidence says so, or `script_required`, from
+    the trusted issue), the script phase must have run it on this head and found nothing."""
     reasons = decisive.problems()
+    original = decisive.original
     if flaky and not revert:
         reasons += [f"the pull request does not name the flaky test {t}" for t in flaky_tests if t not in tests]
     if decisive.revert != revert:
         reasons.append("the evidence is for another kind of pull request")
+    if not revert and (decisive.script or script_required):
+        code, problems = _script_reasons(decisive, script, missing_script)
+        original = original or code
+        reasons += problems
     red_green: dict[str, Any] = {}
     if not revert:
         if proof is None:
@@ -857,12 +1022,16 @@ def evaluate(
             if not tests:
                 reasons.append("the pull request names no test (factory:tests)")
             reasons += verdict_reasons(tests, proof.red, proof.green)
-            reasons += [r for r in proof.reasons if r not in reasons]
+            # The proof's own reasons come from the job that ran the head's code: they count, but
+            # their text never reaches a review (see proof.json for it).
+            if any(r not in reasons for r in proof.reasons):
+                reasons.append("the proof of the head's tests reports further problems (see proof.json)")
     behaviour = decisive.behaviour
+    flaked = behaviour.flaked if behaviour is not None else ()
     return Evidence(
         green=not reasons,
         red_green=red_green,
-        original=decisive.original,
+        original=original,
         new_groups=list(decisive.new_groups),
         fence=decisive.fence,
         exact_revert=decisive.exact_revert,
@@ -872,31 +1041,35 @@ def evaluate(
         revert=decisive.revert,
         reasons=tuple(dict.fromkeys(reasons)),
         changed_baselines=behaviour.changed_baselines if behaviour is not None else (),
+        notes=(f"flaked once: {', '.join(flaked)}",) if flaked else (),
     )
 
 
 def gather_evidence(
     repo: Path, route: Route, issue_body: str, pr_body: str, config: Config, out: Path, **hooks: Any
 ) -> Evidence:
-    """Both phases in one process (tests and local runs; the workflow uploads between them)."""
+    """The three phases in one process (tests and local runs; the workflow uploads between them)."""
     stress_fn = hooks.pop("stress_fn", None)
+    script_hooks = {name: hooks.pop(name) for name in ("fetch_script", "run_script", "script_root") if name in hooks}
     decisive = gather_decisive(repo, route, issue_body, config, out / "decisive", **hooks)
+    script = gather_script(repo, route, issue_body, config, lab=hooks.get("lab"), **script_hooks)
     proof = gather_proof(repo, route, issue_body, pr_body, stress_fn=stress_fn)
     try:
         tests = marked_test_ids(pr_body)
     except ValueError:
         tests = []
     return evaluate(
-        decisive, proof, revert=route.revert, tests=tests, flaky=route.flaky, flaky_tests=flaky_selectors(issue_body)
+        decisive, proof, revert=route.revert, tests=tests, flaky=route.flaky, flaky_tests=flaky_selectors(issue_body),
+        script=script, script_required=script_in(issue_body) is not None,
     )
 
 
 def load_evidence(
     decisive_path: Path, proof_path: Path, *, revert: bool, tests: Sequence[str], flaky: bool,
-    flaky_tests: Sequence[str] = (),
+    flaky_tests: Sequence[str] = (), script_path: Path | None = None, script_required: bool = False,
 ) -> Evidence:
     """The evidence artifacts as `post` reads them. Unreadable decisive evidence leaves no head to
-    post for; an unreadable proof is simply not green."""
+    post for; an unreadable script result or proof is simply not green."""
     try:
         decisive = Decisive.from_json(json.loads(_read(decisive_path)))
     except (OSError, ValueError, KeyError, TypeError) as error:
@@ -909,8 +1082,16 @@ def load_evidence(
             proof = HeadProof.from_json(json.loads(_read(proof_path)))
         except (OSError, ValueError, KeyError, TypeError) as error:
             missing = f"the proof of the head's tests is unreadable: {type(error).__name__}"
+    script: ScriptResult | None = None
+    missing_script = "no result of the reproduction script"
+    if script_path is not None and not revert:
+        try:
+            script = ScriptResult.from_json(json.loads(_read(script_path)))
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            missing_script = f"the reproduction script's result is unreadable: {type(error).__name__}"
     return evaluate(
-        decisive, proof, revert=revert, tests=tests, flaky=flaky, flaky_tests=flaky_tests, missing_proof=missing
+        decisive, proof, revert=revert, tests=tests, flaky=flaky, flaky_tests=flaky_tests, missing_proof=missing,
+        script=script, script_required=script_required, missing_script=missing_script,
     )
 
 

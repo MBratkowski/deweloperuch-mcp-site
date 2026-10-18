@@ -194,6 +194,9 @@ def dispatches(gh: FakeGitHub, workflow: str) -> list[Any]:
         ("push event", run_event(event="push"), pull_data(), ("ignore", None)),
         ("stale head", run_event(head="f" * 40), pull_data(), ("ignore", None)),
         ("no factory label", run_event(), pull_data(labels=()), ("ignore", None)),
+        ("a person took it over", run_event(), pull_data(labels=("factory", "factory:needs-human")), ("ignore", None)),
+        ("a person took it over, Check failed", run_event("failure"),
+         pull_data(labels=("factory", "factory:needs-human")), ("ignore", None)),
         ("a draft", run_event(), pull_data(draft=True), ("ignore", None)),
         ("closed", run_event(), pull_data(state="closed"), ("ignore", None)),
         ("cancelled Check", run_event("cancelled"), pull_data(), ("ignore", None)),
@@ -307,6 +310,16 @@ def test_a_failed_check_on_a_revert_goes_to_a_person() -> None:
     issue = issue_data(("factory:regressed", "factory:needs-human"))
     gh = github(revert_pull(), issue, comments=[merged_marker()])
     assert route(run_event("failure"), gh, CONFIG, TRUSTED).action == "needs-human"
+
+
+def test_route_leaves_a_revert_a_person_took_over_alone() -> None:
+    issue = issue_data(("factory:regressed", "factory:needs-human"))
+    pull = revert_pull(labels=("factory", "factory:revert", "factory:needs-human"))
+    gh = github(pull, issue, comments=[merged_marker()])
+    for conclusion in ("success", "failure"):
+        result = route(run_event(conclusion), gh, CONFIG, TRUSTED)
+        assert result.action == "ignore" and "factory:needs-human" in result.reason
+    assert writes(gh) == []
 
 
 @pytest.mark.parametrize("pull", [revert_pull(labels=("factory",)), pull_data(labels=("factory", "factory:revert"))])
@@ -507,8 +520,51 @@ def test_post_lists_what_the_merger_will_block_on() -> None:
     found = evidence(fence=fence, changed_baselines=("tests/visual/baselines/landing-mobile.png",))
     assert run_post(gh, verdict(), found) == "approved"
     (created,) = posted(gh, f"{API}/pulls/12/reviews")
-    assert "existing tests changed: tests/e2e/test_docs.py" in created["body"]
-    assert "tests/visual/baselines/landing-mobile.png" in created["body"]
+    assert "- existing tests changed: `tests/e2e/test_docs.py`" in created["body"]
+    assert "- `tests/visual/baselines/landing-mobile.png`" in created["body"]
+
+
+def test_post_puts_head_chosen_names_into_code_spans() -> None:
+    # Names the head chose (a baseline, a path the fence lists) and detail from the artifacts never
+    # render as markdown, a link or a mention in the review.
+    gh = github()
+    link = "[click](https://example.com/x)"
+    fence = FenceReport(True, [], 4, False, [f"existing tests changed: tests/e2e/{link}.py"])
+    found = evidence(
+        fence=fence,
+        changed_baselines=("tests/visual/baselines/`@owner` a.png",),
+        notes=("flaked once: tests.e2e.test_docs::test_toc[chromium]",),
+    )
+    assert run_post(gh, verdict(), found) == "approved"
+    (created,) = posted(gh, f"{API}/pulls/12/reviews")
+    body = created["body"]
+    assert f"- existing tests changed: `tests/e2e/{link}.py`" in body
+    assert "- ``tests/visual/baselines/`@‍owner` a.png``" in body
+    assert "- flaked once: `tests.e2e.test_docs::test_toc[chromium]`" in body
+    gh = github()
+    reasons = (f"failed on the head site and failed on the rerun: tests.e2e.{link}::test_x",)
+    assert run_post(gh, verdict(), evidence(green=False, reasons=reasons)) == "refused"
+    assert any(f"failed on the head site and failed on the rerun: `tests.e2e.{link}::test_x`" in text
+               for text in comments_on(gh, 12))
+
+
+def reviewed(commit: str, login: str = "github-actions[bot]", state: str = "APPROVED") -> dict[str, Any]:
+    return {"id": 1, "user": {"login": login}, "commit_id": commit, "state": state}
+
+
+@pytest.mark.parametrize("kind", ["approve", "request_changes"])
+def test_post_refuses_a_second_review_of_the_same_head(kind: str) -> None:
+    gh = github(files=[{"filename": "css/site.css", "patch": PATCH}])
+    gh.responses[("GET", f"{API}/pulls/12/reviews")] = [reviewed(HEAD, state="DISMISSED")]
+    assert run_post(gh, verdict(kind), evidence()) == "refused"
+    assert writes(gh) == []  # no review, no dispatch of the merger or the fixer, no hand-over
+
+
+def test_post_reviews_a_head_reviewed_only_by_others_or_before() -> None:
+    gh = github(files=[{"filename": "css/site.css", "patch": PATCH}])
+    gh.responses[("GET", f"{API}/pulls/12/reviews")] = [reviewed("f" * 40), reviewed(HEAD, login=OWNER)]
+    assert run_post(gh, verdict(), evidence()) == "approved"
+    assert dispatches(gh, "factory-merge.yml") == [{"ref": "main", "inputs": {"pr": "12"}}]
 
 
 def test_a_revert_is_approved_or_handed_to_a_person() -> None:
@@ -579,6 +635,26 @@ def test_compare_sessions() -> None:
     assert reasons == ["failed on the head site: t::b", "not collected on the head site: t::c"]
     # A test only the head session has is not part of the check; a base failure is not required.
     assert compare_sessions({"t::a": "passed"}, {"t::a": "passed", "t::new": "failed"}) == []
+    # R46: a lost test that passes on the rerun is accepted; one that does not stays a reason.
+    assert compare_sessions(base, head, {"t::b": "passed", "t::c": "error"}) == [
+        "not collected on the head site and errored on the rerun: t::c"
+    ]
+    assert compare_sessions(base, head, {}) == [
+        "failed on the head site and not collected on the rerun: t::b",
+        "not collected on the head site and not collected on the rerun: t::c",
+    ]
+
+
+def test_node_id_turns_a_junit_id_into_a_pytest_node(tmp_path: Path) -> None:
+    (tmp_path / "tests" / "e2e").mkdir(parents=True)
+    (tmp_path / "tests" / "e2e" / "test_docs.py").write_text("", encoding="utf-8")
+    node_id = review_evidence.node_id
+    assert node_id(tmp_path, "tests.e2e.test_docs::test_toc[chromium-no-preference]") == (
+        "tests/e2e/test_docs.py::test_toc[chromium-no-preference]"
+    )
+    assert node_id(tmp_path, "tests.e2e.test_docs.TestToc::test_one") == "tests/e2e/test_docs.py::TestToc::test_one"
+    for unknown in ("tests.e2e.test_other::test_x", "test_x", "..tests::x", "tests/e2e.test_docs::x"):
+        assert node_id(tmp_path, unknown) is None, unknown
 
 
 def test_compare_sessions_lists_a_bounded_number_of_reasons() -> None:
@@ -668,10 +744,12 @@ def test_behaviour_check_ignores_head_test_code(tmp_path: Path) -> None:
         },
     )
     result = behaviour_check(repo, base, head, tmp_path / "out")
-    assert result.green is False
-    assert result.reasons == ("failed on the head site: tests.e2e.test_site::test_title",)
+    assert result.green is False and result.flaked == ()
+    assert result.reasons == ("failed on the head site and failed on the rerun: tests.e2e.test_site::test_title",)
     head_session = junit_results(tmp_path / "out" / "head-site-e2e.xml")
     assert head_session is not None and "tests.e2e.test_new::test_new" not in head_session
+    # The rerun ran only the lost test, with the base's test code, against the head site.
+    assert junit_results(tmp_path / "out" / "head-site-rerun.xml") == {"tests.e2e.test_site::test_title": "failed"}
 
 
 def test_behaviour_check_uses_the_head_site_files_and_baselines(tmp_path: Path) -> None:
@@ -681,8 +759,70 @@ def test_behaviour_check_uses_the_head_site_files_and_baselines(tmp_path: Path) 
     )
     result = behaviour_check(repo, base, head, tmp_path / "out")
     assert result.green is False
-    assert result.reasons == ("failed on the head site: tests.e2e.test_site::test_stylesheet",)
+    assert result.reasons == ("failed on the head site and failed on the rerun: tests.e2e.test_site::test_stylesheet",)
     assert result.changed_baselines == ("tests/visual/baselines/landing-desktop.png",)
+
+
+FLAKY_SITE_TEST = (
+    "import os\nfrom pathlib import Path\n\n\n"
+    "def test_flaky() -> None:\n"
+    "    counter = Path(os.environ['FLAKE_COUNTER'])\n"
+    "    runs = int(counter.read_text()) + 1 if counter.exists() else 1\n"
+    "    counter.write_text(str(runs))\n"
+    "    assert runs != 2  # the second run of the whole check: the head-site session\n"
+)
+
+
+def test_behaviour_check_accepts_a_test_that_flakes_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Run 1 on the pure base passes, run 2 in the head-site session fails, run 3 in the fresh rerun
+    # session passes: accepted and recorded as flaked once (R46).
+    monkeypatch.setenv("FLAKE_COUNTER", str(tmp_path / "counter"))
+    repo, base, head = site_repo(tmp_path, {"css/site.css": "h1 { color: blue; }\n"})
+    flaky = commit(repo, "A flaky test", {"tests/e2e/test_flaky.py": FLAKY_SITE_TEST})
+    git("checkout", "-q", BRANCH, cwd=repo)
+    git("rebase", "-q", "main", cwd=repo)
+    head = git("rev-parse", "HEAD", cwd=repo)
+    result = behaviour_check(repo, flaky, head, tmp_path / "out")
+    assert result.green is True and result.reasons == ()
+    assert result.flaked == ("tests.e2e.test_flaky::test_flaky",)
+    assert (result.base_passed, result.head_passed) == (3, 3)
+    assert (tmp_path / "counter").read_text() == "3"
+
+
+def recording_rerun(results: Mapping[str, str]):
+    calls: list[list[str]] = []
+
+    def rerun(tree: Path, nodes: Sequence[str], report: Path) -> int:
+        calls.append(list(nodes))
+        junit(report, {test_id: status for test_id, status in results.items()})
+        return 0
+
+    return rerun, calls
+
+
+def test_behaviour_check_reruns_only_the_lost_tests_once(tmp_path: Path) -> None:
+    repo, base, head = site_repo(tmp_path, {"css/site.css": "h1 { color: blue; }\n"})
+    title, sheet = "tests.e2e.test_site::test_title", "tests.e2e.test_site::test_stylesheet"
+    sessions = fake_sessions({title: "passed", sheet: "passed"}, {title: "failed"})
+    rerun, calls = recording_rerun({title: "passed", sheet: "failed"})
+    result = behaviour_check(repo, base, head, tmp_path / "out", run=sessions, rerun=rerun)
+    assert calls == [["tests/e2e/test_site.py::test_title", "tests/e2e/test_site.py::test_stylesheet"]]
+    assert result.flaked == (title,) and result.green is False
+    assert result.reasons == (f"not collected on the head site and failed on the rerun: {sheet}",)
+    # Nothing lost: no rerun at all.
+    rerun, calls = recording_rerun({})
+    assert behaviour_check(repo, base, head, tmp_path / "b", run=fake_sessions({title: "passed"}, {title: "passed"}),
+                           rerun=rerun).green is True
+    assert calls == []
+
+
+def test_behaviour_check_reruns_nothing_when_the_base_did_not_run_cleanly(tmp_path: Path) -> None:
+    repo, base, head = site_repo(tmp_path, {"css/site.css": "h1 { color: blue; }\n"})
+    title = "tests.e2e.test_site::test_title"
+    rerun, calls = recording_rerun({title: "passed"})
+    result = behaviour_check(repo, base, head, tmp_path / "out", run=fake_sessions({title: "passed"}, {}, codes=(2, 1)),
+                             rerun=rerun)
+    assert result.green is False and calls == [] and result.flaked == ()
 
 
 def test_install_head_site_copies_only_the_published_files(tmp_path: Path) -> None:
@@ -874,10 +1014,16 @@ def test_a_new_group_in_the_neighbourhood_is_not_green(tmp_path: Path) -> None:
 
 def test_a_failing_behavioural_check_is_not_green(tmp_path: Path) -> None:
     repo, base, head = site_repo(tmp_path, {"css/site.css": "h1 { color: blue; }\n"})
-    failing = fake_sessions({"t::a": "passed"}, {"t::a": "failed"})
+    title = "tests.e2e.test_site::test_title"
+    failing = fake_sessions({title: "passed"}, {title: "failed"})
+    rerun, calls = recording_rerun({title: "failed"})
     found = gather_decisive(repo, site_route(base, head), groups_body([overflow_group()]), CONFIG, tmp_path / "out",
-                            lab=FakeLab({}, {}), run=failing)
-    assert found.green is False and "failed on the head site: t::a" in found.reasons
+                            lab=FakeLab({}, {}), run=failing, rerun=rerun)
+    assert found.green is False and f"failed on the head site and failed on the rerun: {title}" in found.reasons
+    assert calls == [["tests/e2e/test_site.py::test_title"]]
+    flaked = gather_decisive(repo, site_route(base, head), groups_body([overflow_group()]), CONFIG, tmp_path / "out2",
+                             lab=FakeLab({}, {}), run=failing, rerun=recording_rerun({title: "passed"})[0])
+    assert flaked.green is True and flaked.behaviour is not None and flaked.behaviour.flaked == (title,)
 
 
 def test_hard_fence_reasons_are_not_green_and_review_reasons_are_listed(tmp_path: Path) -> None:
@@ -893,25 +1039,106 @@ def test_hard_fence_reasons_are_not_green_and_review_reasons_are_listed(tmp_path
     assert soft.green is True
 
 
-def test_a_script_reproduction_must_report_not_reproduced_on_the_head(tmp_path: Path) -> None:
+SCRIPT_URL = f"https://raw.githubusercontent.com/{REPO}/0123abcd/issues/abc/1/terminal.py"
+
+
+def test_the_decisive_phase_never_runs_the_reproduction_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # R45: the script is code an agent wrote; it runs only after the decisive evidence is uploaded.
+    def never(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("the decisive phase ran or fetched the script")
+
+    monkeypatch.setattr(review_evidence, "download_script", never)
+    monkeypatch.setattr(review_evidence.check_drafts, "run_script", never)
+    monkeypatch.setattr(review_evidence, "_script_code", never)
     repo, base, head = site_repo(tmp_path, {"css/site.css": "h1 { color: blue; }\n"})
-    url = f"https://raw.githubusercontent.com/{REPO}/0123abcd/issues/abc/1/terminal.py"
+    found = gather_decisive(repo, site_route(base, head), groups_body(script=SCRIPT_URL), CONFIG, tmp_path / "out",
+                            lab=FakeLab({}, {}), run=GREEN_SESSIONS)
+    assert found.green is True and found.original == 0 and found.script is True
+    assert review_evidence.Decisive.from_json(json.loads(json.dumps(found.to_json()))).script is True
+    both = gather_decisive(repo, site_route(base, head), groups_body([overflow_group()], script=SCRIPT_URL), CONFIG,
+                           tmp_path / "out2", lab=FakeLab({}, {}), run=GREEN_SESSIONS)
+    assert both.script is True and both.original == 0
+
+
+def test_the_script_phase_runs_the_reproduction_script_on_the_head(tmp_path: Path) -> None:
+    repo, base, head = site_repo(tmp_path, {"css/site.css": "h1 { color: blue; }\n"})
     ran: list[tuple[str, str]] = []
 
     def run_script(relative: str, site: str) -> int:
         ran.append((relative, site))
         return 0
 
-    found = gather_decisive(repo, site_route(base, head), groups_body(script=url), CONFIG, tmp_path / "out",
-                            lab=FakeLab({}, {}), run=GREEN_SESSIONS, fetch_script=lambda u: b"print('x')\n",
-                            run_script=run_script, script_root=tmp_path / "scripts")
-    assert found.green is True and found.original == 0
-    assert ran and ran[0][1] == f"http://127.0.0.1/{head}/" and ran[0][0].startswith("factory-out/repros/")
-    bad = groups_body(script="https://example.com/x.py")
-    refused = gather_decisive(repo, site_route(base, head), bad, CONFIG, tmp_path / "out3",
-                              lab=FakeLab({}, {}), run=GREEN_SESSIONS, fetch_script=lambda u: b"",
-                              run_script=run_script, script_root=tmp_path / "scripts")
-    assert refused.green is False and refused.original == 2
+    hooks: dict[str, Any] = {"lab": FakeLab({}, {}), "fetch_script": lambda u: b"print('x')\n",
+                             "run_script": run_script, "script_root": tmp_path / "scripts"}
+    result = review_evidence.gather_script(repo, site_route(base, head), groups_body(script=SCRIPT_URL), CONFIG, **hooks)
+    assert (result.ran, result.code, result.head, result.base, result.pr) == (True, 0, head, base, 12)
+    assert ran == [("factory-out/repros/review-7.py", f"http://127.0.0.1/{head}/")]
+    assert (tmp_path / "scripts" / "factory-out/repros/review-7.py").read_bytes() == b"print('x')\n"
+    assert review_evidence.ScriptResult.from_json(json.loads(json.dumps(result.to_json()))) == result
+    refused = review_evidence.gather_script(repo, site_route(base, head), groups_body(script="https://example.com/x.py"),
+                                            CONFIG, **hooks)
+    assert (refused.ran, refused.code) == (True, 2) and len(ran) == 1
+    still = review_evidence.gather_script(repo, site_route(base, head), groups_body(script=SCRIPT_URL), CONFIG,
+                                          **{**hooks, "run_script": lambda relative, site: 1})
+    assert still.code == 1 and "still finds" in still.reason
+    none = review_evidence.gather_script(repo, site_route(base, head), groups_body([overflow_group()]), CONFIG, **hooks)
+    assert (none.ran, none.code) == (False, 0) and len(ran) == 1
+
+
+def script_result(code: int = 0, *, ran: bool = True, head: str = HEAD) -> review_evidence.ScriptResult:
+    return review_evidence.ScriptResult(pr=12, issue=7, base=BASE, head=head, ran=ran, code=code, reason="r")
+
+
+def decisive_record(*, script: bool = True, flaked: tuple[str, ...] = ()) -> review_evidence.Decisive:
+    return review_evidence.Decisive(
+        pr=12, issue=7, base=BASE, head=HEAD, revert=False, fence=FenceReport(True, [], 4, False, []),
+        exact_revert=None, behaviour=Behaviour(True, (), 10, 10, (), flaked), original=0, original_reason="gone",
+        new_groups=(), reasons=(), script=script,
+    )
+
+
+GOOD_PROOF = HeadProof(head=HEAD, base=BASE, flaky=False, red={TEST_ID: "failed: x"}, green={TEST_ID: "passed: x"},
+                       reasons=(), logs={})
+
+
+@pytest.mark.parametrize(
+    ("script", "green", "original"),
+    [
+        (script_result(0), True, 0),
+        (script_result(1), False, 1),
+        (script_result(2), False, 2),
+        (script_result(0, ran=False), False, 2),
+        (script_result(0, head="f" * 40), False, 2),
+        (None, False, 2),
+    ],
+)
+def test_evidence_needs_the_script_result_when_the_issue_has_a_script(
+    script: review_evidence.ScriptResult | None, green: bool, original: int
+) -> None:
+    found = review_evidence.evaluate(decisive_record(), GOOD_PROOF, revert=False, tests=[TEST_ID], flaky=False,
+                                     script=script)
+    assert (found.green, found.original) == (green, original), found.reasons
+
+
+def test_the_trusted_issue_can_require_the_script_result_on_its_own() -> None:
+    # The decisive file says no script, but the issue post routed again carries one: still required.
+    args: dict[str, Any] = {"revert": False, "tests": [TEST_ID], "flaky": False}
+    assert review_evidence.evaluate(decisive_record(script=False), GOOD_PROOF, **args).green is True
+    found = review_evidence.evaluate(decisive_record(script=False), GOOD_PROOF, script_required=True, **args)
+    assert found.green is False and "no result of the reproduction script" in found.reasons
+
+
+def test_a_flake_is_accepted_with_a_note() -> None:
+    found = review_evidence.evaluate(decisive_record(script=False, flaked=("t::a", "t::b")), GOOD_PROOF,
+                                     revert=False, tests=[TEST_ID], flaky=False)
+    assert found.green is True and found.notes == ("flaked once: t::a, t::b",)
+
+
+def test_the_proofs_own_reasons_count_but_their_text_never_reaches_a_review() -> None:
+    proof = replace(GOOD_PROOF, reasons=("@owner see [this](https://example.com)",))
+    found = review_evidence.evaluate(decisive_record(script=False), proof, revert=False, tests=[TEST_ID], flaky=False)
+    assert found.green is False
+    assert found.reasons == ("the proof of the head's tests reports further problems (see proof.json)",)
 
 
 def test_an_issue_without_a_reproduction_is_not_green(tmp_path: Path) -> None:
@@ -1084,7 +1311,7 @@ def cli_post(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gh: FakeGitHub, ve
     event.write_text(json.dumps(run_event()), encoding="utf-8")
     decisive, proof = write_evidence_files(tmp_path)
     return review.main(["post", "--event", str(event), "--verdict", str(verdict_file),
-                        "--decisive", str(decisive), "--proof", str(proof)])
+                        "--decisive", str(decisive), "--script", str(tmp_path / "script"), "--proof", str(proof)])
 
 
 def test_cli_post_routes_again_and_posts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1093,6 +1320,25 @@ def test_cli_post_routes_again_and_posts(tmp_path: Path, monkeypatch: pytest.Mon
     assert cli_post(tmp_path, monkeypatch, gh, tmp_path / "verdict.json") == 0
     (created,) = posted(gh, f"{API}/pulls/12/reviews")
     assert (created["commit_id"], created["event"]) == (HEAD, "APPROVE")
+    assert dispatches(gh, "factory-merge.yml") == [{"ref": "main", "inputs": {"pr": "12"}}]
+
+
+def test_cli_post_needs_the_script_result_of_an_issue_with_a_script(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The decisive file says nothing about a script, but the issue post routes again carries one.
+    issue = issue_data(body=groups_body(script=SCRIPT_URL))
+    (tmp_path / "verdict.json").write_text(json.dumps(verdict()), encoding="utf-8")
+    gh = github(issue=issue, files=[{"filename": "css/site.css", "patch": PATCH}])
+    assert cli_post(tmp_path, monkeypatch, gh, tmp_path / "verdict.json") == 0
+    assert posted(gh, f"{API}/pulls/12/reviews") == [] and dispatches(gh, "factory-merge.yml") == []
+    assert any("reproduction script" in text for text in comments_on(gh, 12))
+    # With the script's result for this head, the approval goes through.
+    other = tmp_path / "second"
+    other.mkdir()
+    (other / "script").mkdir()
+    (other / "script" / "script.json").write_text(json.dumps(script_result(0).to_json()), encoding="utf-8")
+    (other / "verdict.json").write_text(json.dumps(verdict()), encoding="utf-8")
+    gh = github(issue=issue, files=[{"filename": "css/site.css", "patch": PATCH}])
+    assert cli_post(other, monkeypatch, gh, other / "verdict.json") == 0
     assert dispatches(gh, "factory-merge.yml") == [{"ref": "main", "inputs": {"pr": "12"}}]
 
 
@@ -1106,3 +1352,130 @@ def test_cli_post_refuses_a_missing_or_broken_verdict(
         path.write_text(content, encoding="utf-8")
     assert cli_post(tmp_path, monkeypatch, gh, path) == 0
     assert posted(gh, f"{API}/pulls/12/reviews") == [] and "factory:needs-human" in labels_added(gh, 7)
+
+
+# --- the change, written out for the reviewer agent (R45) ----------------------------------------------
+
+
+def test_write_change_writes_the_diff_the_log_and_the_heads_files_as_data(tmp_path: Path) -> None:
+    repo, base, head = site_repo(
+        tmp_path,
+        {"css/site.css": "h1 { color: blue; }\n", "css/new.css": "a {}\n", "js/site.js": None,
+         "tests/visual/baselines/landing-desktop.png": b"\x89PNG\r\n\x1a\nhead"},
+    )
+    git("checkout", "-q", BRANCH, cwd=repo)
+    (repo / "link").symlink_to("css/site.css")
+    git("add", "link", cwd=repo)
+    git("commit", "-q", "-m", "A link", cwd=repo)
+    head = git("rev-parse", "HEAD", cwd=repo)
+    # A diff driver and a textconv filter in the repository's config never run.
+    marker = tmp_path / "ran"
+    git("config", "diff.external", f"touch {marker}", cwd=repo)
+    (repo / ".gitattributes").write_text("*.css diff=evil\n", encoding="utf-8")
+    git("config", "diff.evil.textconv", f"touch {marker} &&", cwd=repo)
+    out = tmp_path / "review"
+    changed = review.write_change(repo, base, head, out)
+    assert not marker.exists()
+    by_path = {item["path"]: item for item in changed}
+    assert set(by_path) == {"css/site.css", "css/new.css", "js/site.js", "link", "tests/visual/baselines/landing-desktop.png"}
+    assert (by_path["css/site.css"]["status"], by_path["css/site.css"]["file"]) == ("M", "files/css/site.css")
+    assert (out / "files" / "css" / "site.css").read_text() == "h1 { color: blue; }\n"
+    assert (out / "files" / "css" / "new.css").read_text() == "a {}\n"
+    assert (out / "files/tests/visual/baselines/landing-desktop.png").read_bytes().endswith(b"head")
+    assert by_path["js/site.js"]["file"] is None and "deleted" in by_path["js/site.js"]["note"]
+    assert by_path["link"]["file"] is None and "symbolic link" in by_path["link"]["note"]
+    assert not (out / "files" / "link").exists() and not (out / "files" / "js").exists()
+    diff = (out / "diff.patch").read_bytes().decode(errors="replace")  # the fake PNG has no NUL byte
+    assert "-h1 { color: red; }" in diff and "+h1 { color: blue; }" in diff and "deleted file mode" in diff
+    log = (out / "log.txt").read_text()
+    assert "A link" in log and "Fix" in log and "css/site.css" in log
+    assert json.loads((out / "changed.json").read_text()) == changed
+
+
+def test_write_change_skips_unsafe_paths_and_refuses_bad_commits(tmp_path: Path) -> None:
+    assert review._unsafe("../x") and review._unsafe("a/.git/config") and review._unsafe("a//b") and review._unsafe("a\\b")
+    assert not review._unsafe("css/site.css")
+    with pytest.raises(ValueError):
+        review.write_change(tmp_path, "HEAD", HEAD, tmp_path / "out")
+
+
+def test_cli_prepare_writes_the_change_of_the_routed_head(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, base, head = site_repo(tmp_path, {"css/site.css": "h1 { color: blue; }\n"})
+    route_file = tmp_path / "route.json"
+    route_file.write_text(json.dumps(routed(base=base, head=head).to_json()), encoding="utf-8")
+    monkeypatch.chdir(repo)
+    assert review.main(["prepare", "--route", str(route_file), "--out", str(tmp_path / "review")]) == 0
+    assert (tmp_path / "review" / "files" / "css" / "site.css").read_text() == "h1 { color: blue; }\n"
+    route_file.write_text(json.dumps(routed("ignore", base=base, head=head).to_json()), encoding="utf-8")
+    assert review.main(["prepare", "--route", str(route_file), "--out", str(tmp_path / "other")]) == 2
+
+
+# --- the hand-over after a failed job (R46) -------------------------------------------------------------
+
+
+def test_report_failure_comments_once_with_the_failed_jobs_and_the_run() -> None:
+    gh = github()
+    results = {"evidence": "success", "review": "failure", "post": "skipped"}
+    assert review.report_failure(gh, routed(), HEAD, results, 4242, CONFIG) is True
+    (comment,) = comments_on(gh, 12)
+    assert "`review` (failure)" in comment and "`evidence`" not in comment and "`post`" not in comment
+    assert f"https://github.com/{REPO}/actions/runs/4242" in comment and HEAD[:7] in comment
+    assert "gh workflow run factory-review.yml --ref main -f pr=12" in comment
+    # One comment and nothing else: no label, no draft, no dispatch.
+    assert [call for call in writes(gh)] == [("POST", f"{API}/issues/12/comments", {"body": comment})]
+
+
+@pytest.mark.parametrize(
+    ("fresh", "results"),
+    [
+        (routed(head="f" * 40), {"evidence": "failure"}),  # the pull request moved: a later event reviews it
+        (routed("ignore"), {"evidence": "failure"}),  # a person took it over, or it closed
+        (routed(), {"evidence": "success", "review": "success", "post": "success"}),
+        (routed(), {"evidence": "success", "review": "skipped", "post": "skipped"}),
+    ],
+)
+def test_report_failure_says_nothing_when_stale_or_nothing_failed(fresh: Route, results: dict[str, str]) -> None:
+    gh = github()
+    assert review.report_failure(gh, fresh, HEAD, results, 4242, CONFIG) is False
+    assert writes(gh) == []
+
+
+def test_report_failure_counts_a_cancelled_job_as_stopped() -> None:
+    # A job that ran out of its timeout may be reported as cancelled.
+    gh = github()
+    results = {"evidence": "cancelled", "review": "skipped", "post": "skipped"}
+    assert review.report_failure(gh, routed(), HEAD, results, 4242, CONFIG) is True
+    (comment,) = comments_on(gh, 12)
+    assert "`evidence` (cancelled)" in comment
+
+
+def test_cli_hand_over_routes_again_and_comments(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    gh = github()
+    monkeypatch.setattr(review, "GitHub", lambda *args, **kwargs: gh)
+    monkeypatch.setenv("FACTORY_APP_SLUG", "factory-app")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps(run_event()), encoding="utf-8")
+    args = ["hand-over", "--event", str(event), "--head", HEAD, "--run-id", "4242",
+            "--job", "evidence=failure", "--job", "review=skipped", "--job", "post=skipped"]
+    assert review.main(args) == 0
+    (comment,) = comments_on(gh, 12)
+    assert "`evidence`" in comment
+    for bad in (["--job", "evidence=maybe"], ["--job", "deploy=failure"], ["--run-id", "x"], ["--head", "HEAD"]):
+        gh.calls.clear()
+        changed = list(args)
+        flag, value = bad
+        changed[changed.index(flag) + 1] = value
+        assert review.main(changed) == 2, bad
+        assert writes(gh) == []
+
+
+def test_cli_evidence_script_phase_writes_its_own_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, base, head = site_repo(tmp_path, {"css/site.css": "h1 { color: blue; }\n"})
+    route_file = tmp_path / "route.json"
+    route_file.write_text(json.dumps(routed(base=base, head=head, issue_body=groups_body([overflow_group()])).to_json()),
+                          encoding="utf-8")
+    monkeypatch.chdir(repo)
+    out = tmp_path / "script"
+    assert review.main(["evidence", "--route", str(route_file), "--phase", "script", "--out", str(out)]) == 0
+    result = review_evidence.ScriptResult.from_json(json.loads((out / "script.json").read_text()))
+    assert (result.ran, result.code, result.head) == (False, 0, head)
