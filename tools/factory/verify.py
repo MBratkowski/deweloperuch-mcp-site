@@ -23,7 +23,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -66,6 +66,7 @@ STALE_CLOSED = (
 
 _MARKER = re.compile(r"<!-- factory:merged sha=([0-9a-f]{40}) pr=([0-9]+) -->")
 _SHA = re.compile(r"[0-9a-f]{40}")
+_REVISION = re.compile(r"[0-9a-f]{40}\^?")  # a commit, or its first parent
 _PATH_PART = re.compile(r"[A-Za-z0-9._-]+")
 
 Result = Literal["fixed", "reproduces", "not-deployed", "error"]
@@ -73,7 +74,7 @@ ReproduceFn = Callable[[Any, Group, str], int]
 RunScriptFn = Callable[[str, str], int]
 FetchScript = Callable[[str], bytes]
 TakeAfter = Callable[[Any, Cell, str, Path], None]
-ParentSite = Callable[[str], AbstractContextManager[str]]
+SiteAt = Callable[[str], AbstractContextManager[str]]  # revision -> base URL of a local build
 PublishEvidence = Callable[[Mapping[str, Path]], dict[str, str]]
 
 
@@ -81,8 +82,12 @@ class GitError(RuntimeError):
     """A git command failed. The message never contains credentials."""
 
 
-class RevertConflict(GitError):
-    """The merge cannot be reverted cleanly on top of main."""
+class RevertFailed(GitError):
+    """`git revert` itself failed on top of main (a conflict, already reverted, a merge commit)."""
+
+
+# Failures of GitHub, git, the evidence branch, files or a malformed API answer: logged per outcome.
+INFRASTRUCTURE = (GitHubError, EvidenceError, GitError, OSError, ValueError, KeyError, TypeError)
 
 
 @dataclass(frozen=True)
@@ -280,11 +285,13 @@ class _Verifier:
     run_script: RunScriptFn
     fetch_script: FetchScript
     take_after: TakeAfter
-    parent_site: ParentSite
+    site_at: SiteAt
+    stack: ExitStack  # keeps every local build served until the run ends
     _deployed: str | None = None
     _contains: dict[tuple[str, str], bool] = field(default_factory=dict)
     _commits: dict[str, dict] = field(default_factory=dict)
-    _live: dict[str, int] = field(default_factory=dict)
+    _codes: dict[tuple[str, str], int] = field(default_factory=dict)
+    _sites: dict[str, str | Exception] = field(default_factory=dict)
 
     @property
     def api(self) -> str:
@@ -398,13 +405,31 @@ class _Verifier:
             return "fixed", "the reproduction script reports NOT REPRODUCED on the live site"
         return "error", "the reproduction script failed (no verdict line, a traceback, or a timeout)"
 
-    def live_code(self, group: Group) -> int:
-        if group.fingerprint not in self._live:
-            self._live[group.fingerprint] = self.reproduce(self.playwright, group, self.live_url)
-        return self._live[group.fingerprint]
+    def code(self, group: Group, url: str) -> int:
+        """The group's reproduction exit code at `url`, once per run."""
+        key = (group.fingerprint, url)
+        if key not in self._codes:
+            try:
+                self._codes[key] = self.reproduce(self.playwright, group, url)
+            except ValueError:
+                self._codes[key] = 2
+        return self._codes[key]
+
+    def site(self, revision: str) -> str:
+        """A local build of `revision`, built once per run and served until the run ends."""
+        if revision not in self._sites:
+            try:
+                self._sites[revision] = self.stack.enter_context(self.site_at(revision))
+            except (GitError, OSError, ValueError) as error:
+                self._sites[revision] = error
+        site = self._sites[revision]
+        if isinstance(site, Exception):
+            raise _BuildFailed(f"cannot build {revision[:7]}{revision[40:]}: {redact(str(site))}")
+        return site
 
     def new_regression(self, sha: str) -> tuple[Result, str] | None:
-        """R27: a new S1/S2 finding on a page the merge changed, live but not before the merge."""
+        """R27b: a new or regressed S1/S2 finding on a page the merge changed that is on the live
+        site, present at the merge commit and absent at the commit before it."""
         if not self.probe_groups:
             return None
         candidates = [
@@ -412,36 +437,34 @@ class _Verifier:
             for g in self.probe_groups
             if g.severity in SERIOUS
             and g.check not in CI_CHECKS
-            and dedup({g.fingerprint}, self.issues, self.trusted).decision == "new"
+            and dedup({g.fingerprint}, self.issues, self.trusted).decision in ("new", "regression")
         ]
         if not candidates:
             return None
         files = [item.get("filename", "") for item in self.commit(sha).get("files") or []]
         pages = pages_changed(files)
-        candidates = [g for g in candidates if g.page in pages]
-        live: list[Group] = []
-        for group in candidates:
-            code = self.live_code(group)
-            if code == 2:
+        undecided: str | None = None
+        for group in (g for g in candidates if g.page in pages):
+            live = self.code(group, self.live_url)
+            if live == 2:
                 return "error", f"cannot tell whether the new finding {_describe(group)} is on the live site"
-            if code == 1:
-                live.append(group)
-        if not live:
-            return None
-        try:
-            with self.parent_site(sha) as parent_url:
-                codes = [(group, self.reproduce(self.playwright, group, parent_url)) for group in live]
-        except (GitError, OSError, ValueError) as error:
-            return "error", f"cannot build the commit before {sha[:7]}: {redact(str(error))}"
-        for group, code in codes:
-            if code == 0:
+            if live == 0:
+                continue
+            try:
+                at_merge = self.code(group, self.site(sha))
+                if at_merge == 0:
+                    continue  # the merge commit does not have it: another commit brought it
+                before = self.code(group, self.site(f"{sha}^")) if at_merge == 1 else 2
+            except _BuildFailed as error:
+                return "error", str(error)
+            if at_merge == 1 and before == 0:
                 return "reproduces", (
-                    f"new {group.severity} finding {_describe(group)} reproduces on the live site "
-                    f"but not on {sha[:7]}^, the commit before the merge"
+                    f"new {group.severity} finding {_describe(group)} reproduces on the live site and at "
+                    f"the merge {sha[:7]}, but not at {sha[:7]}^, the commit before it"
                 )
-        if any(code == 2 for _, code in codes):
-            return "error", f"cannot reproduce the new findings on the commit before {sha[:7]}"
-        return None
+            if 2 in (at_merge, before):
+                undecided = undecided or f"cannot reproduce the new finding {_describe(group)} on a local build"
+        return ("error", undecided) if undecided else None
 
     def after(self, number: int, fp: str, group: Group) -> Path:
         from playwright.sync_api import Error as PlaywrightError
@@ -462,15 +485,19 @@ class _AfterFailed(Exception):
     pass
 
 
+class _BuildFailed(Exception):
+    pass
+
+
 @contextmanager
-def parent_worktree(repo: Path, sha: str) -> Iterator[Path]:
-    """A temporary detached worktree of `<sha>^`, removed afterwards."""
-    if not _SHA.fullmatch(sha):
-        raise ValueError(f"not a commit SHA: {sha!r}")
-    holder = Path(tempfile.mkdtemp(prefix="factory-parent-"))
+def worktree_at(repo: Path, revision: str) -> Iterator[Path]:
+    """A temporary detached worktree of `<sha>` or `<sha>^`, removed afterwards."""
+    if not _REVISION.fullmatch(revision):
+        raise ValueError(f"not a commit SHA or its parent: {revision!r}")
+    holder = Path(tempfile.mkdtemp(prefix="factory-build-"))
     tree = holder / "tree"
     try:
-        _git(["worktree", "add", "--detach", str(tree), f"{sha}^"], repo)
+        _git(["worktree", "add", "--detach", str(tree), revision], repo)
         try:
             yield tree
         finally:
@@ -481,11 +508,11 @@ def parent_worktree(repo: Path, sha: str) -> Iterator[Path]:
 
 
 @contextmanager
-def serve_parent(sha: str) -> Iterator[str]:
-    """The commit before the merge, packaged and served on 127.0.0.1."""
+def serve_revision(revision: str) -> Iterator[str]:
+    """`revision` of this repository, packaged and served on 127.0.0.1."""
     from tools.factory.probe import local_site
 
-    with parent_worktree(ROOT, sha) as tree, local_site(tree) as url:
+    with worktree_at(ROOT, revision) as tree, local_site(tree) as url:
         yield url
 
 
@@ -503,7 +530,7 @@ def verify_all(
     run_script_fn: RunScriptFn | None = None,
     fetch_script: FetchScript | None = None,
     take_after: TakeAfter | None = None,
-    parent_site: ParentSite | None = None,
+    site_at: SiteAt | None = None,
 ) -> list[Outcome]:
     """One outcome per pending issue; `issues` is every issue (dedup for new findings needs them all).
 
@@ -511,22 +538,26 @@ def verify_all(
     """
     if reproduce_fn is None:
         from tools.factory.probe import reproduce as reproduce_fn
-    verifier = _Verifier(
-        gh=gh,
-        playwright=playwright,
-        issues=issues,
-        live_url=live_url,
-        simulate=simulate,
-        trusted=trusted if trusted is not None else load_config().trusted(os.environ.get("FACTORY_APP_SLUG")),
-        out_dir=out_dir,
-        probe_groups=probe_groups,
-        reproduce=reproduce_fn,
-        run_script=run_script_fn or (lambda script, url: check_drafts.run_script(script, url)),
-        fetch_script=fetch_script or download_script,
-        take_after=take_after or take_after_image,
-        parent_site=parent_site or serve_parent,
-    )
-    return [verifier.verify(issue) for issue in pending(issues)]
+    if trusted is None:
+        trusted = load_config().trusted(os.environ.get("FACTORY_APP_SLUG"))
+    with ExitStack() as stack:
+        verifier = _Verifier(
+            gh=gh,
+            playwright=playwright,
+            issues=issues,
+            live_url=live_url,
+            simulate=simulate,
+            trusted=trusted,
+            out_dir=out_dir,
+            probe_groups=probe_groups,
+            reproduce=reproduce_fn,
+            run_script=run_script_fn or (lambda script, url: check_drafts.run_script(script, url)),
+            fetch_script=fetch_script or download_script,
+            take_after=take_after or take_after_image,
+            site_at=site_at or serve_revision,
+            stack=stack,
+        )
+        return [verifier.verify(issue) for issue in pending(issues)]
 
 
 # --- outcomes file --------------------------------------------------------------------------
@@ -630,7 +661,8 @@ def _git(args: list[str], cwd: Path, remote: str | None = None, identity: bool =
 def revert_branch(repo: Path, remote: str, merge_sha: str, branch: str) -> str:
     """Push `branch` = origin/main plus `git revert --no-edit <merge_sha>`; returns the commit title.
 
-    Works in a temporary worktree, so the checkout in `repo` is left as it was.
+    Works in a temporary worktree, so the checkout in `repo` is left as it was. Raises RevertFailed
+    when `git revert` itself fails, GitError when fetching, checking out or pushing fails.
     """
     if not _SHA.fullmatch(merge_sha):
         raise ValueError(f"not a commit SHA: {merge_sha!r}")
@@ -645,8 +677,9 @@ def revert_branch(repo: Path, remote: str, merge_sha: str, branch: str) -> str:
                 conflicts = _git_run(["diff", "--name-only", "--diff-filter=U"], tree).stdout.split()
                 _git_run(["revert", "--abort"], tree)
                 if conflicts:
-                    raise RevertConflict(f"the revert of {merge_sha[:7]} conflicts in {', '.join(conflicts)}")
-                raise _git_error(reverted, "revert", remote)
+                    raise RevertFailed(f"the revert of {merge_sha[:7]} conflicts in {', '.join(conflicts)}")
+                # e.g. already undone on main ("nothing to commit") or a merge commit (exit 128)
+                raise RevertFailed(str(_git_error(reverted, "revert", remote)))
             title = _git(["log", "-1", "--format=%s"], tree, remote)
             _git(["push", "--force", remote, f"HEAD:refs/heads/{branch}"], tree, remote)
             return title
@@ -743,11 +776,16 @@ def _revert(gh: Any, api: str, repo_name: str, outcome: Outcome, pr: int, repo: 
     if pull is None:
         try:
             title = revert_branch(repo, remote, sha, branch)
-        except RevertConflict as error:
-            _comment(gh, api, number, f"{failed}\n\nThe automatic revert did not apply ({error}); revert it by hand.\n")
+        except RevertFailed as error:
+            _comment(
+                gh,
+                api,
+                number,
+                f"{failed}\n\nThe automatic revert did not apply ({_plain(str(error))}); revert it by hand.\n",
+            )
             gh.request("POST", f"{api}/issues/{number}/labels", {"labels": [REGRESSED, NEEDS_HUMAN]})
             _remove_label(gh, api, number, MERGED)
-            print(f"#{number}: regressed; the revert conflicts, left to a person")
+            print(f"#{number}: regressed; the revert did not apply, left to a person")
             return
         body = (
             f"Refs #{number}\n\n"
@@ -784,26 +822,50 @@ def act(
     remote: str | None = None,
     trusted: frozenset[str] | None = None,
     run_id: str | None = None,
-) -> None:
-    """Close fixed issues and revert regressions. Never reruns a reproduction."""
+) -> list[int]:
+    """Close fixed issues and revert regressions. Never reruns a reproduction.
+
+    Each outcome is handled on its own: an infrastructure failure on one is logged and the rest
+    still run. Returns the issue numbers whose handling failed.
+    """
     trusted = trusted if trusted is not None else load_config().trusted(os.environ.get("FACTORY_APP_SLUG"))
     run_id = run_id or os.environ.get("GITHUB_RUN_ID") or "local"
     api, repo_name = ci_facts._api(gh), ci_facts._repo(gh)
+    failed: list[int] = []
     for outcome in outcomes:
-        if outcome.result == "not-deployed":
-            print(f"#{outcome.issue}: not deployed yet ({_plain(outcome.reason)})")
-            continue
-        if outcome.result == "error":
-            print(f"#{outcome.issue}: verification error: {_plain(outcome.reason)}")
-            continue
-        current = _current(gh, api, outcome, trusted)
-        if current is None:
-            continue
-        issue, pr = current
-        if outcome.result == "fixed":
-            _close_fixed(gh, api, outcome, issue, pr, publish_evidence, run_id)
-        else:
-            _revert(gh, api, repo_name, outcome, pr, repo, remote or _token_remote(repo_name))
+        try:
+            _act_on(outcome, gh, api, repo_name, repo, publish_evidence, remote, trusted, run_id)
+        except INFRASTRUCTURE as error:
+            print(f"#{outcome.issue}: failed: {type(error).__name__}: {redact(str(error))}", file=sys.stderr)
+            failed.append(outcome.issue)
+    return failed
+
+
+def _act_on(
+    outcome: Outcome,
+    gh: Any,
+    api: str,
+    repo_name: str,
+    repo: Path,
+    publish_evidence: PublishEvidence,
+    remote: str | None,
+    trusted: frozenset[str],
+    run_id: str,
+) -> None:
+    if outcome.result == "not-deployed":
+        print(f"#{outcome.issue}: not deployed yet ({_plain(outcome.reason)})")
+        return
+    if outcome.result == "error":
+        print(f"#{outcome.issue}: verification error: {_plain(outcome.reason)}")
+        return
+    current = _current(gh, api, outcome, trusted)
+    if current is None:
+        return
+    issue, pr = current
+    if outcome.result == "fixed":
+        _close_fixed(gh, api, outcome, issue, pr, publish_evidence, run_id)
+    else:
+        _revert(gh, api, repo_name, outcome, pr, repo, remote or _token_remote(repo_name))
 
 
 def close_stale_deploy(gh: Any, stale: Group | None, *, trusted: frozenset[str] | None = None) -> list[int]:
@@ -911,10 +973,13 @@ def _act(args: argparse.Namespace) -> int:
                 Path(workdir),
             )
 
-    act(outcomes, gh, ROOT, publish_evidence)
-    closed = close_stale_deploy(gh, deploy_stale(gh))
+    failed = act(outcomes, gh, ROOT, publish_evidence)
+    closed = close_stale_deploy(gh, deploy_stale(gh))  # runs even when an outcome failed
     if closed:
         print("closed deploy-stale " + " ".join(f"#{n}" for n in closed))
+    if failed:
+        print(f"verify failed: could not act on {' '.join(f'#{n}' for n in failed)}", file=sys.stderr)
+        return 2
     return 0
 
 

@@ -31,10 +31,10 @@ from tools.factory.verify import (
     load_outcomes,
     merge_marker,
     pages_changed,
-    parent_worktree,
     pending,
     take_after_image,
     verify_all,
+    worktree_at,
 )
 
 REPO = load_config().site.repo
@@ -45,7 +45,6 @@ MERGE = "a" * 40
 DEPLOYED = "b" * 40
 PR = 41
 LIVE = "https://live.test/"
-PARENT = "http://parent.test/"
 TEST_ID = "tests/e2e/test_docs.py::test_toc_tracks_anchor_navigation_and_history[chromium-no-preference]"
 MERGED_AT = "2026-10-18T10:00:00Z"
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 16
@@ -143,20 +142,41 @@ def fake_after(playwright: Any, cell: Cell, url: str, dest: Path) -> None:
     dest.write_bytes(PNG)
 
 
-@contextlib.contextmanager
-def fake_parent(sha: str) -> Iterator[str]:
-    yield PARENT
+def build_url(revision: str) -> str:
+    return f"http://build.test/{revision}/"
 
 
-def no_parent(sha: str) -> contextlib.AbstractContextManager[str]:
-    raise AssertionError("no parent build expected")
+class Builds:
+    """A fake site_at: serves `revision` at build_url(revision), recording builds and teardowns."""
+
+    def __init__(self, broken: frozenset[str] = frozenset()) -> None:
+        self.entered: list[str] = []
+        self.exited: list[str] = []
+        self.broken = broken
+
+    def __call__(self, revision: str) -> contextlib.AbstractContextManager[str]:
+        return self._site(revision)
+
+    @contextlib.contextmanager
+    def _site(self, revision: str) -> Iterator[str]:
+        if revision in self.broken:
+            raise verify.GitError(f"cannot check out {revision}")
+        self.entered.append(revision)
+        try:
+            yield build_url(revision)
+        finally:
+            self.exited.append(revision)
+
+
+def no_site(revision: str) -> contextlib.AbstractContextManager[str]:
+    raise AssertionError("no local build expected")
 
 
 def run_verify(gh: FakeGitHub, issues: list[dict], **kwargs: Any) -> list[Outcome]:
     kwargs.setdefault("trusted", TRUSTED)
     kwargs.setdefault("reproduce_fn", no_reproduction)
     kwargs.setdefault("take_after", fake_after)
-    kwargs.setdefault("parent_site", no_parent)
+    kwargs.setdefault("site_at", no_site)
     return verify_all(gh, None, issues, LIVE, **kwargs)  # type: ignore[arg-type]
 
 
@@ -419,24 +439,41 @@ def test_existing_revert_pull_request_is_reused(tmp_path: Path) -> None:
     assert ("POST", f"{API}/issues/5/labels") in paths
 
 
-def test_revert_conflict_goes_to_needs_human(tmp_path: Path) -> None:
-    remote, clone, merge, _ = history(tmp_path, {"css/site.css": "a\nB2\nc\n"})
+CONFLICTING = {"css/site.css": "a\nB2\nc\n"}
+ALREADY_REVERTED = {"css/site.css": "a\nb\nc\n", "css/new.css": None, "js/old.js": "old\n"}
+
+
+@pytest.mark.parametrize("later", [CONFLICTING, ALREADY_REVERTED], ids=["conflict", "already-reverted"])
+def test_revert_failure_goes_to_needs_human(later: dict, tmp_path: Path) -> None:
+    remote, clone, merge, _ = history(tmp_path, later)
     group = browser_group()
     item = issue(5, (group,))
     outcome = Outcome(5, "reproduces", merge, "still there", None, group.fingerprint, PR)
     responses = act_responses(item, sha=merge)
     responses[("GET", f"{API}/pulls")] = []
     gh = FakeGitHub(responses)
-    act([outcome], gh, clone, never_publish, trusted=TRUSTED, remote=remote)
+    assert act([outcome], gh, clone, never_publish, trusted=TRUSTED, remote=remote) == []
     calls = writes(gh)
     assert ("POST", f"{API}/pulls") not in [(m, p) for m, p, _ in calls]
     assert ("POST", f"{API}/issues/5/labels", {"labels": ["factory:regressed", "factory:needs-human"]}) in calls
     assert ("DELETE", f"{API}/issues/5/labels/factory%3Amerged", None) in calls
     comment = next(b for m, p, b in calls if p == f"{API}/issues/5/comments")
-    assert "by hand" in comment["body"]
+    assert "by hand" in comment["body"] and "<!--" not in comment["body"]
     bare = Path(remote.removeprefix("file://"))
     assert git("branch", "--list", "revert/5", cwd=bare) == ""
     assert len(git("worktree", "list", cwd=clone).splitlines()) == 1
+
+
+def test_act_continues_after_a_failing_outcome(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    first, second = issue(1, (browser_group(selector="div.a"),)), issue(2, (browser_group(selector="div.b"),))
+    responses = act_responses(first, second)
+    responses[("GET", f"{API}/issues/1")] = GitHubError(502, "bad gateway https://x-access-token:secret-token@x")
+    gh = FakeGitHub(responses)
+    outcomes = [Outcome(1, "fixed", MERGE, "gone"), Outcome(2, "fixed", MERGE, "gone")]
+    assert act(outcomes, gh, tmp_path, never_publish, trusted=TRUSTED, remote="unused") == [1]
+    assert ("PATCH", f"{API}/issues/2") in [(m, p) for m, p, _ in writes(gh)]
+    err = capsys.readouterr().err
+    assert "#1" in err and "bad gateway" in err and "secret-token" not in err
 
 
 @pytest.mark.parametrize("change", ["closed", "unlabelled", "other-sha", "stranger"])
@@ -507,6 +544,7 @@ def test_pages_changed() -> None:
 
 
 NEW = browser_group("console", "landing", "body", width=1440)  # S1
+PARENT_REV = f"{MERGE}^"
 
 
 def regression_case(change: str | None) -> tuple[list[dict], dict, Reproducer, list[Group]]:
@@ -516,37 +554,35 @@ def regression_case(change: str | None) -> tuple[list[dict], dict, Reproducer, l
     files = ("tests/e2e/test_x.py",) if change == "page" else ("css/site.css",)
     responses = check_responses(item, files=files)
     issues = [item]
-    if change == "known":
+    if change == "known":  # an open issue already tracks it: dedup "skip"
         issues.append(issue(9, (new,), labels=("factory:found", "S1")))
+    if change == "regression":  # a closed fixed issue had it: dedup "regression" still counts
+        issues.append(issue(9, (new,), labels=("factory:found", "S1"), state="closed"))
     codes = {
         (own.fingerprint, LIVE): 0,
         (new.fingerprint, LIVE): 0 if change == "live" else 1,
-        (new.fingerprint, PARENT): 1 if change == "parent" else 0,
+        (new.fingerprint, build_url(MERGE)): 0 if change == "merge" else 1,
+        (new.fingerprint, build_url(PARENT_REV)): 1 if change == "parent" else 0,
     }
     return issues, responses, Reproducer(codes), [new]
 
 
-def test_new_serious_finding_on_a_changed_page_regresses(tmp_path: Path) -> None:
-    issues, responses, reproducer, probe_groups = regression_case(None)
-    builds: list[str] = []
-
-    @contextlib.contextmanager
-    def parent(sha: str) -> Iterator[str]:
-        builds.append(sha)
-        yield PARENT
-
+@pytest.mark.parametrize("change", [None, "regression"], ids=["new", "regression"])
+def test_new_serious_finding_caused_by_the_merge_regresses(change: str | None, tmp_path: Path) -> None:
+    issues, responses, reproducer, probe_groups = regression_case(change)
+    builds = Builds()
     gh = FakeGitHub(responses)
     outcomes = run_verify(
-        gh, issues, reproduce_fn=reproducer, probe_groups=probe_groups, parent_site=parent, out_dir=tmp_path
+        gh, issues, reproduce_fn=reproducer, probe_groups=probe_groups, site_at=builds, out_dir=tmp_path
     )
     assert [(o.issue, o.result, o.after) for o in outcomes] == [(1, "reproduces", None)]
     assert NEW.fingerprint in outcomes[0].reason and "S1" in outcomes[0].reason
-    assert builds == [MERGE]
-    assert (NEW.fingerprint, PARENT) in reproducer.calls
+    assert sorted(builds.entered) == sorted([MERGE, PARENT_REV])
+    assert sorted(builds.exited) == sorted(builds.entered)
     assert only_reads(gh)
 
 
-@pytest.mark.parametrize("change", ["known", "page", "severity", "live", "parent"])
+@pytest.mark.parametrize("change", ["known", "page", "severity", "live", "merge", "parent"])
 def test_new_finding_rule_needs_every_condition(change: str, tmp_path: Path) -> None:
     issues, responses, reproducer, probe_groups = regression_case(change)
     outcomes = run_verify(
@@ -554,12 +590,56 @@ def test_new_finding_rule_needs_every_condition(change: str, tmp_path: Path) -> 
         issues,
         reproduce_fn=reproducer,
         probe_groups=probe_groups,
-        parent_site=fake_parent,
+        site_at=Builds(),
         out_dir=tmp_path,
     )
     assert [(o.issue, o.result) for o in outcomes] == [(1, "fixed")]
     if change in ("known", "page", "severity"):
         assert all(fp != probe_groups[0].fingerprint for fp, _ in reproducer.calls)
+
+
+@pytest.mark.parametrize("where", ["live", "merge", "parent", "build"])
+def test_new_finding_rule_errors_when_a_build_cannot_tell(where: str, tmp_path: Path) -> None:
+    issues, responses, reproducer, probe_groups = regression_case(None)
+    url = {"live": LIVE, "merge": build_url(MERGE), "parent": build_url(PARENT_REV)}.get(where)
+    if url is not None:
+        reproducer.codes[(NEW.fingerprint, url)] = 2
+    builds = Builds(broken=frozenset({MERGE}) if where == "build" else frozenset())
+    outcomes = run_verify(
+        FakeGitHub(responses), issues, reproduce_fn=reproducer, probe_groups=probe_groups, site_at=builds
+    )
+    assert [(o.issue, o.result) for o in outcomes] == [(1, "error")]
+
+
+def test_a_defect_from_a_later_merge_does_not_regress_an_earlier_one(tmp_path: Path) -> None:
+    first, second = MERGE, "c" * 40
+    a = issue(1, (browser_group(selector="div.a"),))
+    b = issue(2, (browser_group(selector="div.b"),))
+    c = issue(3, (browser_group(selector="div.c"),))  # fixed by the same merge as #1
+    responses = check_responses(a, c)
+    responses[("GET", f"{API}/issues/2/comments")] = [marker_comment(sha=second)]
+    responses[("GET", f"{API}/compare/{second}...{DEPLOYED}")] = {"status": "ahead"}
+    responses[("GET", f"{API}/commits/{second}")] = {"files": [{"filename": "css/site.css"}]}
+    # both merges changed the stylesheet; only the second one introduced the new finding
+    reproducer = Reproducer(
+        {
+            (NEW.fingerprint, LIVE): 1,
+            (NEW.fingerprint, build_url(first)): 0,
+            (NEW.fingerprint, build_url(f"{first}^")): 0,
+            (NEW.fingerprint, build_url(second)): 1,
+            (NEW.fingerprint, build_url(f"{second}^")): 0,
+        }
+    )
+    builds = Builds()
+    outcomes = run_verify(
+        FakeGitHub(responses), [a, b, c], reproduce_fn=reproducer, probe_groups=[NEW], site_at=builds, out_dir=tmp_path
+    )
+    assert [(o.issue, o.result) for o in outcomes] == [(1, "fixed"), (2, "reproduces"), (3, "fixed")]
+    # each revision is built once per run, and every build is torn down at the end
+    assert sorted(builds.entered) == sorted([first, second, f"{second}^"])
+    assert sorted(builds.exited) == sorted(builds.entered)
+    assert reproducer.calls.count((NEW.fingerprint, LIVE)) == 1
+    assert reproducer.calls.count((NEW.fingerprint, build_url(first))) == 1
 
 
 def test_new_finding_rule_is_skipped_without_probe_output() -> None:
@@ -570,17 +650,21 @@ def test_new_finding_rule_is_skipped_without_probe_output() -> None:
     assert ("GET", f"{API}/commits/{MERGE}", None) not in gh.calls
 
 
-def test_parent_worktree_checks_out_the_commit_before_the_merge(tmp_path: Path) -> None:
-    _, clone, merge, tip = history(tmp_path, {"README.md": "r2\n"})
-    with parent_worktree(clone, merge) as tree:
-        assert (tree / "css" / "site.css").read_text() == "a\nb\nc\n"
-        assert (tree / "js" / "old.js").is_file() and not (tree / "css" / "new.css").exists()
-        assert git("rev-parse", "HEAD", cwd=tree) == git("rev-parse", f"{merge}^", cwd=clone)
-    assert not tree.exists()
+def test_worktree_at_checks_out_the_merge_or_its_parent(tmp_path: Path) -> None:
+    _, clone, merge, _ = history(tmp_path, {"README.md": "r2\n"})
+    with worktree_at(clone, f"{merge}^") as parent:
+        assert (parent / "css" / "site.css").read_text() == "a\nb\nc\n"
+        assert (parent / "js" / "old.js").is_file() and not (parent / "css" / "new.css").exists()
+        assert git("rev-parse", "HEAD", cwd=parent) == git("rev-parse", f"{merge}^", cwd=clone)
+    with worktree_at(clone, merge) as tree:
+        assert (tree / "css" / "site.css").read_text() == "a\nB\nc\n"
+        assert (tree / "css" / "new.css").is_file() and not (tree / "js" / "old.js").exists()
+    assert not parent.exists() and not tree.exists()
     assert len(git("worktree", "list", cwd=clone).splitlines()) == 1
-    with pytest.raises(ValueError):
-        with parent_worktree(clone, "--upload-pack=x"):
-            pass
+    for bad in ("--upload-pack=x", "main", f"{merge}~1", f"{merge}^^"):
+        with pytest.raises(ValueError):
+            with worktree_at(clone, bad):
+                pass
 
 
 # --- flaky groups ---------------------------------------------------------------------------
@@ -873,6 +957,29 @@ def test_cli_act_closes_the_stale_deploy_issue(tmp_path: Path, monkeypatch: pyte
     bad.write_text(json.dumps({"outcomes": [{"issue": 1, "result": "fixed", "merge_sha": MERGE,
                                              "reason": "", "after": "../x.png", "fingerprint": "", "pr": 1}]}))
     assert verify.main(["act", "--outcomes", str(bad)]) == 2
+
+
+def test_cli_act_closes_the_stale_issue_even_after_a_failed_outcome(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stale = issue(10, (ci_group("deploy-stale", ""),), labels=("factory:found", "S1"), author="MBratkowski")
+    gh = FakeGitHub(
+        {
+            ("GET", f"{API}/deployments"): [{"id": 1, "sha": DEPLOYED}],
+            ("GET", f"{API}/deployments/1/statuses"): [{"state": "success"}],
+            ("GET", f"{API}/commits/main"): {"sha": DEPLOYED},
+            ("GET", f"{API}/issues"): [stale],
+            ("GET", f"{API}/issues/1"): GitHubError(502, "bad gateway"),
+        }
+    )
+    monkeypatch.setattr(verify, "GitHub", lambda repo, *a, **k: gh)
+    outcomes = tmp_path / "outcomes.json"
+    verify.write_outcomes(outcomes, [Outcome(1, "fixed", MERGE, "gone")])
+    assert verify.main(["act", "--outcomes", str(outcomes)]) == 2
+    assert [(m, p) for m, p, _ in writes(gh)] == [
+        ("POST", f"{API}/issues/10/comments"),
+        ("PATCH", f"{API}/issues/10"),
+    ]
 
 
 # --- the after image in a real browser ------------------------------------------------------
