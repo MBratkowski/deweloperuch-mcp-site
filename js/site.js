@@ -1,4 +1,4 @@
-// Shared navigation, documentation location, copy buttons and the demo conversation.
+// Shared navigation, smooth scrolling, documentation location, copy buttons and the demo conversation.
 (() => {
   'use strict';
 
@@ -35,6 +35,12 @@
     navigation.setAttribute('data-nav-ready', '');
   }
   document.querySelectorAll('[data-navigation]').forEach(initNavigation);
+
+  // Chromium last applies the load-time fragment scroll in the first frame after the load
+  // event. Enable smooth in-page scrolling one frame later (see css/site.css).
+  addEventListener('load', () => requestAnimationFrame(() => requestAnimationFrame(() => {
+    document.documentElement.setAttribute('data-smooth-scroll', '');
+  })), { once: true });
 
   function initTableOfContents(toc) {
     const sections = Array.from(toc.querySelectorAll('a[href^="#"]'), (link) => ({
