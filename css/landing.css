@@ -988,4 +988,33 @@
   .plan { padding: 24px; }
   .cmd-pill { border-radius: 22px; padding: 8px 12px; }
   .version-pill { border-radius: 18px; }
+  /* Commands get the full width and wrap between words; Kopiuj moves under them. */
+  .term-body .command-row { flex-wrap: wrap; }
+  .term-body .command-code { flex-basis: 100%; overflow-wrap: break-word; }
+  .term-body .command-row > .copy { margin-left: auto; }
+
+  /* Phones show the conversation alone; the chip names the tool that answered. */
+  .demo-sidebar, .demo-inspector { display: none; }
+  .demo-chat { padding: 16px; gap: 12px; }
+  .chat-question { max-width: 88%; }
+  /* Each offer on two lines: name, area and price over the investment and the drop.
+     The header stays for screen readers; the renderer's roles keep the table semantics. */
+  .offers-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .offers-table, .offers-table tbody { display: block; }
+  .offers-table tr {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: "name area price" "investment investment change";
+    gap: 2px 10px;
+    align-items: baseline;
+    padding: 10px 12px;
+    border-top: 1px solid var(--table-border);
+  }
+  .offers-table tbody tr:first-child { border-top: 0; }
+  .offers-table td, .offers-table td:first-child { padding: 0; border-top: 0; }
+  .offers-table .offer-name { grid-area: name; }
+  .offers-table .offer-area { grid-area: area; text-align: left; color: var(--muted); }
+  .offers-table .offer-price { grid-area: price; }
+  .offers-table .offer-investment { grid-area: investment; font-size: 12px; line-height: 1.4; color: var(--muted); }
+  .offers-table .offer-change { grid-area: change; }
 }

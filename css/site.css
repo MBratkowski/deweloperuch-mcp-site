@@ -76,6 +76,8 @@ a:hover { color: var(--accent-text); }
 .term .cmd > code, .term .cmd > pre { flex: 1; min-width: 0; margin: 0; padding: 10px 0; color: var(--text); font: inherit; background: none; }
 .term .cmd > code { overflow-x: auto; white-space: nowrap; }
 .term .cmd > pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 360px; overflow-y: auto; }
+/* Browsers may break "--" between its hyphens; an option never wraps inside itself. */
+.cmd-option { white-space: nowrap; }
 .prompt-sign { color: var(--accent); }
 .copy {
   flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
@@ -161,6 +163,11 @@ details[open] summary > span[aria-hidden] { transform: rotate(45deg); }
 @media (max-width: 720px) {
   .agent-card { padding: 20px; }
   .agent-card .agent-copy h2 { font-size: 28px; }
+  /* Phones give a command the full width and wrap it between words; Kopiuj moves under it. */
+  .term .cmd { flex-wrap: wrap; }
+  .term .cmd > code, .term .cmd > pre { flex-basis: 100%; }
+  .term .cmd > code { white-space: pre-wrap; overflow-wrap: break-word; }
+  .term .cmd > .copy { margin-left: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

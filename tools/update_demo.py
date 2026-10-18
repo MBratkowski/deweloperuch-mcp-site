@@ -62,13 +62,14 @@ def answer(demo: dict) -> str:
     )
 
 
+# Explicit roles keep the table semantics when phones lay each row out as a grid (css/landing.css).
 ROW = (
-    '<tr data-step="row">'
-    '<td>{name}</td>'
-    '<td>{investment} · {developer}</td>'
-    '<td class="numeric">{area}</td>'
-    '<td class="numeric">{price}</td>'
-    '<td class="offer-change numeric">{change}</td>'
+    '<tr role="row" data-step="row">'
+    '<td role="cell" class="offer-name">{name}</td>'
+    '<td role="cell" class="offer-investment">{investment} · {developer}</td>'
+    '<td role="cell" class="offer-area numeric">{area}</td>'
+    '<td role="cell" class="offer-price numeric">{price}</td>'
+    '<td role="cell" class="offer-change numeric">{change}</td>'
     "</tr>"
 )
 
@@ -81,17 +82,17 @@ CHAT = """
 <p data-step="answer" class="chat-answer">{answer}</p>
 <div data-step="table" class="offers-table-frame">
 <div tabindex="0" role="region" aria-label="Tabela ofert" class="scroll-region">
-<table class="offers-table">
-<thead>
-<tr>
-<th scope="col">Lokal</th>
-<th scope="col">Inwestycja · deweloper</th>
-<th scope="col" class="numeric">Metraż</th>
-<th scope="col" class="numeric">Cena</th>
-<th scope="col" class="numeric">Obniżka</th>
+<table role="table" class="offers-table">
+<thead role="rowgroup">
+<tr role="row">
+<th role="columnheader" scope="col">Lokal</th>
+<th role="columnheader" scope="col">Inwestycja · deweloper</th>
+<th role="columnheader" scope="col" class="numeric">Metraż</th>
+<th role="columnheader" scope="col" class="numeric">Cena</th>
+<th role="columnheader" scope="col" class="numeric">Obniżka</th>
 </tr>
 </thead>
-<tbody>
+<tbody role="rowgroup">
 {rows}
 </tbody>
 </table>

@@ -157,22 +157,22 @@ search_offers · <span data-demo-role="chip-state" class="chip-state">gotowe</sp
 <p data-step="answer" class="chat-answer">We Wrocławiu jest <strong>1 959</strong> pasujących ofert. Pięć z największą obniżką od pierwszej ceny:</p>
 <div data-step="table" class="offers-table-frame">
 <div tabindex="0" role="region" aria-label="Tabela ofert" class="scroll-region">
-<table class="offers-table">
-<thead>
-<tr>
-<th scope="col">Lokal</th>
-<th scope="col">Inwestycja · deweloper</th>
-<th scope="col" class="numeric">Metraż</th>
-<th scope="col" class="numeric">Cena</th>
-<th scope="col" class="numeric">Obniżka</th>
+<table role="table" class="offers-table">
+<thead role="rowgroup">
+<tr role="row">
+<th role="columnheader" scope="col">Lokal</th>
+<th role="columnheader" scope="col">Inwestycja · deweloper</th>
+<th role="columnheader" scope="col" class="numeric">Metraż</th>
+<th role="columnheader" scope="col" class="numeric">Cena</th>
+<th role="columnheader" scope="col" class="numeric">Obniżka</th>
 </tr>
 </thead>
-<tbody>
-<tr data-step="row"><td>5B-5</td><td>Jodłowicka 5 · Wrobud Sp. z o.o.</td><td class="numeric">43,39 m²</td><td class="numeric">568 409 zł</td><td class="offer-change numeric">−20,3%</td></tr>
-<tr data-step="row"><td>07.D.38</td><td>Nowa Pabianicka · RealCo Property Investment and Development Sp. z o.o.</td><td class="numeric">49,86 m²</td><td class="numeric">867 000 zł</td><td class="offer-change numeric">−15,8%</td></tr>
-<tr data-step="row"><td>A-02-02-K1</td><td>Nowe Żerniki to KOSMOS · Marvipol Development</td><td class="numeric">54,13 m²</td><td class="numeric">631 968 zł</td><td class="offer-change numeric">−15,7%</td></tr>
-<tr data-step="row"><td>J.00.M.08</td><td>Sudea · OKRE Development Sp. z o.o.</td><td class="numeric">52,72 m²</td><td class="numeric">944 196 zł</td><td class="offer-change numeric">−15,7%</td></tr>
-<tr data-step="row"><td>A-02-01-K1</td><td>Nowe Żerniki to KOSMOS · Marvipol Development</td><td class="numeric">51,31 m²</td><td class="numeric">599 044 zł</td><td class="offer-change numeric">−15,6%</td></tr>
+<tbody role="rowgroup">
+<tr role="row" data-step="row"><td role="cell" class="offer-name">5B-5</td><td role="cell" class="offer-investment">Jodłowicka 5 · Wrobud Sp. z o.o.</td><td role="cell" class="offer-area numeric">43,39 m²</td><td role="cell" class="offer-price numeric">568 409 zł</td><td role="cell" class="offer-change numeric">−20,3%</td></tr>
+<tr role="row" data-step="row"><td role="cell" class="offer-name">07.D.38</td><td role="cell" class="offer-investment">Nowa Pabianicka · RealCo Property Investment and Development Sp. z o.o.</td><td role="cell" class="offer-area numeric">49,86 m²</td><td role="cell" class="offer-price numeric">867 000 zł</td><td role="cell" class="offer-change numeric">−15,8%</td></tr>
+<tr role="row" data-step="row"><td role="cell" class="offer-name">A-02-02-K1</td><td role="cell" class="offer-investment">Nowe Żerniki to KOSMOS · Marvipol Development</td><td role="cell" class="offer-area numeric">54,13 m²</td><td role="cell" class="offer-price numeric">631 968 zł</td><td role="cell" class="offer-change numeric">−15,7%</td></tr>
+<tr role="row" data-step="row"><td role="cell" class="offer-name">J.00.M.08</td><td role="cell" class="offer-investment">Sudea · OKRE Development Sp. z o.o.</td><td role="cell" class="offer-area numeric">52,72 m²</td><td role="cell" class="offer-price numeric">944 196 zł</td><td role="cell" class="offer-change numeric">−15,7%</td></tr>
+<tr role="row" data-step="row"><td role="cell" class="offer-name">A-02-01-K1</td><td role="cell" class="offer-investment">Nowe Żerniki to KOSMOS · Marvipol Development</td><td role="cell" class="offer-area numeric">51,31 m²</td><td role="cell" class="offer-price numeric">599 044 zł</td><td role="cell" class="offer-change numeric">−15,6%</td></tr>
 </tbody>
 </table>
 </div>
@@ -324,7 +324,7 @@ search_offers · <span data-demo-role="chip-state" class="chip-state">gotowe</sp
 </div>
 <div class="term-body">
 <div class="command-row">
-<code class="command-code"><span aria-hidden="true" class="text-accent">$</span> <span class="cmd-text">claude mcp add deweloperuch -- uvx deweloperuch-mcp</span></code>
+<code class="command-code"><span aria-hidden="true" class="text-accent">$</span> <span class="cmd-text">claude mcp add deweloperuch <span class="cmd-option">--</span> uvx deweloperuch-mcp</span></code>
 <button type="button" class="copy" data-command="claude mcp add deweloperuch -- uvx deweloperuch-mcp" data-umami-event="copy-claude" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button>
 </div>
 <p class="term-comment term-comment--config"># w innych klientach: &quot;command&quot;: &quot;uvx&quot;,<br># &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]</p>
@@ -344,12 +344,12 @@ search_offers · <span data-demo-role="chip-state" class="chip-state">gotowe</sp
 <div class="term-body">
 <p class="term-comment"># skill dla agenta kodującego</p>
 <div class="command-row">
-<code class="command-code"><span aria-hidden="true" class="text-accent">$</span> <span class="cmd-text">npx skills add MBratkowski/deweloperuch-mcp</span></code>
+<code class="command-code"><span aria-hidden="true" class="text-accent">$</span> <span class="cmd-text">npx skills add MBratkowski/<wbr>deweloperuch-mcp</span></code>
 <button type="button" class="copy" data-command="npx skills add MBratkowski/deweloperuch-mcp" data-umami-event="copy-skill" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button>
 </div>
 <p class="term-comment term-comment--next"># albo samo CLI</p>
 <div class="command-row">
-<code class="command-code"><span aria-hidden="true" class="text-accent">$</span> <span class="cmd-text">uvx --from deweloperuch-mcp deweloperuch --help</span></code>
+<code class="command-code"><span aria-hidden="true" class="text-accent">$</span> <span class="cmd-text">uvx <span class="cmd-option">--from</span> deweloperuch-mcp deweloperuch <span class="cmd-option">--help</span></span></code>
 <button type="button" class="copy" data-command="uvx --from deweloperuch-mcp deweloperuch --help" data-umami-event="copy-cli" hidden><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg><span aria-live="polite">Kopiuj</span></button>
 </div>
 </div>
@@ -364,15 +364,15 @@ search_offers · <span data-demo-role="chip-state" class="chip-state">gotowe</sp
 <h3>Niech AI zainstaluje to za Ciebie.</h3>
 <p>Masz agenta AI z dostępem do terminala, np. Claude Code? Skopiuj prompt i wklej go agentowi: sprawdzi system, doinstaluje uv i doda serwer do Twojej aplikacji, pytając o zgodę przed zmianą konfiguracji.</p>
 </div>
-<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Prompt dla agenta AI</em></div><div class="cmd"><pre><span class="cmd-text">Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
+<div class="term"><div class="term-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><em>Prompt dla agenta AI</em></div><div class="cmd"><pre><span class="cmd-text">Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https:/<wbr>/<wbr>github.com/<wbr>MBratkowski/<wbr>deweloperuch-mcp).
 
 1. Sprawdź system: obsługiwane są macOS, Linux oraz Windows 10 (1903+) i 11. Na Windowsie katalog pamięci podręcznej musi być na lokalnym dysku NTFS.
-2. Sprawdź, czy mam program uv (uvx --version). Jeśli nie, zainstaluj go oficjalnym skryptem: na macOS i Linuxie curl -LsSf https://astral.sh/uv/install.sh | sh; na Windowsie w PowerShellu powershell -ExecutionPolicy ByPass -c &quot;irm https://astral.sh/uv/install.ps1 | iex&quot;. Po instalacji otwórz nowy terminal.
-3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp --help
+2. Sprawdź, czy mam program uv (uvx <span class="cmd-option">--version).</span> Jeśli nie, zainstaluj go oficjalnym skryptem: na macOS i Linuxie curl <span class="cmd-option">-LsSf</span> https:/<wbr>/<wbr>astral.sh/<wbr>uv/<wbr>install.sh | sh; na Windowsie w PowerShellu powershell <span class="cmd-option">-ExecutionPolicy</span> ByPass <span class="cmd-option">-c</span> &quot;irm https:/<wbr>/<wbr>astral.sh/<wbr>uv/<wbr>install.ps1 | iex&quot;. Po instalacji otwórz nowy terminal.
+3. Sprawdź, czy serwer się uruchamia: uvx deweloperuch-mcp <span class="cmd-option">--help</span>
 4. Dodaj serwer do aplikacji, której używam:
-   - Claude Code: claude mcp add deweloperuch -- uvx deweloperuch-mcp
-   - Claude Desktop: w pliku claude_desktop_config.json (macOS: ~/Library/Application Support/Claude/; Windows: %APPDATA%\Claude\) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku. Jeśli aplikacja nie znajduje uvx, użyj pełnej ścieżki; na Windowsie odczytaj ją przez (Get-Command uvx).Source i zapisz jako poprawny ciąg JSON.
-   - Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
+   <span class="cmd-option">-</span> Claude Code: claude mcp add deweloperuch <span class="cmd-option">--</span> uvx deweloperuch-mcp
+   <span class="cmd-option">-</span> Claude Desktop: w pliku claude_desktop_config.json (macOS: ~/<wbr>Library/<wbr>Application Support/<wbr>Claude/<wbr>; Windows: %APPDATA%\Claude\) dopisz w sekcji mcpServers wpis &quot;deweloperuch&quot;: {&quot;command&quot;: &quot;uvx&quot;, &quot;args&quot;: [&quot;deweloperuch-mcp&quot;]}. Zachowaj istniejące wpisy i najpierw zrób kopię pliku. Jeśli aplikacja nie znajduje uvx, użyj pełnej ścieżki; na Windowsie odczytaj ją przez (Get-Command uvx).Source i zapisz jako poprawny ciąg JSON.
+   <span class="cmd-option">-</span> Inna aplikacja: dodaj lokalny serwer MCP z poleceniem uvx i argumentem deweloperuch-mcp.
    Zanim zmienisz jakikolwiek plik konfiguracyjny, pokaż mi, co dokładnie zmienisz, i zapytaj o zgodę.
 5. Nie wysyłaj w ramach instalacji żadnych zapytań do deweloperuch.pl.
 6. Na koniec powiedz mi, czy muszę ponownie uruchomić aplikację, i podaj przykładowe pytanie na start.</span></pre><button type="button" class="copy" data-command="Zainstaluj mi serwer MCP deweloperuch-mcp (dane o rynku mieszkań w Polsce z deweloperuch.pl, projekt: https://github.com/MBratkowski/deweloperuch-mcp).
