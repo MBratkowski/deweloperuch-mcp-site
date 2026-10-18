@@ -270,6 +270,10 @@ def render_issue(
         reproduce.append(
             f"<details>\n<summary>{script_name}</summary>\n\n{_fenced('python', shown.rstrip())}\n\n</details>"
         )
+    elif script_source is not None:
+        reproduce.append(
+            f"<details>\n<summary>group.json</summary>\n\n{_fenced('json', script_source.rstrip())}\n\n</details>"
+        )
     images = [
         f"![{name}]({url})" for name, url in evidence.items() if name != script_name
     ]
