@@ -17,6 +17,9 @@ from tools.factory.github import GitHub, GitHubError
 
 PAGES_ENVIRONMENT = "github-pages"
 WORKFLOWS = ("check.yml", "pages.yml")
+PER_PAGE = 100
+# Pages of runs or jobs read at most (GitHub answers at most 1000 filtered runs anyway).
+MAX_PAGES = 10
 _FAILED_TEST = re.compile(r"\bFAILED (tests/\S+)")
 
 
@@ -46,9 +49,32 @@ def main_sha(gh: Any) -> str:
 
 
 def _runs(gh: Any, workflow: str, **params: Any) -> list[dict]:
+    """The newest runs of `workflow` (one page)."""
     path = f"{_api(gh)}/actions/workflows/{workflow}/runs"
-    data = gh.request("GET", path, params={"per_page": 100, **params}) or {}
+    data = gh.request("GET", path, params={"per_page": PER_PAGE, **params}) or {}
     return data.get("workflow_runs", [])
+
+
+def _pages(gh: Any, path: str, key: str, params: dict[str, Any], pages: int = MAX_PAGES) -> list[dict]:
+    """Every item under `key` of a listing that answers with an object (runs, jobs), page by page."""
+    items: list[dict] = []
+    for page in range(1, pages + 1):
+        data = gh.request("GET", path, params={**params, "per_page": PER_PAGE, "page": page}) or {}
+        batch = [item for item in data.get(key) or [] if isinstance(item, dict)]
+        items += batch
+        if len(batch) < PER_PAGE:
+            break
+    return items
+
+
+def workflow_runs(gh: Any, workflow: str, since: datetime | None = None, **params: Any) -> list[dict]:
+    """Every run of `workflow` created since `since`, past the first 100 (D30); without `since`,
+    only the newest page."""
+    path = f"{_api(gh)}/actions/workflows/{workflow}/runs"
+    if since is None:
+        return _pages(gh, path, "workflow_runs", params, pages=1)
+    stamp = since.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _pages(gh, path, "workflow_runs", {**params, "created": f">={stamp}"})
 
 
 def last_pages_run(gh: Any) -> dict:
@@ -75,8 +101,9 @@ def failed_tests(log: str) -> list[str]:
 
 
 def _jobs(gh: Any, run_id: int) -> list[dict]:
-    data = gh.request("GET", f"{_api(gh)}/actions/runs/{run_id}/jobs", params={"per_page": 100})
-    return (data or {}).get("jobs", [])
+    """The jobs of every attempt of the run (`filter=all`): a test that failed and passed on a
+    re-run of the same run is the commonest flake (D30)."""
+    return _pages(gh, f"{_api(gh)}/actions/runs/{run_id}/jobs", "jobs", {"filter": "all"})
 
 
 def find_flakes(gh: Any, days: int, now: datetime | None = None) -> list[Group]:
@@ -84,7 +111,7 @@ def find_flakes(gh: Any, days: int, now: datetime | None = None) -> list[Group]:
     since = (now or datetime.now(timezone.utc)) - timedelta(days=days)
     by_sha: dict[str, list[dict]] = {}
     for workflow in WORKFLOWS:
-        for run in _runs(gh, workflow):
+        for run in workflow_runs(gh, workflow, since):
             created = datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
             if run["status"] == "completed" and created >= since:
                 by_sha.setdefault(run["head_sha"], []).append(run)

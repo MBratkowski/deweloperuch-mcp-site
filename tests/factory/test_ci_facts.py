@@ -1,6 +1,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -174,3 +175,72 @@ def test_find_flakes_reports_a_job_without_test_ids_by_its_name() -> None:
     groups = find_flakes(FakeGitHub(r), 14, now=NOW)
     assert [(g.check, g.page, g.selector) for g in groups] == [("flaky", "ci", name)]
     assert "https://x/runs/1" in groups[0].note and "https://x/runs/2" in groups[0].note
+
+
+class PagedGitHub(FakeGitHub):
+    """Answers a run listing page by page, as GitHub does past 100 runs."""
+
+    def __init__(self, responses: dict, pages: dict[str, list[dict]]) -> None:
+        super().__init__(responses)
+        self.pages = pages
+
+    def request(self, method: str, path: str, body: dict | None = None, params: dict | None = None) -> Any:
+        if method == "GET" and path in self.pages:
+            self.calls.append((method, path, params))
+            page, size = (params or {}).get("page", 1), (params or {}).get("per_page", 30)
+            runs = self.pages[path][(page - 1) * size : page * size]
+            return {"total_count": len(self.pages[path]), "workflow_runs": runs}
+        return super().request(method, path, body, params)
+
+
+def test_find_flakes_reads_runs_past_the_first_hundred() -> None:
+    """D30: a busy fortnight has more than 100 runs; the flake sits on the second page."""
+    name = "Validate this commit / Tests (pytest, Playwright)"
+    base = {"status": "completed", "created_at": "2026-10-16T16:30:00Z"}
+    filler = [{**base, "id": 1000 + i, "head_sha": f"{i:040x}", "html_url": "u"} for i in range(100)]
+    flaky = [
+        {**base, "id": 1, "head_sha": MAIN, "html_url": "https://x/runs/1"},
+        {**base, "id": 2, "head_sha": MAIN, "html_url": "https://x/runs/2"},
+    ]
+    responses = {
+        ("GET", f"{API}/actions/runs/1/jobs"): {"jobs": [{"id": 10, "name": name, "conclusion": "failure"}]},
+        ("GET", f"{API}/actions/runs/2/jobs"): {"jobs": [{"id": 20, "name": name, "conclusion": "success"}]},
+        ("GET", f"{API}/actions/jobs/10/logs"): f"FAILED {TEST_ID} - boom\n".encode(),
+    }
+    gh = PagedGitHub(
+        responses,
+        {
+            f"{API}/actions/workflows/check.yml/runs": filler + flaky,
+            f"{API}/actions/workflows/pages.yml/runs": [],
+        },
+    )
+    groups = find_flakes(gh, 14, now=NOW)
+    assert [g.selector for g in groups] == [TEST_ID]
+    listed = [params for _, path, params in gh.calls if path == f"{API}/actions/workflows/check.yml/runs"]
+    assert [p["page"] for p in listed] == [1, 2]
+    assert all(p["created"] == ">=2026-10-04T12:00:00Z" for p in listed)
+
+
+def test_find_flakes_reads_the_jobs_of_every_attempt() -> None:
+    """D30: a job that failed and passed on a re-run of the same run is a flake; the jobs listing
+    asks for every attempt (`filter=all`), not only the latest."""
+    name = "Validate this commit / Tests (pytest, Playwright)"
+    base = {"status": "completed", "head_sha": MAIN, "created_at": "2026-10-16T16:30:00Z"}
+    gh = FakeGitHub(
+        {
+            ("GET", f"{API}/actions/workflows/check.yml/runs"): {
+                "workflow_runs": [{**base, "id": 1, "html_url": "https://x/runs/1"}]
+            },
+            ("GET", f"{API}/actions/workflows/pages.yml/runs"): {"workflow_runs": []},
+            ("GET", f"{API}/actions/runs/1/jobs"): {
+                "jobs": [
+                    {"id": 10, "name": name, "conclusion": "failure", "run_attempt": 1},
+                    {"id": 11, "name": name, "conclusion": "success", "run_attempt": 2},
+                ]
+            },
+            ("GET", f"{API}/actions/jobs/10/logs"): f"FAILED {TEST_ID} - boom\n".encode(),
+        }
+    )
+    assert [g.selector for g in find_flakes(gh, 14, now=NOW)] == [TEST_ID]
+    jobs = [params for _, path, params in gh.calls if path == f"{API}/actions/runs/1/jobs"]
+    assert jobs == [{"filter": "all", "per_page": 100, "page": 1}]

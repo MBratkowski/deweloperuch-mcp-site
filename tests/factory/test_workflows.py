@@ -22,6 +22,11 @@ APP_KEY = "FACTORY_APP_PRIVATE_KEY"
 CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
 ENV_SCRUB = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
 SETUP_UV = "astral-sh/setup-uv"
+# v10.2.0, the tag validate.yml uses, by the commit it names (D39): a moved tag cannot change what
+# runs next to a write token or the App token.
+SETUP_UV_PIN = "astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7"
+# The unprivileged account of the Playwright image that agent scripts run as (D40).
+SCRIPT_USER = "pwuser"
 # Commands that execute reproduction scripts an agent wrote (the reviewer's evidence also runs the
 # fixer's tests and the QA agent's script).
 SCRIPT_RUNNERS = ("tools.factory.check_drafts", "tools.factory.verify check", "tools.factory.review evidence")
@@ -738,6 +743,51 @@ def test_jobs_that_can_write_never_use_the_uv_cache() -> None:
                 if str(step.get("uses", "")).startswith(SETUP_UV):
                     assert (step.get("with") or {}).get("enable-cache") in (False, "false"), f"{path.name}: job {name}"
     assert writers
+
+
+def test_setup_uv_is_pinned_by_commit_where_a_token_can_write() -> None:
+    """D39: every job that holds the App token or a write token, in any workflow, and every factory
+    job, runs setup-uv by the commit of v10.2.0, never by a tag."""
+    checked: set[tuple[str, str]] = set()
+    writers: set[tuple[str, str]] = set()
+    for path in _workflow_files():
+        workflow = load_yaml(path)
+        for name, job in workflow["jobs"].items():
+            steps = job.get("steps") or []
+            permissions = job["permissions"] if "permissions" in job else workflow.get("permissions")
+            writes = permissions is None or permissions == "write-all" or (
+                isinstance(permissions, dict) and "write" in permissions.values()
+            )
+            app = any(_uses(step, APP_TOKEN_ACTION) for step in steps)
+            if writes or app:
+                writers.add((path.name, name))
+            if not (writes or app or path.name.startswith("factory-")):
+                continue
+            for step in steps:
+                if _uses(step, SETUP_UV):
+                    checked.add((path.name, name))
+                    assert step["uses"] == SETUP_UV_PIN, f"{path.name}: job {name} runs {step['uses']}"
+    assert ("sync.yml", "sync") in checked and ("factory-merge.yml", "merge") in checked
+    assert {w for w in writers if w[0] != "pages.yml"} <= checked
+
+
+def test_agent_scripts_run_as_an_unprivileged_user() -> None:
+    """D40: the jobs that run the QA agent's scripts (check, verify) run them as pwuser, with the
+    project's Python installed where pwuser can execute it; no other factory job switches users."""
+    jobs = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]
+    for name in ("check", "verify"):
+        job = jobs[name]
+        assert job["env"]["FACTORY_SCRIPT_USER"] == SCRIPT_USER, name
+        assert job["env"]["HOME"] == "/root", name
+        syncs = [s for s in job["steps"] if str(s.get("run", "")).startswith("uv sync")]
+        assert syncs and all((s.get("env") or {}).get("UV_PYTHON_INSTALL_DIR") == "/opt/uv-python" for s in syncs)
+    from tools.factory import check_drafts
+
+    assert check_drafts.SCRIPT_USER_ENV == "FACTORY_SCRIPT_USER"
+    for path in _factory_workflows():
+        for name, job in load_yaml(path)["jobs"].items():
+            if "FACTORY_SCRIPT_USER" in json.dumps(job):
+                assert (path.name, name) in {("factory-qa.yml", "check"), ("factory-qa.yml", "verify")}
 
 
 def _uses_agent(step: Any) -> bool:

@@ -60,7 +60,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false
@@ -167,9 +167,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # No hook the agent's code leaves behind runs on a later git command.
           git config --global core.hooksPath /dev/null
-          git config --global user.name factory-fixer
-          git config --global user.email factory@users.noreply.github.com
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false
@@ -177,7 +175,8 @@ jobs:
       # The fixer runs `python3 -m tools.build_docs`; the image has no system Python.
       - name: Put the project's Python first on PATH
         run: echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
-      # Before the agent: the read-only token reads the issue, the comments and an earlier pull request.
+      # Before the agent: the read-only token reads the issue, the comments and an earlier pull request,
+      # and the App bot's user record, whose noreply address the agent's local commits carry.
       - name: Prepare the branch and the context
         id: prepare
         env:
@@ -306,7 +305,7 @@ jobs:
           fetch-depth: 0
           # git authenticates with the App token; a stored GITHUB_TOKEN header would override it.
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false

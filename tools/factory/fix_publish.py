@@ -72,6 +72,7 @@ from tools.factory.fix import (
     read_report,
 )
 from tools.factory.github import GitHub, GitHubError
+from tools.factory.identity import bot_email
 from tools.factory.issues import SENTINEL, DraftError, _fenced, _marker_block, groups_in
 from tools.factory.secret_scan import secret_shape
 
@@ -83,7 +84,9 @@ UPDATED_HEAD_REF = "refs/factory/updated-head"
 MAIN_REF = "refs/remotes/origin/main"
 # Successive updates of a branch with main that branch_updated follows back to the marked head.
 MAX_UPDATES = 20
-IDENTITY = ("deweloperuch-factory", "factory@users.noreply.github.com")
+# The author's and committer's name; the address is the App bot's noreply address, resolved at run
+# time (tools/factory/identity.py), never a made-up one.
+NAME = "deweloperuch-factory"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_IMAGE_BYTES = 5_000_000
 MAX_REASON = 500
@@ -419,9 +422,12 @@ def commit_message(title: str, issue: int, attempt: int, report: FixReport) -> s
     return "\n\n".join([subject, *paragraphs, f"Refs #{issue}. Fixer attempt {attempt}."]) + "\n"
 
 
-def build_commit(repo: Path, tree: str, parent: str, message: str) -> str:
-    """One commit with `tree` on `parent`, authored and committed by the factory."""
-    name, email = IDENTITY
+def build_commit(repo: Path, tree: str, parent: str, message: str, email: str) -> str:
+    """One commit with `tree` on `parent`, authored and committed by the factory under the App bot's
+    address `email`."""
+    if not email or "@" not in email:
+        raise FixError("no commit address: resolve the App bot's identity first")
+    name = NAME
     env = {
         **os.environ,
         "GIT_TERMINAL_PROMPT": "0",
@@ -444,20 +450,38 @@ def build_commit(repo: Path, tree: str, parent: str, message: str) -> str:
 
 
 def _paths(repo: Path, base: str, head: str, statuses: str | None = None) -> list[str]:
+    """Changed paths; bytes that are not UTF-8 survive as surrogate escapes, so every path still
+    names its file when it is passed back to git (the fence refuses such a path outright)."""
     args = ["diff", "--name-only", "--no-renames", "-z"]
     if statuses:
         args.append(f"--diff-filter={statuses}")
-    names = _git_bytes(repo, *args, base, head).decode(errors="replace").split("\0")
+    names = _git_bytes(repo, *args, base, head).decode("utf-8", "surrogateescape").split("\0")
     return [name for name in names if name]
 
 
+class _Unreadable(Exception):
+    """A changed path that does not resolve to an entry of the commit's tree."""
+
+
 def _blob(repo: Path, commit: str, path: str) -> bytes | None:
-    """The bytes of `path` in `commit`, or None when it is not a blob (a submodule link)."""
-    entry = _git_bytes(repo, "ls-tree", "-z", commit, "--", path).decode(errors="replace").split("\0")[0]
-    meta = entry.split("\t", 1)[0].split()
-    if len(meta) != 3 or meta[1] != "blob":
+    """The bytes of `path` in `commit`, or None when it is a submodule link (no content). Raises
+    _Unreadable when the path names no entry of the tree: the scan cannot see what it holds."""
+    listing = _git_bytes(repo, "ls-tree", "-z", "--full-tree", commit, "--", path)
+    entry = listing.decode("utf-8", "surrogateescape").split("\0")[0]
+    meta, _, name = entry.partition("\t")
+    fields = meta.split()
+    if len(fields) != 3 or name != path:
+        raise _Unreadable(path)
+    if fields[1] == "commit":
         return None
-    return _git_bytes(repo, "cat-file", "blob", meta[2])
+    if fields[1] != "blob":
+        raise _Unreadable(path)
+    return _git_bytes(repo, "cat-file", "blob", fields[2])
+
+
+def _shown(path: str) -> str:
+    """A path for a message: bytes that are not UTF-8 as \\x escapes."""
+    return path.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
 
 
 def changed_files(repo: Path, base: str, head: str) -> list[str]:
@@ -488,9 +512,14 @@ def secret_findings(
         if secret_shape(path):
             check("a file name", path)
             continue
-        blob = _blob(repo, commit, path)
+        try:
+            blob = _blob(repo, commit, path)
+        except _Unreadable:
+            # Fail closed: a file the scan cannot read could hold anything.
+            found.append(f"a file the scan could not read ({_line(_shown(path), 120)})")
+            continue
         if blob is not None:
-            check(path, blob.decode(errors="replace"))
+            check(_shown(path), blob.decode(errors="replace"))
     check("the report", json.dumps(report.to_json()))
     if proof is not None:
         check("the proof", json.dumps(proof.to_json()))
@@ -724,12 +753,14 @@ def publish_fix(
     fix_result: str = "success",
     scan_result: str = "success",
     leaked: Sequence[str] = (),
+    email: str,
 ) -> int | None:
     """Fence a commit built from the attempt's tree and open or update its pull request; returns its
     number, or None when the attempt ends without one (see the module docstring for the outcomes).
 
     `scan_result` is the outcome of the fix job's own secret scan; `leaked` names artifact files
     that held secret-shaped text before they could be read. Both send the issue to a person.
+    `email` is the App bot's noreply address, the commit's author and committer (D46).
     """
     trusted = trusted if trusted is not None else config.trusted(os.environ.get("FACTORY_APP_SLUG"))
     repo_name = config.site.repo
@@ -769,7 +800,7 @@ def publish_fix(
         return run.failed(pull, ["the fix job produced no change"])
     title = safe_title(str(data.get("title") or ""), issue)
     message = commit_message(title, issue, attempt, report)
-    commit = build_commit(repo, tree, parent, message)
+    commit = build_commit(repo, tree, parent, message, email)
 
     checked = valid_images(images)
     leaks = secret_findings(repo, parent, commit, message, report, proof, checked)
@@ -887,6 +918,8 @@ def main_publish(args: argparse.Namespace, config: Config) -> int:
     token = os.environ.get("GH_TOKEN", "")
     gh = GitHub(repo_name, token or None)
     dispatcher = GitHub(repo_name, os.environ.get("DISPATCH_TOKEN") or None)
+    # Before anything is read or written: no commit leaves this job under another address (D46).
+    email = bot_email(gh)
 
     def dispatch(issue: int, attempt: int) -> None:
         dispatcher.request(
@@ -903,6 +936,7 @@ def main_publish(args: argparse.Namespace, config: Config) -> int:
                 f"Evidence for the fix of #{args.issue}, attempt {args.attempt}",
                 f"https://raw.githubusercontent.com/{repo_name}",
                 Path(workdir),
+                email=email,
             )
 
     inputs: Path = args.inputs
@@ -921,7 +955,7 @@ def main_publish(args: argparse.Namespace, config: Config) -> int:
     number = publish_fix(
         gh, Path.cwd(), args.issue, args.attempt, bundle, report, proof, images, config,
         branch=args.branch, dispatch=dispatch, publish_evidence=publish_evidence,
-        fix_result=args.fix_result, scan_result=args.scan_result, leaked=leaked,
+        fix_result=args.fix_result, scan_result=args.scan_result, leaked=leaked, email=email,
     )
     print(f"pull request #{number}" if number else "no pull request from this attempt")
     return 0

@@ -78,6 +78,16 @@ _CSS_CONTENT = re.compile(r"content\s*:\s*(\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
 
 
+def utf8_path(path: str) -> bool:
+    """Whether `path` was valid UTF-8 in git (no surrogate escape from a byte that is not)."""
+    return not any("\udc80" <= char <= "\udcff" for char in path)
+
+
+def shown_path(path: str) -> str:
+    """A path for a reason: bytes that are not UTF-8 as \\x escapes."""
+    return path.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+
+
 def harness_path(path: str) -> bool:
     """Whether any component of `path` is a name the harness loads (case-insensitive)."""
     return any(part.lower() in HARNESS_NAMES for part in path.split("/"))
@@ -145,8 +155,10 @@ def changes(repo: Path, base: str, head: str) -> list[Change]:
     _check_rev(base)
     _check_rev(head)
     common = ("diff", "-M", "--no-ext-diff", "--no-textconv", "-z")
-    numstat = _git(repo, *common, "--numstat", base, head, "--").decode("utf-8", "replace")
-    raw = _git(repo, *common, "--raw", base, head, "--").decode("utf-8", "replace")
+    # Bytes that are not UTF-8 survive as surrogate escapes: such a path still names its file when
+    # it is passed back to git, and _structure refuses it outright (fail closed).
+    numstat = _git(repo, *common, "--numstat", base, head, "--").decode("utf-8", "surrogateescape")
+    raw = _git(repo, *common, "--raw", base, head, "--").decode("utf-8", "surrogateescape")
 
     counts: dict[str, tuple[int, int, bool]] = {}
     tokens = numstat.split("\0")
@@ -795,6 +807,9 @@ def _structure(change: Change) -> list[str]:
     paths = [p for p in dict.fromkeys((change.old_path, change.path)) if p]
     for path in paths:
         name = path.rsplit("/", 1)[-1]
+        if not utf8_path(path):
+            # D46: hard, whatever the allow-list says: other tools would read another name.
+            reasons.append(f"path is not UTF-8: {shown_path(path)}")
         if any(ord(c) < 32 or ord(c) == 127 for c in path) or "<!--" in path:
             reasons.append("invalid path")
         if "__pycache__/" in path or path.endswith(".pyc"):
@@ -844,9 +859,9 @@ def check_fence(
     for change in files:
         for path in dict.fromkeys(p for p in (change.old_path, change.path) if p):
             if _any(path, fence.forbidden):
-                add(f"forbidden path: {path}")
+                add(f"forbidden path: {shown_path(path)}")
             elif not _any(path, fence.allowed):
-                add(f"outside the allowed paths: {path}")
+                add(f"outside the allowed paths: {shown_path(path)}")
         for reason in _structure(change):
             add(reason)
         for reason in _review(change):
@@ -877,6 +892,9 @@ def check_fence(
     if copy_changed:
         add("copy")
 
+    # Every reason is printable text, whatever bytes a path held.
+    reasons = list(dict.fromkeys(shown_path(reason) for reason in reasons))
+    review = list(dict.fromkeys(shown_path(reason) for reason in review))
     return FenceReport(not reasons, reasons, changed_lines, copy_changed, review)
 
 

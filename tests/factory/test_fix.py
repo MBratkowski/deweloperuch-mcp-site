@@ -19,7 +19,7 @@ import pytest
 from PIL import Image
 from playwright.sync_api import Playwright
 
-from tests.factory.fakes import FakeGitHub
+from tests.factory.fakes import APP_EMAIL, APP_USER, APP_USER_RECORD, FakeGitHub
 from tools.factory import fix, fix_publish
 from tools.factory.config import load_config
 from tools.factory.fence import FenceReport
@@ -155,7 +155,7 @@ def remote_head(world: World, branch: str = BRANCH) -> str:
     return line.split()[0] if line else ""
 
 
-FACTORY_AUTHOR = "deweloperuch-factory <factory@users.noreply.github.com>"
+FACTORY_AUTHOR = f"deweloperuch-factory <{APP_EMAIL}>"
 
 
 def pushed_commit(world: World, agent_head: str, parent: str, branch: str = BRANCH) -> str:
@@ -232,6 +232,7 @@ def github(
             ("GET", f"{API}/issues/7/comments"): list(comments),
             ("GET", f"{API}/pulls"): list(pulls),
             ("POST", f"{API}/pulls"): {"number": 31, "node_id": "PR_31"},
+            APP_USER: APP_USER_RECORD,
         }
     )
 
@@ -331,6 +332,7 @@ def run_publish(
         publish_evidence=recorder.publish,
         dispatch=recorder.dispatch,
         trusted=TRUSTED,
+        email=APP_EMAIL,
     )
 
 
@@ -506,6 +508,33 @@ def test_prepare_branches_the_first_attempt_from_main(tmp_path: Path) -> None:
     write(checkout, {"factory-out/note.txt": "x\n", "factory-in/x.txt": "y\n"})
     assert git("status", "--porcelain", cwd=checkout) == ""
     assert writes(gh) == []
+
+
+@pytest.mark.parametrize("slug", ["factory-app", ""])
+def test_cli_prepare_gives_the_agents_commits_the_app_bots_address(
+    slug: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D46: the agent's local commits carry the App bot's noreply address, set in the checkout's own
+    configuration; without the App's identity prepare fails before it touches the branch."""
+    world = make_world(tmp_path)
+    checkout = tmp_path / "checkout"
+    git("clone", "-q", str(world.bare), str(checkout))
+    gh = FakeGitHub(
+        {("GET", f"{API}/issues/7"): issue(), ("GET", f"{API}/issues/7/comments"): [], APP_USER: APP_USER_RECORD}
+    )
+    monkeypatch.setattr(fix, "GitHub", lambda repo, *a, **k: gh)
+    monkeypatch.setenv("FACTORY_APP_SLUG", slug)
+    monkeypatch.chdir(checkout)
+    code = fix.main(["prepare", "--issue", "7", "--attempt", "1", "--out", str(tmp_path / "out")])
+    local = subprocess.run(["git", "config", "--local", "user.email"], cwd=checkout, capture_output=True, text=True)
+    if slug:
+        assert code == 0
+        assert local.stdout.strip() == APP_EMAIL
+        assert git("config", "--local", "user.name", cwd=checkout) == "factory-fixer"
+    else:
+        assert code == 2
+        assert local.returncode == 1
+        assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=checkout) == "main"
 
 
 def test_prepare_continues_the_pull_request_branch_on_a_second_attempt(tmp_path: Path) -> None:
@@ -911,6 +940,46 @@ def test_publish_refuses_secret_shaped_text_before_push(where: str, tmp_path: Pa
     assert labels_added(gh, 7) == ["factory:needs-human"]
 
 
+def test_publish_scans_a_file_whose_name_is_not_utf8(tmp_path: Path) -> None:
+    """D46: the blob scan reads a file whose name is not UTF-8 by its real bytes (a lossy decoding
+    named no file and skipped it), so the secret it holds sends the issue to a person unpushed."""
+    world = make_world(tmp_path)
+    work = tmp_path / "work"
+    git("clone", "-q", str(world.bare), str(work))
+    git("checkout", "-q", "-b", BRANCH, cwd=work)
+    write(work, FIX_FILES)
+    git("add", "-A", cwd=work)
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"], cwd=work, input=b"token ghp_" + b"c" * 36 + b"\n",
+        capture_output=True, check=True,
+    ).stdout.decode().strip()
+    subprocess.run(
+        ["git", "update-index", "--add", "--index-info"], cwd=work,
+        input=b"100644 " + blob.encode() + b"\tcss/\xff.css\n", capture_output=True, check=True,
+    )
+    git("commit", "-q", "-m", "Fix", cwd=work)
+    head = git("rev-parse", "HEAD", cwd=work)
+    bundle = tmp_path / "fix.bundle"
+    git("bundle", "create", str(bundle), f"origin/main..{BRANCH}", cwd=work)
+    gh, recorder = github(), Recorder()
+    assert run_publish(gh, world, recorder, bundle=bundle, proof=proof_for(world.base, head)) is None
+    assert remote_head(world) == "" and recorder.dispatched == []
+    assert labels_added(gh, 7) == ["factory:needs-human"]
+    assert "secret-shaped text in css/\\xff.css" in comments_on(gh, 7)[0]
+
+
+def test_the_blob_scan_reports_a_path_it_cannot_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """D46: a changed path that names no file of the commit is a finding, never a skipped blob."""
+    world = make_world(tmp_path)
+    commit_sha = commit(tmp_path / "seed", "More", {"css/more.css": "x\n"})
+    git("push", "-q", str(world.bare), "main", cwd=tmp_path / "seed")
+    git("fetch", "-q", "origin", cwd=world.main)
+    real = fix_publish._paths
+    monkeypatch.setattr(fix_publish, "_paths", lambda *a, **k: [*real(*a, **k), "css/ghost.css"])
+    found = fix_publish.secret_findings(world.main, world.base, commit_sha, "message", REPORT, None, {})
+    assert found == ["a file the scan could not read (css/ghost.css)"]
+
+
 def test_not_reproducible_goes_to_a_human_without_a_push(tmp_path: Path) -> None:
     world = make_world(tmp_path)
     report = FixReport("not_reproducible", "The overflow does not appear on a local build; @owner, see.", (), "", "", ())
@@ -1065,6 +1134,22 @@ def test_cli_publish_after_a_failed_fix_job(tmp_path: Path, monkeypatch: pytest.
         ("POST", f"{API}/actions/workflows/factory-fix.yml/dispatches", {"ref": "main", "inputs": {"issue": "7", "attempt": "2"}})
     ]
     assert sorted(tokens, key=str) == ["app", "dispatch"]
+
+
+@pytest.mark.parametrize(
+    "record", [None, {"login": "factory-app[bot]", "id": 5, "type": "User"}, {"login": "other[bot]", "id": 5, "type": "Bot"}]
+)
+def test_cli_publish_writes_nothing_without_the_app_bots_identity(
+    record: dict[str, Any] | None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D46: publish commits only under the App bot's noreply address; when GitHub's user record of
+    the bot cannot be read or is not the App's bot, it fails closed before anything is written."""
+    gh = github()
+    gh.responses[APP_USER] = record
+    dispatches = cli_clients(monkeypatch, gh)
+    args = ["publish", "--issue", "7", "--attempt", "1", "--branch", "", "--in", str(tmp_path / "missing")]
+    assert fix.main([*args, "--fix-result", "failure"]) == 2
+    assert writes(gh) == [] and dispatches.calls == []
 
 
 def test_cli_prove_writes_the_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

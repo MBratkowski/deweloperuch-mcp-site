@@ -322,6 +322,41 @@ def test_binary_non_png_is_hard_and_nul_css_is_binary(tmp_path: Path) -> None:
     assert hard(report, "binary file: css/a.css")
 
 
+def add_raw_path(repo: Path, path: bytes, content: bytes) -> None:
+    """Stage `content` under a path given as bytes (macOS file systems refuse names that are not
+    UTF-8, so the index is written directly)."""
+    blob = subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=content, capture_output=True, check=True, env=ENV
+    ).stdout.decode().strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "update-index", "--add", "--index-info"],
+        input=b"100644 " + blob.encode() + b"\t" + path + b"\n",
+        capture_output=True,
+        check=True,
+        env=ENV,
+    )
+
+
+def test_a_path_that_is_not_utf8_is_hard(tmp_path: Path) -> None:
+    """D46: inside an allowed directory, a name with bytes that are not UTF-8 is still refused (a
+    lossy decoding would name another file); every reason stays printable."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    write(repo, {"css/a.css": "a\n"})
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+    first = git(repo, "rev-parse", "HEAD")
+    add_raw_path(repo, b"css/\xff.css", b".a {}\n")
+    git(repo, "commit", "-qm", "head")
+    report = check_fence(repo, first, git(repo, "rev-parse", "HEAD"), CONFIG.fence, CONFIG.limits)
+    assert not report.ok
+    assert "path is not UTF-8: css/\\xff.css" in report.reasons
+    for reason in report.reasons + report.review:
+        reason.encode("utf-8")  # no lone surrogate escapes
+    assert main(["--repo", str(repo), "--base", first, "--head", git(repo, "rev-parse", "HEAD")]) == 1
+
+
 def test_control_character_path_is_hard(tmp_path: Path) -> None:
     report = check(tmp_path, {"css/a.css": "a\n"}, {"css/a\tb.css": "x\n"})
     assert hard(report, "invalid path")

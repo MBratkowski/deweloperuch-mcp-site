@@ -267,6 +267,22 @@ def test_main_exits_2_on_github_error(tmp_path: Path, monkeypatch: Any, capsys: 
     assert "ghs_secret" not in capsys.readouterr().err
 
 
+def test_a_real_run_files_nothing_without_the_app_bots_identity(tmp_path: Path, monkeypatch: Any) -> None:
+    """D46: evidence is committed only under the App bot's noreply address; a real run that cannot
+    resolve it (no slug here) files nothing and publishes nothing."""
+    gh = Fake()
+    monkeypatch.setattr(file_issues, "GitHub", lambda *a, **k: gh)
+    monkeypatch.setattr(file_issues.evidence_module, "publish", lambda *a, **k: pytest.fail("published"))
+    monkeypatch.setenv("GH_TOKEN", "t")
+    monkeypatch.delenv("FACTORY_APP_SLUG", raising=False)
+    path = tmp_path / "v.json"
+    data = validated(draft())
+    path.write_text(json.dumps(data))
+    out = record_findings(probe_out(tmp_path, group()), data)
+    assert file_issues.main(["--validated", str(path), "--probe-out", str(out)]) == 2
+    assert gh.created() == []
+
+
 def test_script_draft_without_its_script_is_skipped(tmp_path: Path, monkeypatch: Any, capsys: Any) -> None:
     monkeypatch.setattr(file_issues.check_drafts, "ROOT", tmp_path)
     groups = selectors(3)

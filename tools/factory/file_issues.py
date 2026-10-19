@@ -19,6 +19,7 @@ from tools.factory.config import Config, load_config
 from tools.factory.evidence import EvidenceError, redact
 from tools.factory.findings import Group
 from tools.factory.github import GitHub, GitHubError
+from tools.factory.identity import bot_email
 from tools.factory.issues import (
     SEVERITIES,
     Draft,
@@ -289,6 +290,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     token = os.environ.get("GH_TOKEN", "")
     repo = config.site.repo
     trusted = config.trusted(os.environ.get("FACTORY_APP_SLUG"))
+    email = ""
 
     def publish_evidence(files: Mapping[str, Path]) -> dict[str, str]:
         with tempfile.TemporaryDirectory() as workdir:
@@ -298,11 +300,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"Evidence for run {_run_id()}",
                 f"https://raw.githubusercontent.com/{repo}",
                 Path(workdir),
+                email=email,
             )
 
     try:
         validated = json.loads(args.validated.read_text(encoding="utf-8"))
         gh = GitHub(repo, token or None)
+        if not args.dry_run:  # a real run commits evidence: only under the App bot's own address
+            email = bot_email(gh)
         numbers = file(validated, args.probe_out, gh, config, trusted, args.dry_run, publish_evidence)
     except (GitHubError, EvidenceError) as error:
         print(f"file issues failed: {redact(str(error))}", file=sys.stderr)

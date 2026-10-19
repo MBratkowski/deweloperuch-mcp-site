@@ -154,6 +154,72 @@ def test_run_script_timeout_and_bad_path(tmp_path: Path, monkeypatch: Any) -> No
     assert check_drafts.run_script("../evil.py", LIVE) == 2
 
 
+MARK = "import pathlib, sys\npathlib.Path(sys.argv[0]).with_suffix('.ran').write_text('x')\nprint('NOT REPRODUCED')"
+
+
+@pytest.mark.parametrize("account", ["no-such-account-x9", "current"])
+def test_a_script_user_that_cannot_be_used_fails_closed(
+    account: str, tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    """D40: with FACTORY_SCRIPT_USER set, a script runs as that unprivileged account or not at all
+    (an unknown account, or a process that is not root and so cannot switch)."""
+    import pwd
+
+    monkeypatch.setattr(check_drafts, "ROOT", tmp_path)
+    name = pwd.getpwuid(os.getuid()).pw_name if account == "current" else account
+    monkeypatch.setenv(check_drafts.SCRIPT_USER_ENV, name)
+    if os.geteuid() == 0 and account == "current":
+        pytest.skip("root may switch accounts")
+    script = make_script(tmp_path, MARK)
+    assert check_drafts.run_script(script, LIVE) == 2
+    assert not (tmp_path / "factory-out" / "repros" / "m.ran").exists()
+    assert "not run" in capsys.readouterr().err
+
+
+def test_a_script_runs_as_the_script_user_with_a_home_of_its_own(tmp_path: Path, monkeypatch: Any) -> None:
+    """D40: as root, the script is started as FACTORY_SCRIPT_USER (uid, gid, no supplementary group)
+    with a fresh HOME owned by it, removed afterwards; the job's other steps stay root."""
+    import pwd
+
+    monkeypatch.setattr(check_drafts, "ROOT", tmp_path)
+    monkeypatch.setenv(check_drafts.SCRIPT_USER_ENV, "pwuser")
+    monkeypatch.setattr(check_drafts.os, "geteuid", lambda: 0)
+    entry = pwd.struct_passwd(("pwuser", "x", 1000, 1001, "", "/home/pwuser", "/bin/bash"))
+    monkeypatch.setattr(check_drafts.pwd, "getpwnam", lambda name: entry)
+    owned: list[tuple[str, int, int]] = []
+    monkeypatch.setattr(check_drafts.os, "chown", lambda path, uid, gid: owned.append((str(path), uid, gid)))
+    seen: dict[str, Any] = {}
+
+    def popen(*args: Any, **kwargs: Any) -> Any:
+        seen.update(kwargs)
+        seen["home_existed"] = Path(kwargs["env"]["HOME"]).is_dir()
+        raise OSError("not started in a test")
+
+    monkeypatch.setattr(check_drafts.subprocess, "Popen", popen)
+    assert check_drafts.run_script(make_script(tmp_path, MARK), LIVE) == 2
+    assert (seen["user"], seen["group"], seen["extra_groups"]) == (1000, 1001, [])
+    home = seen["env"]["HOME"]
+    assert seen["home_existed"] and owned == [(home, 1000, 1001)] and not Path(home).exists()
+    assert seen["start_new_session"] is True
+
+
+@pytest.mark.parametrize("uid, gid", [(0, 1001), (1000, 0)])
+def test_the_script_user_is_never_root(uid: int, gid: int, monkeypatch: Any) -> None:
+    import pwd
+
+    monkeypatch.setenv(check_drafts.SCRIPT_USER_ENV, "pwuser")
+    monkeypatch.setattr(check_drafts.os, "geteuid", lambda: 0)
+    entry = pwd.struct_passwd(("pwuser", "x", uid, gid, "", "/home/pwuser", "/bin/bash"))
+    monkeypatch.setattr(check_drafts.pwd, "getpwnam", lambda name: entry)
+    with pytest.raises(check_drafts.ScriptUserError):
+        check_drafts.script_user()
+
+
+def test_without_a_script_user_scripts_run_as_before(monkeypatch: Any) -> None:
+    monkeypatch.delenv(check_drafts.SCRIPT_USER_ENV, raising=False)
+    assert check_drafts.script_user() is None
+
+
 def test_validated_json_keeps_survivors_limits_suggestions_and_extends_dropped() -> None:
     incoming = {
         "drafts": [draft_dict("a" * 12), draft_dict("b" * 12, check_name="axe")],

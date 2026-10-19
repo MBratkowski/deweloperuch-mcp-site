@@ -41,6 +41,7 @@ from tools.factory.config import Config, ConfigError, load_config
 from tools.factory.evidence import redact
 from tools.factory.findings import Cell, Group
 from tools.factory.github import GitHub, GitHubError
+from tools.factory.identity import bot_email
 from tools.factory.issues import DraftError, _check_plain, _marker_block, _object, groups_in
 from tools.factory.stress import StressError, stress
 
@@ -52,6 +53,7 @@ FIXING = "factory:fixing"
 FLAKY = "factory:flaky"
 NEEDS_HUMAN = "factory:needs-human"
 REVIEWER = "github-actions[bot]"
+FIXER_NAME = "factory-fixer"
 # The rules below mirror .github/factory/schemas/fix-report.json; a test keeps them equal.
 STATUSES = ("fixed", "not_reproducible", "needs_human")
 REPORT_FIELDS = ("status", "reason", "test_ids", "cause", "change", "baselines")
@@ -971,8 +973,18 @@ def _guard_command(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def set_identity(repo: Path, email: str) -> None:
+    """The fixer agent's local commits (never pushed: publish builds its own) carry the App bot's
+    noreply address too, in the checkout's own git configuration (D46)."""
+    git(repo, "config", "user.name", FIXER_NAME)
+    git(repo, "config", "user.email", email)
+
+
 def _prepare_command(args: argparse.Namespace, config: Config) -> int:
-    prepared = prepare(GitHub(config.site.repo), args.issue, args.attempt, Path.cwd(), args.out, config=config)
+    gh = GitHub(config.site.repo)
+    email = bot_email(gh)  # fails closed before the branch is touched
+    prepared = prepare(gh, args.issue, args.attempt, Path.cwd(), args.out, config=config)
+    set_identity(Path.cwd(), email)
     print(f"branch={prepared.branch}")
     print(f"base_sha={prepared.base_sha}")
     print(f"flaky={'true' if prepared.flaky else 'false'}")

@@ -16,7 +16,7 @@ import pytest
 from PIL import Image
 from playwright.sync_api import Playwright
 
-from tests.factory.fakes import FakeGitHub
+from tests.factory.fakes import APP_EMAIL, APP_USER, APP_USER_RECORD, FakeGitHub
 from tools.factory import check_drafts, verify
 from tools.factory.ci_facts import deploy_stale
 from tools.factory.config import load_config
@@ -244,7 +244,7 @@ def test_not_deployed_is_skipped(tmp_path: Path) -> None:
     assert outcomes[0].after is None
     assert only_reads(gh)
     acting = FakeGitHub()
-    act(outcomes, acting, tmp_path, never_publish, trusted=TRUSTED, remote="unused")
+    act(outcomes, acting, tmp_path, never_publish, trusted=TRUSTED, email=APP_EMAIL, remote="unused")
     assert acting.calls == []
 
 
@@ -285,7 +285,7 @@ def test_fixed_closes_issue(tmp_path: Path) -> None:
         return {path: f"https://raw.example/{path}" for path in files}
 
     acting = FakeGitHub(act_responses(item))
-    act(outcomes, acting, tmp_path, publish, trusted=TRUSTED, run_id="99", remote="unused")
+    act(outcomes, acting, tmp_path, publish, trusted=TRUSTED, email=APP_EMAIL, run_id="99", remote="unused")
     path = f"issues/{group.fingerprint}/99/after.png"
     assert published == [{path: outcome.after}]
     assert [(m, p) for m, p, _ in writes(acting)] == [
@@ -393,7 +393,7 @@ def test_reproduces_opens_revert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     responses[("GET", f"{API}/pulls")] = []
     responses[("POST", f"{API}/pulls")] = {"number": 77}
     gh = FakeGitHub(responses)
-    act([outcome], gh, clone, never_publish, trusted=TRUSTED, remote=remote)
+    act([outcome], gh, clone, never_publish, trusted=TRUSTED, email=APP_EMAIL, remote=remote)
 
     bare = remote.removeprefix("file://")
     revert = git("rev-parse", "refs/heads/revert/5", cwd=Path(bare))
@@ -420,7 +420,8 @@ def test_reproduces_opens_revert(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     # the committer identity is set for the command only, never in the global or local config
     assert not global_config.exists()
     assert subprocess.run(["git", "config", "--local", "user.name"], cwd=clone, capture_output=True).returncode == 1
-    assert git("log", "-1", "--format=%cn <%ce>", revert, cwd=Path(bare)) == "factory-revert <factory@users.noreply.github.com>"
+    who = git("log", "-1", "--format=%an <%ae>|%cn <%ce>", revert, cwd=Path(bare))
+    assert who == f"factory-revert <{APP_EMAIL}>|factory-revert <{APP_EMAIL}>"
 
 
 def test_existing_revert_pull_request_is_reused(tmp_path: Path) -> None:
@@ -433,7 +434,7 @@ def test_existing_revert_pull_request_is_reused(tmp_path: Path) -> None:
         {"number": 77, "head": {"ref": "revert/5", "repo": {"full_name": REPO}}},
     ]
     gh = FakeGitHub(responses)
-    act([outcome], gh, tmp_path / "no-repo", never_publish, trusted=TRUSTED, remote="unused")
+    act([outcome], gh, tmp_path / "no-repo", never_publish, trusted=TRUSTED, email=APP_EMAIL, remote="unused")
     paths = [(m, p) for m, p, _ in writes(gh)]
     assert ("POST", f"{API}/pulls") not in paths
     assert ("POST", f"{API}/issues/5/labels") in paths
@@ -452,7 +453,7 @@ def test_revert_failure_goes_to_needs_human(later: dict, tmp_path: Path) -> None
     responses = act_responses(item, sha=merge)
     responses[("GET", f"{API}/pulls")] = []
     gh = FakeGitHub(responses)
-    assert act([outcome], gh, clone, never_publish, trusted=TRUSTED, remote=remote) == []
+    assert act([outcome], gh, clone, never_publish, trusted=TRUSTED, email=APP_EMAIL, remote=remote) == []
     calls = writes(gh)
     assert ("POST", f"{API}/pulls") not in [(m, p) for m, p, _ in calls]
     assert ("POST", f"{API}/issues/5/labels", {"labels": ["factory:regressed", "factory:needs-human"]}) in calls
@@ -470,7 +471,7 @@ def test_act_continues_after_a_failing_outcome(tmp_path: Path, capsys: pytest.Ca
     responses[("GET", f"{API}/issues/1")] = GitHubError(502, "bad gateway https://x-access-token:secret-token@x")
     gh = FakeGitHub(responses)
     outcomes = [Outcome(1, "fixed", MERGE, "gone"), Outcome(2, "fixed", MERGE, "gone")]
-    assert act(outcomes, gh, tmp_path, never_publish, trusted=TRUSTED, remote="unused") == [1]
+    assert act(outcomes, gh, tmp_path, never_publish, trusted=TRUSTED, email=APP_EMAIL, remote="unused") == [1]
     assert ("PATCH", f"{API}/issues/2") in [(m, p) for m, p, _ in writes(gh)]
     err = capsys.readouterr().err
     assert "#1" in err and "bad gateway" in err and "secret-token" not in err
@@ -496,7 +497,7 @@ def test_act_ignores_outcomes_that_no_longer_match(tmp_path: Path, change: str) 
         Outcome(1, "reproduces", MERGE, "still", None, group.fingerprint, PR),
     ]
     gh = FakeGitHub(responses)
-    act(outcomes, gh, tmp_path, never_publish, trusted=TRUSTED, remote="unused")
+    act(outcomes, gh, tmp_path, never_publish, trusted=TRUSTED, email=APP_EMAIL, remote="unused")
     assert writes(gh) == []
 
 
@@ -507,7 +508,7 @@ def test_act_refuses_an_after_image_that_is_not_a_png(tmp_path: Path) -> None:
     after.write_bytes(b"#!/bin/sh\n")
     gh = FakeGitHub(act_responses(item))
     act([Outcome(1, "fixed", MERGE, "gone", after, group.fingerprint, PR)], gh, tmp_path, never_publish,
-        trusted=TRUSTED, remote="unused")
+        trusted=TRUSTED, email=APP_EMAIL, remote="unused")
     assert writes(gh) == []
 
 
@@ -523,7 +524,7 @@ def test_act_runs_no_reproduction(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     item = issue(1, (group,))
     gh = FakeGitHub(act_responses(item))
     act([Outcome(1, "fixed", MERGE, "gone", None, group.fingerprint, PR)], gh, tmp_path, never_publish,
-        trusted=TRUSTED, remote="unused")
+        trusted=TRUSTED, email=APP_EMAIL, remote="unused")
     assert [(m, p) for m, p, _ in writes(gh)][1] == ("PATCH", f"{API}/issues/1")
 
 
@@ -732,6 +733,20 @@ def test_flaky_reproduces_when_test_failed_again() -> None:
     outcomes = run_verify(FakeGitHub(flaky_responses(item, failed)), [item])
     assert outcomes[0].result == "reproduces"
     assert "actions/runs/3" in outcomes[0].reason and TEST_ID in outcomes[0].reason
+
+
+def test_flaky_reproduces_when_a_rerun_hid_the_failure() -> None:
+    """D30: run 3 ended green on a re-run, but its first attempt failed the flaky test again; the
+    jobs of every attempt are read, whatever the run's final conclusion."""
+    item = issue(1, (ci_group(),), labels=("factory:found", "factory:flaky", "factory:merged", "S1"))
+    failed = f"2026-10-18T11:01:00Z FAILED {TEST_ID} - AssertionError\n".encode()
+    responses = flaky_responses(item, failed)
+    runs = responses[("GET", f"{API}/actions/workflows/check.yml/runs")]["workflow_runs"]
+    runs[0] = {**runs[0], "conclusion": "success"}
+    gh = FakeGitHub(responses)
+    outcomes = run_verify(gh, [item])
+    assert outcomes[0].result == "reproduces" and "actions/runs/3" in outcomes[0].reason
+    assert ("GET", f"{API}/actions/runs/3/jobs", {"filter": "all", "per_page": 100, "page": 1}) in gh.calls
 
 
 def test_flaky_job_selector_reproduces_when_the_job_failed_again() -> None:
@@ -943,8 +958,10 @@ def test_cli_act_closes_the_stale_deploy_issue(tmp_path: Path, monkeypatch: pyte
             ("GET", f"{API}/deployments/1/statuses"): [{"state": "success"}],
             ("GET", f"{API}/commits/main"): {"sha": DEPLOYED},
             ("GET", f"{API}/issues"): [stale],
+            APP_USER: APP_USER_RECORD,
         }
     )
+    monkeypatch.setenv("FACTORY_APP_SLUG", "factory-app")
     monkeypatch.setattr(verify, "GitHub", lambda repo, *a, **k: gh)
     outcomes = tmp_path / "outcomes.json"
     verify.write_outcomes(outcomes, [Outcome(1, "not-deployed", MERGE, "later"), Outcome(2, "error", "", "x")])
@@ -959,6 +976,32 @@ def test_cli_act_closes_the_stale_deploy_issue(tmp_path: Path, monkeypatch: pyte
     assert verify.main(["act", "--outcomes", str(bad)]) == 2
 
 
+def test_cli_act_writes_nothing_without_the_app_bots_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """D46: reverts and evidence are committed only under the App bot's noreply address; when it
+    cannot be resolved (no slug, or no such bot), act writes nothing at all."""
+    stale = issue(10, (ci_group("deploy-stale", ""),), labels=("factory:found", "S1"), author="MBratkowski")
+    group = browser_group()
+    responses = {
+        **act_responses(issue(5, (group,)), sha=MERGE),
+        ("GET", f"{API}/deployments"): [{"id": 1, "sha": DEPLOYED}],
+        ("GET", f"{API}/deployments/1/statuses"): [{"state": "success"}],
+        ("GET", f"{API}/commits/main"): {"sha": DEPLOYED},
+        ("GET", f"{API}/issues"): [stale],
+        APP_USER: {"login": "factory-app[bot]", "id": 1, "type": "User"},
+    }
+    gh = FakeGitHub(responses)
+    monkeypatch.setattr(verify, "GitHub", lambda repo, *a, **k: gh)
+    outcomes = tmp_path / "outcomes.json"
+    verify.write_outcomes(outcomes, [Outcome(5, "reproduces", MERGE, "still there", None, group.fingerprint, PR)])
+    for slug in ("", "factory-app"):
+        monkeypatch.setenv("FACTORY_APP_SLUG", slug)
+        assert verify.main(["act", "--outcomes", str(outcomes)]) == 2
+        assert writes(gh) == []
+    assert "not the App's bot account" in capsys.readouterr().err
+
+
 def test_cli_act_closes_the_stale_issue_even_after_a_failed_outcome(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -970,8 +1013,10 @@ def test_cli_act_closes_the_stale_issue_even_after_a_failed_outcome(
             ("GET", f"{API}/commits/main"): {"sha": DEPLOYED},
             ("GET", f"{API}/issues"): [stale],
             ("GET", f"{API}/issues/1"): GitHubError(502, "bad gateway"),
+            APP_USER: APP_USER_RECORD,
         }
     )
+    monkeypatch.setenv("FACTORY_APP_SLUG", "factory-app")
     monkeypatch.setattr(verify, "GitHub", lambda repo, *a, **k: gh)
     outcomes = tmp_path / "outcomes.json"
     verify.write_outcomes(outcomes, [Outcome(1, "fixed", MERGE, "gone")])

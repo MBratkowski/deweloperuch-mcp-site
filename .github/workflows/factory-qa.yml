@@ -112,7 +112,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false
@@ -151,6 +151,9 @@ jobs:
       options: --ipc=host
     env:
       HOME: /root
+      # The reproduction scripts run as the image's unprivileged user (D40): no root /proc of the
+      # job's processes, no Docker socket. Everything else in the job stays root.
+      FACTORY_SCRIPT_USER: pwuser
     steps:
       - uses: actions/checkout@v7
         with:
@@ -165,11 +168,14 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # Reproduction scripts run in this checkout; no hook they leave runs on a local build.
           git config --global core.hooksPath /dev/null
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false
+      # The project's Python outside /root (mode 700), so the scripts can run it as pwuser.
       - run: uv sync --locked --python 3.12
+        env:
+          UV_PYTHON_INSTALL_DIR: /opt/uv-python
       - uses: actions/download-artifact@v8
         with:
           name: probe
@@ -210,7 +216,7 @@ jobs:
           fetch-depth: 0
           # git authenticates with the App token; a stored GITHUB_TOKEN header would override it.
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false
@@ -259,7 +265,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false
@@ -354,18 +360,24 @@ jobs:
       image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
       options: --ipc=host
     env:
-      # Firefox needs it for the scripts and the detector reproductions.
+      # Firefox needs it for the detector reproductions; each script gets a HOME of its own.
       HOME: /root
+      # The agent's scripts run as the image's unprivileged user (D40): no root /proc of the job's
+      # processes, no Docker socket. Everything else in the job stays root.
+      FACTORY_SCRIPT_USER: pwuser
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false
+      # The project's Python outside /root (mode 700), so the scripts can run it as pwuser.
       - run: uv sync --locked --python 3.12
+        env:
+          UV_PYTHON_INSTALL_DIR: /opt/uv-python
       - uses: actions/download-artifact@v8
         with:
           name: probe
@@ -450,7 +462,7 @@ jobs:
           ref: ${{ github.sha }}
           # Evidence is pushed with the App token; a stored GITHUB_TOKEN header would override it.
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false
@@ -502,7 +514,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what an App-token job restores.
           enable-cache: false

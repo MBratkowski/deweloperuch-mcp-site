@@ -75,7 +75,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what a write-token job restores.
           enable-cache: false
@@ -133,7 +133,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what a write-token job restores.
           enable-cache: false
@@ -186,7 +186,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # No hook from the pull request runs on a later git command.
           git config --global core.hooksPath /dev/null
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what a write-token job restores.
           enable-cache: false
@@ -278,7 +278,7 @@ jobs:
           [[ $HEAD_SHA =~ ^[0-9a-f]{40}$ ]] || { echo "::error::not a commit SHA: $HEAD_SHA"; exit 1; }
           git fetch --no-tags origin "+refs/pull/$PR/head:refs/factory/pr-head"
           [ "$(git rev-parse refs/factory/pr-head)" = "$HEAD_SHA" ] || { echo "::error::#$PR moved since Check ran; a later event reviews the new head"; exit 1; }
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what a write-token job restores.
           enable-cache: false
@@ -413,7 +413,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what a write-token job restores.
           enable-cache: false
@@ -476,7 +476,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.2.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # No uv cache: a job that runs agent code must not seed what a write-token job restores.
           enable-cache: false

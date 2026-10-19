@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pwd
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -28,6 +30,9 @@ from tools.factory.issues import (
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_TIMEOUT_SECONDS = 120
+# The unprivileged account agent scripts run as, when set (the check and verify jobs set `pwuser`,
+# the Playwright image's user, D40): no root /proc of the job's processes, no Docker socket.
+SCRIPT_USER_ENV = "FACTORY_SCRIPT_USER"
 # Checks whose defect is a fact about CI, not about a page: verified from the same run's ci_facts.
 CI_CHECKS = frozenset({"flaky", "deploy-stale"})
 
@@ -44,6 +49,40 @@ REPRODUCED = re.compile(r"^REPRODUCED: .+$", re.MULTILINE)
 NOT_REPRODUCED = re.compile(r"^NOT REPRODUCED$", re.MULTILINE)
 
 
+class ScriptUserError(RuntimeError):
+    """FACTORY_SCRIPT_USER names an account the scripts cannot be run as."""
+
+
+def script_user() -> tuple[int, int] | None:
+    """(uid, gid) of FACTORY_SCRIPT_USER, or None when it is not set. Raises ScriptUserError when
+    the account is unknown, is root, or this process cannot switch to it (only root can)."""
+    name = os.environ.get(SCRIPT_USER_ENV, "")
+    if not name:
+        return None
+    try:
+        entry = pwd.getpwnam(name)
+    except KeyError:
+        raise ScriptUserError(f"{SCRIPT_USER_ENV} names no account: {name!r}") from None
+    if entry.pw_uid == 0 or entry.pw_gid == 0:
+        raise ScriptUserError(f"{SCRIPT_USER_ENV} must name an unprivileged account, not {name!r}")
+    if os.geteuid() != 0:
+        raise ScriptUserError(f"only root can run the scripts as {name!r}")
+    return entry.pw_uid, entry.pw_gid
+
+
+def _launch(home: Path | None, user: tuple[int, int] | None) -> dict[str, object]:
+    """Popen options for a script: as `user`, with no supplementary group and a fresh HOME of its own
+    (browsers need a writable one), or unchanged when no user is configured."""
+    if user is None or home is None:
+        return {}
+    return {
+        "user": user[0],
+        "group": user[1],
+        "extra_groups": [],
+        "env": {**os.environ, "HOME": str(home)},
+    }
+
+
 def run_script(script: str, url: str) -> int:
     """Run an agent's reproduction script in isolated mode.
 
@@ -52,19 +91,37 @@ def run_script(script: str, url: str) -> int:
 
     The script runs in a session of its own, and its whole process group is killed once it exits
     or times out, so nothing it started outlives it. Output goes to files, not pipes, so a child
-    holding them open cannot stall the wait.
+    holding them open cannot stall the wait. With FACTORY_SCRIPT_USER set, it runs as that
+    unprivileged account (D40); an account it cannot switch to fails closed (2, nothing runs).
     """
     if not SCRIPT_PATTERN.fullmatch(script) or ".." in script:
         return 2
+    try:
+        user = script_user()
+    except ScriptUserError as error:
+        print(f"warning: {script} not run: {error}", file=sys.stderr)
+        return 2
+    home = Path(tempfile.mkdtemp(prefix="factory-script-home-")) if user else None
+    try:
+        if home is not None and user is not None:
+            os.chown(home, user[0], user[1])
+        return _run_script(script, url, _launch(home, user))
+    finally:
+        if home is not None:
+            shutil.rmtree(home, ignore_errors=True)
+
+
+def _run_script(script: str, url: str, options: dict[str, object]) -> int:
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         try:
-            process = subprocess.Popen(
+            process = subprocess.Popen(  # type: ignore[call-overload]
                 [sys.executable, "-I", script, "--base-url", url],
                 cwd=ROOT,
                 stdin=subprocess.DEVNULL,
                 stdout=out,
                 stderr=err,
                 start_new_session=True,
+                **options,
             )
         except OSError:
             return 2

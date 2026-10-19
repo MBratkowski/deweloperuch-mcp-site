@@ -37,6 +37,7 @@ from tools.factory.dispatch import _only_deploy_stale
 from tools.factory.evidence import EvidenceError, redact
 from tools.factory.findings import Cell, Group
 from tools.factory.github import GitHub, GitHubError, _NoRedirect
+from tools.factory.identity import bot_email
 from tools.factory.issues import FINGERPRINT_PATTERN, dedup, fingerprints_in, groups_in, script_in
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -50,7 +51,8 @@ SERIOUS = frozenset({"S1", "S2"})
 CI_CHECKS = frozenset({"flaky", "deploy-stale"})
 SHARED_PREFIXES = ("css/", "js/", "assets/")
 CHECK_WORKFLOW, PAGES_WORKFLOW = ci_facts.WORKFLOWS
-IDENTITY = ("factory-revert", "factory@users.noreply.github.com")
+# The revert commit's author and committer; the address is the App bot's (tools/factory/identity.py).
+NAME = "factory-revert"
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_SCRIPT_BYTES = 1_000_000
 DOWNLOAD_TIMEOUT_SECONDS = 30
@@ -193,9 +195,10 @@ def _parse_time(stamp: str) -> datetime:
 def runs_since_merge(
     gh: Any, workflow: str, contains: Callable[[str], bool], since: datetime | None = None
 ) -> list[dict]:
-    """Completed runs of `workflow` on main whose commit contains the merge."""
+    """Completed runs of `workflow` on main whose commit contains the merge, every page of them
+    since the merge (D30)."""
     selected = []
-    for run in ci_facts._runs(gh, workflow, branch="main"):
+    for run in ci_facts.workflow_runs(gh, workflow, since, branch="main"):
         if run.get("status") != "completed" or run.get("head_branch", "main") != "main":
             continue
         if since is not None and _parse_time(run["created_at"]) < since:
@@ -206,7 +209,8 @@ def runs_since_merge(
 
 
 def failed_again(gh: Any, run: dict, selector: str) -> bool:
-    """True when a failed job of the run failed the test id (or is the job, for a job-name selector)."""
+    """True when a failed job of any attempt of the run failed the test id (or is the job, for a
+    job-name selector): a run that passed on a re-run still failed the test once (D30)."""
     for job in ci_facts._jobs(gh, run["id"]):
         if job.get("conclusion") != "failure":
             continue
@@ -231,8 +235,9 @@ def verify_flaky(
     contains = contains or (lambda head: is_deployed(gh, merge_sha, head))
     pages = runs_since_merge(gh, PAGES_WORKFLOW, contains, since)
     checks = runs_since_merge(gh, CHECK_WORKFLOW, contains, since)
+    # Every run, not only the failed ones: a re-run that passed hides an earlier attempt that failed.
     for run in sorted(pages + checks, key=lambda r: r["created_at"]):
-        if run.get("conclusion") == "failure" and failed_again(gh, run, group.selector):
+        if failed_again(gh, run, group.selector):
             return "reproduces", f"{group.selector} failed again in {run['html_url']} on {run['head_sha'][:7]}"
     passed = [run for run in pages if run.get("conclusion") == "success"]
     if not passed:
@@ -630,14 +635,14 @@ def load_outcomes(path: Path) -> list[Outcome]:
 # --- acting (App token, no reproduction) ----------------------------------------------------
 
 
-def _git_run(args: list[str], cwd: Path, identity: bool = False) -> subprocess.CompletedProcess[str]:
+def _git_run(args: list[str], cwd: Path, email: str | None = None) -> subprocess.CompletedProcess[str]:
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-    if identity:  # for this command only; never written to any git config
+    if email is not None:  # for this command only; never written to any git config
         env |= {
-            "GIT_AUTHOR_NAME": IDENTITY[0],
-            "GIT_AUTHOR_EMAIL": IDENTITY[1],
-            "GIT_COMMITTER_NAME": IDENTITY[0],
-            "GIT_COMMITTER_EMAIL": IDENTITY[1],
+            "GIT_AUTHOR_NAME": NAME,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_COMMITTER_NAME": NAME,
+            "GIT_COMMITTER_EMAIL": email,
         }
     return subprocess.run(
         ["git", "-c", "commit.gpgsign=false", *args], cwd=cwd, env=env, capture_output=True, text=True
@@ -651,28 +656,31 @@ def _git_error(result: subprocess.CompletedProcess[str], verb: str, remote: str 
     return GitError(f"git {verb} failed: {redact(detail).strip()}")
 
 
-def _git(args: list[str], cwd: Path, remote: str | None = None, identity: bool = False) -> str:
-    result = _git_run(args, cwd, identity)
+def _git(args: list[str], cwd: Path, remote: str | None = None) -> str:
+    result = _git_run(args, cwd)
     if result.returncode != 0:
         raise _git_error(result, args[0], remote)
     return result.stdout.strip()
 
 
-def revert_branch(repo: Path, remote: str, merge_sha: str, branch: str) -> str:
+def revert_branch(repo: Path, remote: str, merge_sha: str, branch: str, email: str) -> str:
     """Push `branch` = origin/main plus `git revert --no-edit <merge_sha>`; returns the commit title.
+    The revert is authored and committed under the App bot's address `email`.
 
     Works in a temporary worktree, so the checkout in `repo` is left as it was. Raises RevertFailed
     when `git revert` itself fails, GitError when fetching, checking out or pushing fails.
     """
     if not _SHA.fullmatch(merge_sha):
         raise ValueError(f"not a commit SHA: {merge_sha!r}")
+    if not email or "@" not in email:
+        raise GitError("no commit address: resolve the App bot's identity first")
     _git(["fetch", "--no-tags", remote, "+refs/heads/main:refs/remotes/origin/main"], repo, remote)
     holder = Path(tempfile.mkdtemp(prefix="factory-revert-"))
     tree = holder / "tree"
     try:
         _git(["worktree", "add", "--detach", str(tree), "refs/remotes/origin/main"], repo, remote)
         try:
-            reverted = _git_run(["revert", "--no-edit", merge_sha], tree, identity=True)
+            reverted = _git_run(["revert", "--no-edit", merge_sha], tree, email=email)
             if reverted.returncode != 0:
                 conflicts = _git_run(["diff", "--name-only", "--diff-filter=U"], tree).stdout.split()
                 _git_run(["revert", "--abort"], tree)
@@ -767,7 +775,9 @@ def _open_revert_pr(gh: Any, api: str, repo_name: str, branch: str) -> int | Non
     return None
 
 
-def _revert(gh: Any, api: str, repo_name: str, outcome: Outcome, pr: int, repo: Path, remote: str) -> None:
+def _revert(
+    gh: Any, api: str, repo_name: str, outcome: Outcome, pr: int, repo: Path, remote: str, email: str
+) -> None:
     number, sha = outcome.issue, outcome.merge_sha
     branch = f"revert/{number}"
     reason = _plain(outcome.reason)
@@ -775,7 +785,7 @@ def _revert(gh: Any, api: str, repo_name: str, outcome: Outcome, pr: int, repo: 
     pull = _open_revert_pr(gh, api, repo_name, branch)
     if pull is None:
         try:
-            title = revert_branch(repo, remote, sha, branch)
+            title = revert_branch(repo, remote, sha, branch, email)
         except RevertFailed as error:
             _comment(
                 gh,
@@ -822,8 +832,10 @@ def act(
     remote: str | None = None,
     trusted: frozenset[str] | None = None,
     run_id: str | None = None,
+    email: str,
 ) -> list[int]:
-    """Close fixed issues and revert regressions. Never reruns a reproduction.
+    """Close fixed issues and revert regressions. Never reruns a reproduction. A revert is committed
+    under the App bot's address `email`.
 
     Each outcome is handled on its own: an infrastructure failure on one is logged and the rest
     still run. Returns the issue numbers whose handling failed.
@@ -834,7 +846,7 @@ def act(
     failed: list[int] = []
     for outcome in outcomes:
         try:
-            _act_on(outcome, gh, api, repo_name, repo, publish_evidence, remote, trusted, run_id)
+            _act_on(outcome, gh, api, repo_name, repo, publish_evidence, remote, trusted, run_id, email)
         except INFRASTRUCTURE as error:
             print(f"#{outcome.issue}: failed: {type(error).__name__}: {redact(str(error))}", file=sys.stderr)
             failed.append(outcome.issue)
@@ -851,6 +863,7 @@ def _act_on(
     remote: str | None,
     trusted: frozenset[str],
     run_id: str,
+    email: str,
 ) -> None:
     if outcome.result == "not-deployed":
         print(f"#{outcome.issue}: not deployed yet ({_plain(outcome.reason)})")
@@ -865,7 +878,7 @@ def _act_on(
     if outcome.result == "fixed":
         _close_fixed(gh, api, outcome, issue, pr, publish_evidence, run_id)
     else:
-        _revert(gh, api, repo_name, outcome, pr, repo, remote or _token_remote(repo_name))
+        _revert(gh, api, repo_name, outcome, pr, repo, remote or _token_remote(repo_name), email)
 
 
 def close_stale_deploy(gh: Any, stale: Group | None, *, trusted: frozenset[str] | None = None) -> list[int]:
@@ -961,6 +974,8 @@ def _act(args: argparse.Namespace) -> int:
     token = os.environ.get("GH_TOKEN", "")
     outcomes = load_outcomes(args.outcomes)
     gh = GitHub(repo, token or None)
+    # Evidence and reverts are committed only under the App bot's own address (D46).
+    email = bot_email(gh)
 
     def publish_evidence(files: Mapping[str, Path]) -> dict[str, str]:
         run_id = os.environ.get("GITHUB_RUN_ID") or "local"
@@ -971,9 +986,10 @@ def _act(args: argparse.Namespace) -> int:
                 f"Live verification for run {run_id}",
                 f"https://raw.githubusercontent.com/{repo}",
                 Path(workdir),
+                email=email,
             )
 
-    failed = act(outcomes, gh, ROOT, publish_evidence)
+    failed = act(outcomes, gh, ROOT, publish_evidence, email=email)
     closed = close_stale_deploy(gh, deploy_stale(gh))  # runs even when an outcome failed
     if closed:
         print("closed deploy-stale " + " ".join(f"#{n}" for n in closed))

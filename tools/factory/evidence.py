@@ -19,7 +19,8 @@ from pathlib import Path
 
 BRANCH = "factory-evidence"
 MAX_ATTEMPTS = 3
-IDENTITY = ("factory-evidence", "factory@users.noreply.github.com")
+# The committer's name; the address is the App bot's noreply address (tools/factory/identity.py).
+NAME = "factory-evidence"
 
 _CREDENTIALS = re.compile(r"(?P<scheme>[a-z][a-z0-9+.-]*://)[^/@\s]*@", re.IGNORECASE)
 
@@ -65,7 +66,7 @@ def _git(args: list[str], cwd: Path | None, remote: str) -> str:
     return result.stdout.strip()
 
 
-def _prepare(remote: str, repo: Path) -> None:
+def _prepare(remote: str, repo: Path, email: str) -> None:
     """Clone the evidence branch, or start an orphan branch if it is missing."""
     heads = _git(["ls-remote", "--heads", remote, BRANCH], None, remote)
     if heads:
@@ -78,8 +79,8 @@ def _prepare(remote: str, repo: Path) -> None:
         repo.mkdir(parents=True)
         _git(["init", "-b", BRANCH], repo, remote)
         _git(["remote", "add", "origin", remote], repo, remote)
-    _git(["config", "user.name", IDENTITY[0]], repo, remote)
-    _git(["config", "user.email", IDENTITY[1]], repo, remote)
+    _git(["config", "user.name", NAME], repo, remote)
+    _git(["config", "user.email", email], repo, remote)
 
 
 def publish(
@@ -89,9 +90,13 @@ def publish(
     raw_base: str,
     workdir: Path,
     *,
+    email: str,
     _before_push: Callable[[int], None] | None = None,
 ) -> dict[str, str]:
     """Commit ``files`` to the evidence branch and return their raw URLs.
+
+    ``email`` is the committer's address: the App bot's noreply address, resolved by the caller
+    (tools/factory/identity.py); there is no default, so nothing is committed under another name.
 
     ``files`` maps the published path (posix, relative) to a local source file.
     If the push is rejected (another job pushed first), the branch is fetched and
@@ -102,13 +107,15 @@ def publish(
     """
     for path in files:
         _check_path(path)
+    if not email or "@" not in email:
+        raise EvidenceError("no committer address: resolve the App bot's identity first")
 
     repo = workdir / "evidence"
     workdir.mkdir(parents=True, exist_ok=True)
     if repo.exists():
         shutil.rmtree(repo)
     try:
-        _prepare(remote, repo)
+        _prepare(remote, repo, email)
         for path, src in files.items():
             dest = repo / path
             dest.parent.mkdir(parents=True, exist_ok=True)

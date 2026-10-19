@@ -2,6 +2,15 @@
 
 from typing import Any
 
+# The App's bot account as GitHub's public user record shows it (GET /users/<slug>[bot]); its
+# noreply address is the commit identity of everything the factory commits (D46).
+APP_SLUG = "factory-app"
+APP_LOGIN = f"{APP_SLUG}[bot]"
+APP_USER_ID = 41898282
+APP_EMAIL = f"{APP_USER_ID}+{APP_LOGIN}@users.noreply.github.com"
+APP_USER = ("GET", "/users/factory-app%5Bbot%5D")
+APP_USER_RECORD = {"login": APP_LOGIN, "id": APP_USER_ID, "type": "Bot"}
+
 
 class FakeGitHub:
     """Same surface as tools.factory.github.GitHub, answering from canned responses.
