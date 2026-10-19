@@ -546,6 +546,61 @@ def test_review_write_token_reaches_only_post_act_and_hand_over() -> None:
         assert argument in step["run"], argument
 
 
+MERGE_APP_SCOPES = {
+    "permission-actions": "read",
+    "permission-checks": "read",
+    "permission-contents": "write",
+    "permission-issues": "write",
+    "permission-pull-requests": "write",
+}
+
+
+def test_merge_workflow_triggers_job_and_app_token() -> None:
+    workflow = load_yaml(WORKFLOWS / "factory-merge.yml")
+    assert set(workflow["on"]) == {"workflow_dispatch", "schedule"}
+    assert set(workflow["on"]["workflow_dispatch"]["inputs"]) == {"pr"}
+    assert workflow["on"]["schedule"] == [{"cron": "5 * * * *"}]
+    assert workflow["permissions"] == {}
+    # One merger at a time, and a running merger is never cancelled half-way through a merge.
+    assert workflow["concurrency"] == {"group": "factory-merge", "cancel-in-progress": False}
+    assert workflow["env"] == NO_HOOKS
+    jobs = workflow["jobs"]
+    assert set(jobs) == {"merge"}
+    job = jobs["merge"]
+    assert "github.ref == 'refs/heads/main'" in job["if"]
+    assert (job["runs-on"], job["environment"]) == ("ubuntu-24.04", "factory")
+    assert "container" not in job
+    # GITHUB_TOKEN only checks out; the App token does everything else.
+    assert job["permissions"] == {"contents": "read"}
+    steps = job["steps"]
+    assert not any(_uses_agent(s) for s in steps)
+    (checkout,) = [s for s in steps if _uses(s, "actions/checkout")]
+    assert checkout["with"] == {"ref": "${{ github.sha }}", "fetch-depth": 0, "persist-credentials": False}
+    (app,) = [s for s in steps if _uses(s, APP_TOKEN_ACTION)]
+    assert app["uses"] == "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1"
+    assert {k: v for k, v in app["with"].items() if k.startswith("permission-")} == MERGE_APP_SCOPES
+    assert (app["with"]["client-id"], app["with"]["private-key"]) == (
+        "${{ vars.FACTORY_APP_CLIENT_ID }}", "${{ secrets.FACTORY_APP_PRIVATE_KEY }}",
+    )
+    commands = _runs(steps)
+    assert commands == ["uv sync --locked", commands[-1]]
+    command = commands[-1]
+    assert "uv run python -m tools.factory.merge --pr \"$PR\"" in command
+    assert "uv run python -m tools.factory.merge --sweep" in command
+    # It runs nothing from the pull request: no test, no build, no agent code.
+    assert not any(runner in command for runner in ("pytest", "build_docs", *AGENT_CODE_RUNNERS))
+    # The App token reaches only the merger's step.
+    holders = [s for s in steps if any(reference in json.dumps(s) for reference in ("steps.app.outputs.token", "GH_TOKEN"))]
+    assert holders == [steps[-1]]
+    assert steps[-1]["env"] == {
+        "GH_TOKEN": "${{ steps.app.outputs.token }}",
+        "FACTORY_MODE": "${{ vars.FACTORY_MODE }}",
+        "FACTORY_APP_SLUG": "${{ vars.FACTORY_APP_SLUG }}",
+        "PR": "${{ inputs.pr }}",
+    }
+    assert steps.index(app) < len(steps) - 1
+
+
 def test_agents_read_only_the_workspace() -> None:
     for path, _, name, job, step in _agent_steps():
         where = f"{path.name}: job {name}"
