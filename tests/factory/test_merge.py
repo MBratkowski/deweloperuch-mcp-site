@@ -419,10 +419,37 @@ def test_shadow_comment_names_the_blocking_conditions() -> None:
     assert f"Would block: {CONDITIONS[PAGES]}, {CONDITIONS[CAP]}" in text
 
 
-def test_shadow_comment_for_a_branch_behind_main_is_a_block() -> None:
+def test_shadow_comment_for_a_branch_behind_main_is_a_merge() -> None:
+    """R52: behind main is the only failing row: the factory would update the branch, then merge."""
     text = render_shadow(evaluate(facts(behind=True), "shadow", APP, LIMITS), HEAD)
-    assert f"<!-- factory:verdict=block sha={HEAD} -->" in text
+    assert f"<!-- factory:verdict=merge sha={HEAD} -->" in text
     assert "Would update the branch" in text
+    assert "then merge" in text
+
+
+def test_shadow_comment_behind_main_with_another_failure_is_a_block() -> None:
+    text = render_shadow(evaluate(facts(behind=True, pages_conclusion="failure"), "shadow", APP, LIMITS), HEAD)
+    assert f"<!-- factory:verdict=block sha={HEAD} -->" in text
+    assert "Would block: " in text
+
+
+def test_shadow_behind_main_sets_merge_ready_and_blocked_does_not() -> None:
+    behind = facts(behind=True)
+    gh = FakeGitHub()
+    act(gh, behind, evaluate(behind, "shadow", APP, LIMITS), "shadow", config=CONFIG)
+    assert any(call[0] == "POST" and call[2] == {"labels": ["factory:merge-ready"]} for call in gh.calls)
+    both = facts(behind=True, pages_conclusion="failure")
+    gh = FakeGitHub()
+    act(gh, both, evaluate(both, "shadow", APP, LIMITS), "shadow", config=CONFIG)
+    assert not [call for call in gh.calls if "labels" in call[1]]
+
+
+def test_status_agreement_counts_an_owner_merge_after_a_behind_verdict() -> None:
+    text = render_shadow(evaluate(facts(behind=True), "shadow", APP, LIMITS), HEAD)
+    marker = re.search(r"verdict=(merge|block)", text).group(1)
+    assert marker == "merge"
+    a = status.agreement([{"number": 12, "merged": True, "verdict": marker}])
+    assert (a.decided, a.agree, a.dangerous) == (1, 1, [])
 
 
 def test_shadow_values_are_neutralised() -> None:
@@ -669,7 +696,7 @@ def test_shadow_never_updates_the_branch() -> None:
     behind = facts(behind=True)
     gh = FakeGitHub()
     assert act(gh, behind, evaluate(behind, "shadow", APP, LIMITS), "shadow", config=CONFIG) == "commented"
-    assert [method for method, _, _ in gh.calls] == ["POST"]
+    assert not [call for call in gh.calls if "update-branch" in call[1] or call[0] in ("PUT", "PATCH")]
 
 
 @pytest.mark.parametrize("mode", ["off", "", "manual"])

@@ -384,15 +384,16 @@ def _headline(verdict: Verdict) -> str:
         return f"{WOULD_MERGE} In shadow mode the owner merges or closes."
     if verdict.action == "update-branch":
         return (
-            f"{WOULD_UPDATE} with {MAIN} and stop; Check and the review would then run again "
-            "on the new head. In shadow mode the owner updates it."
+            f"{WOULD_UPDATE} with {MAIN}, then merge: Check and the review would run again on the "
+            "new head and the merger would merge it. In shadow mode the owner updates it."
         )
     return WOULD_BLOCK + ", ".join(row.condition for row in verdict.failed) + ".**"
 
 
 def render_shadow(verdict: Verdict, head_sha: str) -> str:
     """The shadow comment: the condition table, the verdict and the hidden verdict marker (`merge`
-    only when it would merge this head; an update of the branch is a `block` of this head)."""
+    when the factory would merge this head, or would update the branch and then merge, R52: the
+    "up to date" row is the only one failing; `block` otherwise)."""
     if not _SHA.fullmatch(head_sha):
         raise ValueError("the head must be a commit SHA")
     lines = [
@@ -403,7 +404,7 @@ def render_shadow(verdict: Verdict, head_sha: str) -> str:
     ]
     for number, row in enumerate(verdict.rows, 1):
         lines.append(f"| {number} | {row.condition} | {'✓' if row.ok else '✗'} | {_value(row.value)} |")
-    marker = "merge" if verdict.action == "merge" else "block"
+    marker = "block" if verdict.action == "block" else "merge"
     lines += ["", _headline(verdict), "", SENTINEL, f"<!-- factory:verdict={marker} sha={head_sha} -->"]
     return "\n".join(lines) + "\n"
 
@@ -706,7 +707,7 @@ def _shadow(gh: Any, api: str, facts: PullFacts, verdict: Verdict) -> str:
     else:
         print(f"#{facts.number}: the verdict on {_short(facts.head_sha)} stands; its comment is unchanged")
         outcome = "unchanged"
-    _sync_label(gh, api, facts, verdict.action == "merge")
+    _sync_label(gh, api, facts, verdict.action != "block")
     return outcome
 
 
