@@ -25,6 +25,9 @@ QA_WRITERS = {"verify-act", "dispatch-status"}
 AGENT_ACTION = "anthropics/claude-code-action"
 APP_TOKEN_ACTION = "actions/create-github-app-token"
 APP_KEY = "FACTORY_APP_PRIVATE_KEY"
+# I6: the App's private key and the Claude token live in separate environments (main only).
+APP_ENVIRONMENT = "factory"
+AGENT_ENVIRONMENT = "factory-agent"
 CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
 ENV_SCRUB = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
 SETUP_UV = "astral-sh/setup-uv"
@@ -256,6 +259,8 @@ def test_agents_hold_no_write_token() -> None:
             where = f"{path.name}: job {name}"
             assert not any(action.startswith(APP_TOKEN_ACTION) for action in uses), f"{where} mints the App token"
             assert APP_KEY not in json.dumps(job), f"{where} can read the App private key"
+            # I6: never the environment that holds the App's private key.
+            assert job.get("environment") == AGENT_ENVIRONMENT, f"{where} uses {job.get('environment')}"
             permissions = job["permissions"] if "permissions" in job else workflow.get("permissions")
             allowed = AGENT_WRITE_ALLOWED.get((path.name, name), frozenset())
             writes = _write_scopes(permissions, where)
@@ -344,7 +349,7 @@ def test_fix_workflow_triggers_jobs_and_concurrency() -> None:
 def test_fix_job_holds_no_write_token_and_no_token_after_the_agent() -> None:
     job = load_yaml(WORKFLOWS / "factory-fix.yml")["jobs"]["fix"]
     assert job["permissions"] == {"checks": "read", "contents": "read", "issues": "read", "pull-requests": "read"}
-    assert job["environment"] == "factory"  # for the Claude token of the agent step only
+    assert job["environment"] == AGENT_ENVIRONMENT  # for the Claude token of the agent step only
     assert job["timeout-minutes"] == 90
     assert job["container"]["image"] == PLAYWRIGHT_IMAGE
     assert job["env"] == {"HOME": "/root", "VISUAL_RENDERER": "playwright-1.64.0-noble-amd64"}
@@ -405,7 +410,9 @@ def test_publish_job_holds_the_app_token_and_runs_no_fix_code() -> None:
     (checkout,) = [s for s in steps if str(s.get("uses", "")).startswith("actions/checkout")]
     assert checkout["with"] == {"ref": "${{ github.sha }}", "fetch-depth": 0, "persist-credentials": False}
     (download,) = [s for s in steps if str(s.get("uses", "")).startswith("actions/download-artifact")]
-    assert download["with"] == {"name": "fix", "path": "factory-in/fix"}
+    assert download["with"] == {
+        "artifact-ids": "${{ needs.fix.outputs.artifact }}", "path": "factory-in/fix", "merge-multiple": True
+    }
     (app,) = [s for s in steps if str(s.get("uses", "")).startswith(APP_TOKEN_ACTION)]
     scopes = {k: v for k, v in app["with"].items() if k.startswith("permission-")}
     assert scopes == {"permission-contents": "write", "permission-issues": "write", "permission-pull-requests": "write"}
@@ -563,7 +570,7 @@ def test_reviewer_agent_arguments_are_pinned() -> None:
 def test_review_job_reads_the_pull_request_and_runs_none_of_it() -> None:
     job = _review_jobs()["review"]
     assert job["permissions"] == {"actions": "read", "contents": "read", "issues": "read", "pull-requests": "read"}
-    assert job["environment"] == "factory" and "container" not in job
+    assert job["environment"] == AGENT_ENVIRONMENT and "container" not in job
     steps = job["steps"]
     runs = " ".join(_runs(steps))
     for forbidden in ("pytest", "tools.factory.review evidence", "tools.factory.review post", "build_docs", "package_site"):
@@ -705,6 +712,85 @@ def test_merge_workflow_triggers_job_and_app_token() -> None:
     assert steps.index(app) < len(steps) - 1
 
 
+# I5: (workflow, job, download path) -> the artifact it must be, by the job and upload that made it.
+ARTIFACT_SOURCES = {
+    ("factory-qa.yml", "verify", "factory-in/probe"): ("probe", "probe"),
+    ("factory-qa.yml", "triage", "factory-in/probe"): ("probe", "probe"),
+    ("factory-qa.yml", "check", "factory-in/probe"): ("probe", "probe"),
+    ("factory-qa.yml", "check", "factory-in/drafts"): ("triage", "drafts"),
+    ("factory-qa.yml", "file", "factory-in/probe"): ("probe", "probe"),
+    ("factory-qa.yml", "file", "factory-out"): ("check", "validated"),
+    ("factory-qa.yml", "verify-act", "verify-out"): ("verify", "verify"),
+    ("factory-fix.yml", "publish", "factory-in/fix"): ("fix", "fix"),
+}
+
+
+def test_artifacts_are_downloaded_by_the_id_of_the_upload_that_made_them() -> None:
+    """I5 and M9: a job holding the App token, or reading the probe's output, takes each artifact by
+    the id its producing job uploaded, never by name: check and verify run the QA agent's scripts and
+    the fix job the fixer's code, and any of them could upload another artifact under the same name.
+    Downloads from another workflow's run (Check's visual-results, by run id) are the reviewer's."""
+    seen: dict[tuple[str, str, str], tuple[str, str]] = {}
+    for path in _factory_workflows():
+        jobs = load_yaml(path)["jobs"]
+        for name, job in jobs.items():
+            needs = job.get("needs") or []
+            needs = [needs] if isinstance(needs, str) else needs
+            for step in job["steps"]:
+                if not _uses(step, "actions/download-artifact"):
+                    continue
+                settings = step["with"]
+                where = f"{path.name}: job {name}: {settings.get('path')}"
+                if "run-id" in settings:
+                    assert (path.name, name) == ("factory-review.yml", "review"), where
+                    continue
+                assert "name" not in settings and settings.get("merge-multiple") is True, where
+                match = re.fullmatch(r"\$\{\{ needs\.([a-z-]+)\.outputs\.([a-z_]+) \}\}", str(settings.get("artifact-ids")))
+                assert match and match.group(1) in needs, where
+                producer = jobs[match.group(1)]
+                upload = re.fullmatch(r"\$\{\{ steps\.([a-z_-]+)\.outputs\.artifact-id \}\}", producer["outputs"][match.group(2)])
+                assert upload, where
+                (step_made,) = [s for s in producer["steps"] if s.get("id") == upload.group(1)]
+                assert _uses(step_made, "actions/upload-artifact"), where
+                if path.name != "factory-review.yml":
+                    seen[(path.name, name, settings["path"])] = (match.group(1), step_made["with"]["name"])
+    assert seen == ARTIFACT_SOURCES
+    # Every job of factory-qa.yml that mints the App token or reads the probe's output is covered.
+    qa = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]
+    readers = {n for n, j in qa.items() if any(_uses(s, APP_TOKEN_ACTION) for s in j["steps"])}
+    readers |= {n for n, j in qa.items() if "factory-in/probe" in json.dumps(j)}
+    covered = {job for workflow, job, _ in ARTIFACT_SOURCES if workflow == "factory-qa.yml"}
+    assert readers - {"dispatch-status"} <= covered and "dispatch-status" in readers
+
+
+def test_each_secret_lives_in_its_own_environment() -> None:
+    """I6: `factory` (the App's private key) is used only by jobs that mint the App token, and
+    `factory-agent` (the Claude token) only by the agent jobs; no other environment exists."""
+    app_jobs: set[tuple[str, str]] = set()
+    agent_jobs: set[tuple[str, str]] = set()
+    for path in _factory_workflows():
+        for name, job in load_yaml(path)["jobs"].items():
+            environment = job.get("environment")
+            text = json.dumps(job)
+            mints = any(_uses(s, APP_TOKEN_ACTION) for s in job["steps"])
+            agent = any(_uses_agent(s) for s in job["steps"])
+            assert environment in (None, APP_ENVIRONMENT, AGENT_ENVIRONMENT), (path.name, name)
+            assert (environment == APP_ENVIRONMENT) == mints == (f"secrets.{APP_KEY}" in text), (path.name, name)
+            assert (environment == AGENT_ENVIRONMENT) == agent == (f"secrets.{CLAUDE_TOKEN}" in text), (path.name, name)
+            (app_jobs if mints else agent_jobs if agent else set()).add((path.name, name))
+    assert agent_jobs == {("factory-qa.yml", "triage"), ("factory-fix.yml", "fix"), ("factory-review.yml", "review")}
+    assert app_jobs == {
+        ("factory-qa.yml", "file"),
+        ("factory-qa.yml", "verify-act"),
+        ("factory-qa.yml", "dispatch-status"),
+        ("factory-fix.yml", "publish"),
+        ("factory-merge.yml", "merge"),
+    }
+    from tools.factory import setup_repo
+
+    assert setup_repo.ENVIRONMENTS == {APP_ENVIRONMENT: APP_KEY, AGENT_ENVIRONMENT: CLAUDE_TOKEN}
+
+
 def test_agents_read_only_the_workspace() -> None:
     for path, _, name, job, step in _agent_steps():
         where = f"{path.name}: job {name}"
@@ -785,7 +871,8 @@ def test_file_job_takes_groups_from_the_probe_artifact() -> None:
     probe = [
         (s.get("with") or {}).get("path")
         for s in steps
-        if str(s.get("uses", "")).startswith("actions/download-artifact") and (s.get("with") or {}).get("name") == "probe"
+        if _uses(s, "actions/download-artifact")
+        and (s.get("with") or {}).get("artifact-ids") == "${{ needs.probe.outputs.artifact }}"
     ]
     assert probe == ["factory-in/probe"]
     command = " ".join(str(s.get("run", "")) for s in steps if "tools.factory.file_issues" in str(s.get("run", "")))

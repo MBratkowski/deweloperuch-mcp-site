@@ -144,7 +144,8 @@ jobs:
     runs-on: ubuntu-24.04
     # The agent's turns, red and green, the full suite, and for a flaky test 100 throttled runs.
     timeout-minutes: 90
-    environment: factory
+    # The Claude token only: the App's private key lives in the environment factory, never here.
+    environment: factory-agent
     # The agent holds no write token: this GITHUB_TOKEN is read-only and the App token is never minted here.
     permissions:
       checks: read
@@ -161,6 +162,9 @@ jobs:
       VISUAL_RENDERER: playwright-1.64.0-noble-amd64
     outputs:
       branch: ${{ steps.prepare.outputs.branch }}
+      # publish downloads the artifact by this id: the agent's code ran here, and an artifact
+      # uploaded later under the same name cannot replace it.
+      artifact: ${{ steps.upload.outputs.artifact-id }}
       # A failed scan sends the issue to a person instead of another attempt.
       scan: ${{ steps.scan.outcome }}
     steps:
@@ -286,6 +290,7 @@ jobs:
         id: scan
         run: uv run python -I -S tools/factory/secret_scan.py factory-out
       - uses: actions/upload-artifact@v7
+        id: upload
         with:
           name: fix
           path: factory-out/
@@ -324,8 +329,9 @@ jobs:
       - uses: actions/download-artifact@v8
         if: needs.fix.result == 'success'
         with:
-          name: fix
+          artifact-ids: ${{ needs.fix.outputs.artifact }}
           path: factory-in/fix
+          merge-multiple: true
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app
         with:

@@ -14,7 +14,15 @@ from pathlib import Path
 from tools.factory.config import MODES, load_config
 from tools.factory.github import GitHub, GitHubError
 
+# Two environments, both deployable from main only (I6): `factory` holds only the App's private key and
+# is used only by the jobs that mint the App token; `factory-agent` holds only the Claude token and is
+# used only by the agent jobs (QA triage, the fixer, the reviewer).
 ENVIRONMENT = "factory"
+AGENT_ENVIRONMENT = "factory-agent"
+ENVIRONMENTS = {
+    ENVIRONMENT: "FACTORY_APP_PRIVATE_KEY",
+    AGENT_ENVIRONMENT: "CLAUDE_CODE_OAUTH_TOKEN",
+}
 RULESET_NAME = "main (factory)"
 MANIFEST_PATH = Path(__file__).resolve().parents[2] / ".github" / "factory" / "app-manifest.json"
 GITHUB_ACTIONS_APP_ID = 15368
@@ -144,19 +152,21 @@ def cmd_app_convert(code: str) -> None:
     print(f"private key written to {path} (mode 600)")
     print("next, run:")
     print(f"  gh secret set FACTORY_APP_PRIVATE_KEY --env {ENVIRONMENT} --repo {repo} < {path}")
+    print(f"  claude setup-token, then: gh secret set CLAUDE_CODE_OAUTH_TOKEN --env {AGENT_ENVIRONMENT} --repo {repo}")
     print(f"  gh variable set FACTORY_APP_CLIENT_ID --repo {repo} --body {result['client_id']}")
     print(f"  gh variable set FACTORY_APP_SLUG --repo {repo} --body {slug}")
 
 
 def cmd_environment(gh: GitHub, apply: bool) -> None:
-    print(f"create environment {ENVIRONMENT} with a custom branch policy allowing only main")
-    if not apply:
-        return
-    base = f"/repos/{gh.repo}/environments/{ENVIRONMENT}"
-    gh.request("PUT", base, {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}})
-    policies = gh.request("GET", f"{base}/deployment-branch-policies")
-    if not any(p["name"] == "main" for p in (policies or {}).get("branch_policies", [])):
-        gh.request("POST", f"{base}/deployment-branch-policies", {"name": "main", "type": "branch"})
+    for name, secret in ENVIRONMENTS.items():
+        print(f"create environment {name} (only the secret {secret}) with a custom branch policy allowing only main")
+        if not apply:
+            continue
+        base = f"/repos/{gh.repo}/environments/{name}"
+        gh.request("PUT", base, {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}})
+        policies = gh.request("GET", f"{base}/deployment-branch-policies")
+        if not any(p["name"] == "main" for p in (policies or {}).get("branch_policies", [])):
+            gh.request("POST", f"{base}/deployment-branch-policies", {"name": "main", "type": "branch"})
 
 
 def cmd_variables(gh: GitHub, apply: bool, client_id: str | None, slug: str | None) -> None:

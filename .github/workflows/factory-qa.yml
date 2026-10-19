@@ -5,7 +5,10 @@ name: Factory QA
 # survives, promote issues to the fixer and update the status issue. Agents propose, code disposes:
 # the agent writes reproduction scripts but cannot run them and holds no write token; the scripts
 # run in jobs without secrets (check, verify); the App token is minted only in jobs that run no
-# agent code.
+# agent code. The QA agent's job uses the environment factory-agent, which holds only the Claude
+# token; the App-token jobs use factory, which holds only the App's private key. Every artifact is
+# downloaded by id, never by name: check and verify run the agent's scripts, and an id cannot be
+# replaced by an artifact uploaded later under the same name.
 #
 #   guard -> probe -> verify -> verify-act -------------------------------------> dispatch-status
 #                  -> triage -> check -> file (also needs verify) -------------^
@@ -119,6 +122,8 @@ jobs:
     env:
       # GitHub mounts /github/home with another owner; Firefox requires the container user's actual home.
       HOME: /root
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -140,6 +145,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: uv run python -m tools.factory.ci_facts --out probe-out/ci
       - uses: actions/upload-artifact@v7
+        id: upload
         with:
           name: probe
           path: probe-out/
@@ -166,6 +172,8 @@ jobs:
       # The reproduction scripts run as the image's unprivileged user (D40): no root /proc of the
       # job's processes, no Docker socket. Everything else in the job stays root.
       FACTORY_SCRIPT_USER: pwuser
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -190,8 +198,9 @@ jobs:
           UV_PYTHON_INSTALL_DIR: /opt/uv-python
       - uses: actions/download-artifact@v8
         with:
-          name: probe
+          artifact-ids: ${{ needs.probe.outputs.artifact }}
           path: factory-in/probe
+          merge-multiple: true
       # Read-only token; verify drops it from the environment of the reproduction scripts.
       - name: Rerun the reproductions of merged issues
         env:
@@ -205,6 +214,7 @@ jobs:
           fi
           uv run python -m tools.factory.verify check "${args[@]}"
       - uses: actions/upload-artifact@v7
+        id: upload
         with:
           name: verify
           path: verify-out/
@@ -236,8 +246,9 @@ jobs:
       - run: uv sync --locked
       - uses: actions/download-artifact@v8
         with:
-          name: verify
+          artifact-ids: ${{ needs.verify.outputs.artifact }}
           path: verify-out
+          merge-multiple: true
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app
         with:
@@ -262,11 +273,14 @@ jobs:
     if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    environment: factory
+    # The Claude token only: the App's private key lives in the environment factory, never here.
+    environment: factory-agent
     # The agent holds no write token: this GITHUB_TOKEN is read-only and the App token is never minted here.
     permissions:
       contents: read
       issues: read
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
     container:
       image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
       options: --ipc=host
@@ -286,8 +300,9 @@ jobs:
       # Inputs land in factory-in/, never at the repository root (the Python import root).
       - uses: actions/download-artifact@v8
         with:
-          name: probe
+          artifact-ids: ${{ needs.probe.outputs.artifact }}
           path: factory-in/probe
+          merge-multiple: true
       - name: Write the prompt
         id: prompt
         env:
@@ -352,6 +367,7 @@ jobs:
       - name: Scan the agent's output for secret shapes
         run: uv run python -I -S tools/factory/secret_scan.py factory-out/drafts.json factory-out/repros
       - uses: actions/upload-artifact@v7
+        id: upload
         with:
           name: drafts
           path: |
@@ -363,12 +379,14 @@ jobs:
   check:
     name: Check the drafts on the live site and on main
     # Runs the agent's reproduction scripts: no environment, no secret, a read-only token.
-    needs: [guard, triage]
+    needs: [guard, probe, triage]
     if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
     container:
       image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
       options: --ipc=host
@@ -393,12 +411,14 @@ jobs:
           UV_PYTHON_INSTALL_DIR: /opt/uv-python
       - uses: actions/download-artifact@v8
         with:
-          name: probe
+          artifact-ids: ${{ needs.probe.outputs.artifact }}
           path: factory-in/probe
+          merge-multiple: true
       - uses: actions/download-artifact@v8
         with:
-          name: drafts
+          artifact-ids: ${{ needs.triage.outputs.artifact }}
           path: factory-in/drafts
+          merge-multiple: true
       # check_drafts resolves factory-out/repros/<name>.py against the checkout; only flat .py files are copied.
       - name: Place the agent's scripts
         run: |
@@ -448,6 +468,7 @@ jobs:
       - name: Scan the checked output for secret shapes
         run: uv run python -I -S tools/factory/secret_scan.py factory-out/validated.json factory-out/repros
       - uses: actions/upload-artifact@v7
+        id: upload
         with:
           name: validated
           path: |
@@ -459,7 +480,7 @@ jobs:
   file:
     name: File the issues
     # After verify: its dedup sees the issues as they were before this run filed any.
-    needs: [guard, check, verify]
+    needs: [guard, probe, check, verify]
     if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -485,13 +506,15 @@ jobs:
       # never from validated.json, which a job that ran the agent's scripts wrote.
       - uses: actions/download-artifact@v8
         with:
-          name: probe
+          artifact-ids: ${{ needs.probe.outputs.artifact }}
           path: factory-in/probe
+          merge-multiple: true
       # validated.json and the agent's scripts; file_issues reads the scripts, never runs them.
       - uses: actions/download-artifact@v8
         with:
-          name: validated
+          artifact-ids: ${{ needs.check.outputs.artifact }}
           path: factory-out
+          merge-multiple: true
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         if: needs.guard.outputs.dry == 'false' && contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE)
         id: app

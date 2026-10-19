@@ -253,7 +253,8 @@ jobs:
     if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.route.outputs.action == 'review'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    environment: factory
+    # The Claude token only: the App's private key lives in the environment factory, never here.
+    environment: factory-agent
     # The agent holds no write token: this GITHUB_TOKEN is read-only; post and hand-over hold the write scopes.
     permissions:
       actions: read

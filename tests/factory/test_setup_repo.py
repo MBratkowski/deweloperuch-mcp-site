@@ -130,8 +130,12 @@ def test_apply_performs_the_writes(monkeypatch):
         assert setup_repo.main(argv) == 0
     writes = {(m, p) for m, p, _ in gh.calls if m != "GET"}
     assert ("POST", f"/repos/{REPO}/labels") in writes
-    assert ("PUT", f"/repos/{REPO}/environments/factory") in writes
-    assert ("POST", f"/repos/{REPO}/environments/factory/deployment-branch-policies") in writes
+    # I6: the App's key and the Claude token live in separate environments, each main only.
+    for environment in ("factory", "factory-agent"):
+        assert ("PUT", f"/repos/{REPO}/environments/{environment}") in writes
+        assert ("POST", f"/repos/{REPO}/environments/{environment}/deployment-branch-policies") in writes
+    policy = {"deployment_branch_policy": {"protected_branches": False, "custom_branch_policies": True}}
+    assert [b for m, p, b in gh.calls if m == "PUT" and "/environments/" in p] == [policy, policy]
     assert ("PATCH", f"/repos/{REPO}/actions/variables/FACTORY_MODE") in writes
     assert ("POST", f"/repos/{REPO}/rulesets") in writes
     # R54: the kill switch is the default; the owner moves through dry, shadow and auto by hand.
@@ -157,5 +161,6 @@ def test_app_convert_never_prints_the_key(tmp_path, monkeypatch, capsys):
     assert pem.read_text() == "PEM-SECRET-BODY"
     assert "PEM-SECRET-BODY" not in out
     assert f"gh secret set FACTORY_APP_PRIVATE_KEY --env factory --repo {REPO} < {pem}" in out
+    assert f"gh secret set CLAUDE_CODE_OAUTH_TOKEN --env factory-agent --repo {REPO}" in out
     assert f"gh variable set FACTORY_APP_CLIENT_ID --repo {REPO} --body Iv1.abc" in out
     assert f"gh variable set FACTORY_APP_SLUG --repo {REPO} --body deweloperuch-factory" in out
