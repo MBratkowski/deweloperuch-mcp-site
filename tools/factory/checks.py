@@ -52,9 +52,24 @@ def overlap(run: PageRun) -> list[Finding]:
     return _findings(run, "overlap", run.page.evaluate(OVERLAPS))
 
 
-# One entry per (rule, node): axe's first target selector, the help text, the element's box.
-_AXE_RUN = """async tags => {
-  const result = await axe.run(document, { runOnly: { type: 'tag', values: tags } });
+# One entry per (rule, node): axe's first target selector, the help text, the element's box. With the
+# page's scripts off (no-js) Chromium calls back no timer and no queueMicrotask, only promise
+# reactions, and axe defers its work with zero-delay timers: for the length of the run those become
+# promise reactions, and the delayed ones (axe's own timeouts) never fire, as on such a page anyway.
+_AXE_RUN = """async ({ tags, timers }) => {
+  const setTimeout = window.setTimeout;
+  if (!timers) {
+    window.setTimeout = (fn, delay, ...args) => {
+      if (!(delay > 1)) Promise.resolve().then(() => fn(...args));
+      return 0;
+    };
+  }
+  let result;
+  try {
+    result = await axe.run(document, { runOnly: { type: 'tag', values: tags } });
+  } finally {
+    window.setTimeout = setTimeout;
+  }
   const out = [];
   for (const rule of result.violations) {
     for (const node of rule.nodes) {
@@ -73,9 +88,11 @@ _AXE_RUN = """async tags => {
 
 
 def axe(run: PageRun) -> list[Finding]:
-    # The script is read from disk and injected, so the request guard sees no request.
-    run.page.add_script_tag(path=str(AXE_PATH))
-    return _findings(run, "axe", run.page.evaluate(_AXE_RUN, AXE_TAGS))
+    # The script is read from disk and run as a function body by evaluate, not added as a <script>
+    # tag: the request guard sees no request, and it runs while the page's own scripts are off (no-js).
+    run.page.evaluate("() => {\n" + AXE_PATH.read_text() + "\n}")
+    timers = load_config().matrix.modes.get(run.cell.mode, {}).get("java_script_enabled", True)
+    return _findings(run, "axe", run.page.evaluate(_AXE_RUN, {"tags": AXE_TAGS, "timers": timers}))
 
 
 def target_size(run: PageRun) -> list[Finding]:
