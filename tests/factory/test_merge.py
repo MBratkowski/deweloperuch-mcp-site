@@ -304,6 +304,91 @@ def test_behind_updates_branch() -> None:
     assert gh.calls == [("PUT", f"{API}/pulls/12/update-branch", {"expected_head_sha": HEAD})]
 
 
+def test_a_conflict_is_not_an_update_of_the_branch() -> None:
+    """R50(1): dirty is a block (the row says why), never update-branch."""
+    conflicted = facts(behind=True, conflicted=True)
+    verdict = evaluate(conflicted, "auto", APP, LIMITS)
+    assert verdict.action == "block" and only_failed(verdict) == [UP_TO_DATE]
+    assert "conflicts" in verdict.rows[UP_TO_DATE].value
+    assert evaluate(facts(conflicted=True), "auto", APP, LIMITS).action == "block"
+
+
+def conflict_github(responses: dict[tuple[str, str], Any] | None = None) -> Hub:
+    return Hub(
+        responses,
+        issues={7: {"number": 7, "labels": [{"name": "factory:found"}, {"name": "factory:fixing"}]},
+                12: {"number": 12, "labels": [{"name": "factory"}]}},
+    )
+
+
+def assert_handed_over(gh: Hub) -> None:
+    assert gh.labels[12] == {"factory", "factory:needs-human"}
+    assert gh.labels[7] == {"factory:found", "factory:needs-human"}
+    assert [c["body"].strip() for c in gh.comments[12]] == [merge.CONFLICT_COMMENT]
+    assert merge.CONFLICT_COMMENT == "This pull request conflicts with main; a person needs to resolve it."
+
+
+def test_a_conflicted_pull_request_is_handed_over_without_an_update() -> None:
+    found = facts(behind=True, conflicted=True)
+    gh = conflict_github()
+    assert act(gh, found, evaluate(found, "auto", APP, LIMITS), "auto", config=CONFIG) == "handed over"
+    assert not [call for call in gh.calls if "update-branch" in call[1]]
+    assert_handed_over(gh)
+    # The next run reads the label and blocks without writing again.
+    again = facts(behind=True, conflicted=True, labels=frozenset({"factory", "factory:needs-human"}))
+    gh.calls.clear()
+    assert act(gh, again, evaluate(again, "auto", APP, LIMITS), "auto", config=CONFIG) == "blocked"
+    assert gh.calls == []
+
+
+def test_a_422_with_the_same_head_is_a_conflict_to_hand_over() -> None:
+    gh = conflict_github({
+        ("PUT", f"{API}/pulls/12/update-branch"): GitHubError(422, "merge conflict between base and head"),
+        ("GET", f"{API}/pulls/12"): {"head": {"sha": HEAD}, "mergeable_state": "behind"},
+    })
+    behind = facts(behind=True)
+    assert act(gh, behind, evaluate(behind, "auto", APP, LIMITS), "auto", config=CONFIG) == "handed over"
+    assert_handed_over(gh)
+
+
+def test_a_422_with_a_dirty_pull_request_is_a_conflict_even_if_the_head_moved() -> None:
+    gh = conflict_github({
+        ("PUT", f"{API}/pulls/12/update-branch"): GitHubError(422, "x"),
+        ("GET", f"{API}/pulls/12"): {"head": {"sha": "f" * 40}, "mergeable_state": "dirty"},
+    })
+    behind = facts(behind=True)
+    assert act(gh, behind, evaluate(behind, "auto", APP, LIMITS), "auto", config=CONFIG) == "handed over"
+    assert_handed_over(gh)
+
+
+def test_a_conflicted_revert_is_handed_over_but_its_issue_keeps_its_labels() -> None:
+    found = revert_facts(behind=True, conflicted=True, fence=FenceReport(True, [], 1, False))
+    gh = conflict_github()
+    gh.labels[7] = {"factory:found", "factory:regressed", "factory:needs-human"}
+    assert act(gh, found, evaluate(found, "auto", APP, LIMITS), "auto", config=CONFIG) == "handed over"
+    assert gh.labels[7] == {"factory:found", "factory:regressed", "factory:needs-human"}
+    assert gh.labels[12] == {"factory", "factory:needs-human"}
+
+
+def test_a_conflict_on_a_pull_request_that_is_not_the_apps_is_left_alone() -> None:
+    found = facts(behind=True, conflicted=True, author="stranger")
+    gh = conflict_github()
+    assert act(gh, found, evaluate(found, "auto", APP, LIMITS), "auto", config=CONFIG) == "blocked"
+    assert write_calls(gh) == []
+
+
+def test_gather_reads_a_dirty_pull_request_as_conflicted(tmp_path: Path) -> None:
+    repo, base, head = origin_and_main(tmp_path, {"css/site.css": "x\n"})
+    for state, expected in (("dirty", True), ("behind", False), ("clean", False), (None, False)):
+        gh = gather_github(head, base, {("GET", f"{API}/pulls/12"): pull_json(head, mergeable_state=state)})
+        assert gather(gh, repo, 12, CONFIG, app_slug=SLUG, now=NOW).conflicted is expected
+
+
+def test_gather_reads_the_base_branch(tmp_path: Path) -> None:
+    repo, base, head = origin_and_main(tmp_path, {"css/site.css": "x\n"})
+    assert gather(gather_github(head, base), repo, 12, CONFIG, app_slug=SLUG, now=NOW).base_ref == "main"
+
+
 def test_behind_with_another_failure_blocks_without_an_update() -> None:
     verdict = evaluate(facts(behind=True, pages_conclusion="failure"), "auto", APP, LIMITS)
     assert verdict.action == "block" and only_failed(verdict) == [UP_TO_DATE, PAGES]
@@ -548,7 +633,7 @@ def test_status_reads_the_verdict_edited_in_place() -> None:
     assert act(gh, early, evaluate(early, "shadow", APP, LIMITS), "shadow", config=CONFIG) == "commented"
     assert status._verdict(gh, REPO, 12, frozenset({APP})) == "block"
     (comment,) = gh.comments[12]
-    found = merge.posted_verdict(gh, API, 12, HEAD, frozenset({APP}))
+    found = merge.posted_verdict(gh, API, 12, HEAD, APP)
     assert found == (comment["id"], comment["body"])
     later = facts(verdict_id=found[0], verdict_body=found[1])
     assert act(gh, later, evaluate(later, "shadow", APP, LIMITS), "shadow", config=CONFIG) == "edited"
@@ -685,8 +770,11 @@ def test_a_merge_refused_because_the_head_moved_is_a_race() -> None:
     assert not isinstance(raised.value, merge.Race)
 
 
-def test_an_update_refused_with_422_is_a_race() -> None:
-    gh = FakeGitHub({("PUT", f"{API}/pulls/12/update-branch"): GitHubError(422, "expected head sha didn't match current head ref.")})
+def test_an_update_refused_with_422_because_the_head_moved_is_a_race() -> None:
+    gh = FakeGitHub({
+        ("PUT", f"{API}/pulls/12/update-branch"): GitHubError(422, "expected head sha didn't match current head ref."),
+        ("GET", f"{API}/pulls/12"): {"head": {"sha": "f" * 40}, "mergeable_state": "behind"},
+    })
     behind = facts(behind=True)
     with pytest.raises(merge.Race, match="422"):
         act(gh, behind, evaluate(behind, "auto", APP, LIMITS), "auto", config=CONFIG)
@@ -1001,14 +1089,15 @@ def test_merges_in_the_window_count_only_the_apps_factory_merges() -> None:
     assert ("GET", f"{API}/pulls/3", None) not in gh.calls and ("GET", f"{API}/pulls/5", None) not in gh.calls
 
 
-def test_posted_verdict_is_the_newest_trusted_marker_for_this_head() -> None:
+def test_posted_verdict_is_the_newest_app_marker_for_this_head() -> None:
     def comment(number: int, login: str, body: str, stamp: str = "2026-10-19T10:00:00Z") -> dict[str, Any]:
         return {"id": number, "user": {"login": login}, "body": body, "created_at": stamp}
 
     ours = f"Table\n\n{SENTINEL}\n<!-- factory:verdict=block sha={HEAD} -->\n"
-    trusted = frozenset({APP, OWNER})
     cases = {
         "a stranger's marker": ([comment(1, "stranger", ours)], None),
+        "the owner's marker is never an edit target": ([comment(1, OWNER, ours)], None),
+        "the owner's marker, then the App's": ([comment(3, OWNER, ours, "2026-10-19T12:00:00Z"), comment(2, APP, ours)], (2, ours)),
         "a marker for an older head": ([comment(1, APP, ours.replace(HEAD, OLD))], None),
         "a marker outside the block": ([comment(1, APP, f"<!-- factory:verdict=merge sha={HEAD} -->\n")], None),
         "the App's marker for this head": ([comment(1, "stranger", "x"), comment(2, APP, ours)], (2, ours)),
@@ -1018,7 +1107,7 @@ def test_posted_verdict_is_the_newest_trusted_marker_for_this_head() -> None:
     }
     for name, (comments, expected) in cases.items():
         gh = FakeGitHub({("GET", f"{API}/issues/12/comments"): comments})
-        assert merge.posted_verdict(gh, API, 12, HEAD, trusted) == expected, name
+        assert merge.posted_verdict(gh, API, 12, HEAD, APP) == expected, name
 
 
 def test_pages_conclusion_reads_the_last_run_on_main() -> None:
@@ -1026,6 +1115,28 @@ def test_pages_conclusion_reads_the_last_run_on_main() -> None:
     assert merge.pages_conclusion(FakeGitHub({path: {"workflow_runs": [{"status": "completed", "conclusion": "failure"}]}})) == "failure"
     assert merge.pages_conclusion(FakeGitHub({path: {"workflow_runs": [{"status": "in_progress", "conclusion": None}]}})) == "in_progress"
     assert merge.pages_conclusion(FakeGitHub({path: {"workflow_runs": []}})) == "none"
+
+
+def test_shadow_posts_its_own_comment_once_when_only_the_owner_carries_a_verdict(tmp_path: Path) -> None:
+    """R50(3): an owner's comment with a verdict is never edited; the App posts one of its own, once."""
+    repo, base, head = origin_and_main(tmp_path, {"css/site.css": "x\n"})
+    first = gather(gather_github(head, base), repo, 12, CONFIG, app_slug=SLUG, now=NOW)
+    body = render_shadow(evaluate(first, "shadow", APP, LIMITS), head).replace("block", "merge")
+    owner = {"id": 5, "user": {"login": OWNER}, "body": body, "created_at": "2026-10-19T12:00:00Z"}
+    gh = Hub(
+        {**gather_github(head, base).responses},
+        issues={7: {"number": 7, "labels": [{"name": "factory:fixing"}]}, 12: {"number": 12, "labels": [{"name": "factory"}]}},
+        comments={12: [owner]},
+    )
+    found = gather(gh, repo, 12, CONFIG, app_slug=SLUG, now=NOW)
+    assert found.verdict_id is None
+    assert act(gh, found, evaluate(found, "shadow", APP, LIMITS), "shadow", config=CONFIG) == "commented"
+    assert not [call for call in gh.calls if call[0] == "PATCH"]
+    assert len(gh.comments[12]) == 2 and gh.comments[12][0]["body"] == body
+    again = gather(gh, repo, 12, CONFIG, app_slug=SLUG, now=NOW)
+    assert again.verdict_id == gh.comments[12][1]["id"]
+    assert act(gh, again, evaluate(again, "shadow", APP, LIMITS), "shadow", config=CONFIG) in ("unchanged", "edited")
+    assert len(gh.comments[12]) == 2
 
 
 def test_gather_finds_the_verdict_posted_for_the_head(tmp_path: Path) -> None:
@@ -1074,6 +1185,12 @@ def update_origin(tmp_path: Path, kind: str = "update") -> tuple[Path, str, str,
         git("commit", "-qm", "not on main", cwd=origin)
         git("checkout", "-q", BRANCH, cwd=origin)
         git("merge", "-q", "--no-ff", "-m", "merge a side branch", "side", cwd=origin)
+    elif kind == "tampered":  # a merge of main that also carries a change of its own
+        git("checkout", "-q", BRANCH, cwd=origin)
+        git("merge", "-q", "--no-ff", "--no-commit", "main", cwd=origin)
+        write(origin, {"js/site.js": "smuggled\n"})
+        git("add", "-A", cwd=origin)
+        git("commit", "-qm", "Merge branch 'main'", cwd=origin)
     else:
         git("checkout", "-q", BRANCH, cwd=origin)
         git("merge", "-q", "--no-ff", "-m", "Merge branch 'main'", "main", cwd=origin)
@@ -1107,7 +1224,7 @@ def test_gather_accepts_githubs_update_of_the_marked_head(tmp_path: Path, kind: 
     assert verdict.action == "merge", [(r.condition, r.value) for r in verdict.failed]
 
 
-@pytest.mark.parametrize("kind", ["reversed", "side"])
+@pytest.mark.parametrize("kind", ["reversed", "side", "tampered"])
 def test_gather_rejects_a_merge_that_does_not_update_the_marked_head(tmp_path: Path, kind: str) -> None:
     repo, marked, head, base = update_origin(tmp_path, kind)
     found = gather(updated_gather_github(marked, head, base), repo, 12, CONFIG, app_slug=SLUG, now=NOW)
@@ -1204,6 +1321,7 @@ def closed_pull(
     author: str = APP,
     labels: tuple[str, ...] = ("factory",),
     closed_at: str = RECENT,
+    base: str = "main",
 ) -> dict[str, Any]:
     # GitHub names a merge_commit_sha (its test merge) for unmerged pull requests too; merged_at decides.
     return {
@@ -1211,6 +1329,7 @@ def closed_pull(
         "merge_commit_sha": SQUASHED, "merged_by": {"login": OWNER} if merged_at else None,
         "user": {"login": author}, "labels": [{"name": n} for n in labels],
         "head": {"ref": ref, "sha": HEAD, "repo": {"full_name": REPO}},
+        "base": {"ref": base, "sha": BASE, "repo": {"full_name": REPO}},
     }
 
 
@@ -1293,7 +1412,7 @@ LEFT_ALONE = {
     "closed more than 7 days ago": ({12: closed_pull(12, RECENT, closed_at=LONG_AGO)}, {}),
     "issue no longer fixing": ({12: closed_pull(12, RECENT)}, {"issue": fixing_issue("factory:found", "factory:merged")}),
     "issue closed": ({12: closed_pull(12, None)}, {"issue": fixing_issue(state="closed")}),
-    "the merge is already marked": ({12: closed_pull(12, RECENT)}, {"comments": [merge_marker_comment(12)]}),
+    "targets another branch": ({12: closed_pull(12, RECENT, base="release")}, {}),
 }
 
 
@@ -1301,6 +1420,30 @@ LEFT_ALONE = {
 def test_sweep_leaves_alone_what_is_not_an_app_fix_to_reconcile(pulls: dict[int, Any], changes: dict[str, Any]) -> None:
     gh = reconcile_hub(pulls, **changes)
     assert merge.reconcile(gh, CONFIG, APP, TRUSTED, set(), now=NOW) == []
+    assert write_calls(gh) == []
+
+
+def test_sweep_finishes_an_interrupted_merge_follow_up() -> None:
+    """R50(2): the marker names the merged pull request, the issue is still factory:fixing, and no open
+    factory pull request is its later attempt: the labels and the promotion are completed, once."""
+    gh = reconcile_hub({12: closed_pull(12, RECENT)}, comments=[merge_marker_comment(12)])
+    lines = merge.reconcile(gh, CONFIG, APP, TRUSTED, set(), now=NOW)
+    assert [(method, path) for method, path, _ in write_calls(gh)] == [
+        ("POST", f"{API}/issues/7/labels"),
+        ("DELETE", f"{API}/issues/7/labels/factory%3Afixing"),
+        ("POST", f"{API}/issues/30/labels"),
+    ]
+    assert len(gh.comments[7]) == 1  # the marker is not posted again
+    assert gh.labels[7] == {"factory:found", "factory:merged", "S3"} and gh.labels[30] == {"factory:ready"}
+    assert lines and "interrupted" in lines[0]
+    gh.calls.clear()
+    assert merge.reconcile(gh, CONFIG, APP, TRUSTED, set(), now=NOW) == []
+    assert write_calls(gh) == []
+
+
+def test_sweep_leaves_a_marked_merge_alone_while_a_later_attempt_is_open() -> None:
+    gh = reconcile_hub({12: closed_pull(12, RECENT)}, comments=[merge_marker_comment(12)])
+    assert merge.reconcile(gh, CONFIG, APP, TRUSTED, {7}, now=NOW) == []
     assert write_calls(gh) == []
 
 

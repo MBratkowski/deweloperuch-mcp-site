@@ -21,6 +21,7 @@ from tests.factory.fakes import FakeGitHub
 from tools.factory import fix_publish, review, review_evidence
 from tools.factory.config import load_config
 from tools.factory.fence import FenceReport
+from tools.factory.fix import FixError
 from tools.factory.findings import Cell, Finding, Group
 from tools.factory.issues import SENTINEL
 from tools.factory.review import Route, load_verdict, post, route
@@ -280,6 +281,13 @@ def updated_branch(tmp_path: Path, kind: str) -> tuple[Path, str, str, str]:
         side = commit(origin, "Not on main", {"js/site.js": "side\n"})
         git("checkout", "-q", BRANCH, cwd=origin)
         git("merge", "-q", "--no-ff", "-m", "Merge a side branch", side, cwd=origin)
+    elif kind == "tampered":  # a merge of main that also carries a change of its own (R50(5))
+        git("checkout", "-q", BRANCH, cwd=origin)
+        git("merge", "-q", "--no-ff", "--no-commit", "main", cwd=origin)
+        (origin / "js").mkdir(exist_ok=True)
+        (origin / "js" / "site.js").write_text("smuggled\n")
+        git("add", "-A", cwd=origin)
+        git("commit", "-q", "-m", "Merge branch 'main'", cwd=origin)
     else:
         git("checkout", "-q", BRANCH, cwd=origin)
         git("merge", "-q", "--no-ff", "-m", "Merge branch 'main'", "main", cwd=origin)
@@ -318,7 +326,7 @@ def test_route_accepts_githubs_update_of_the_marked_head(tmp_path: Path, kind: s
     assert writes(gh) == []
 
 
-@pytest.mark.parametrize("kind", ["reversed", "side"])
+@pytest.mark.parametrize("kind", ["reversed", "side", "tampered"])
 def test_route_rejects_a_merge_that_does_not_update_the_marked_head(tmp_path: Path, kind: str) -> None:
     clone, marked, head, base = updated_branch(tmp_path, kind)
     result = route(run_event(head=head), updated_github(marked, head, base), CONFIG, TRUSTED, repo=clone)
@@ -328,6 +336,21 @@ def test_route_rejects_a_merge_that_does_not_update_the_marked_head(tmp_path: Pa
 def test_route_without_a_checkout_accepts_only_the_marked_head(tmp_path: Path) -> None:
     clone, marked, head, base = updated_branch(tmp_path, "update")
     assert route(run_event(head=head), updated_github(marked, head, base), CONFIG, TRUSTED).action == "ignore"
+
+
+def test_branch_updated_fails_closed_without_git_merge_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R50(5): where `git merge-tree --write-tree` is unavailable (git before 2.38), nothing counts as an update."""
+    clone, marked, head, _ = updated_branch(tmp_path, "update")
+    assert fix_publish.branch_updated(clone, 12, head, marked) is True
+    real = fix_publish.git
+
+    def without_merge_tree(repo: Path, *args: str) -> str:
+        if args[0] == "merge-tree":
+            raise FixError("git merge-tree failed: unknown option `write-tree'")
+        return real(repo, *args)
+
+    monkeypatch.setattr(fix_publish, "git", without_merge_tree)
+    assert fix_publish.branch_updated(clone, 12, head, marked) is False
 
 
 def test_branch_updated_refuses_a_head_that_moved(tmp_path: Path) -> None:

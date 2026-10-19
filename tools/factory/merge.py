@@ -131,7 +131,8 @@ class PullFacts:
     "missing"). `updated_with_main`: the head is GitHub's update of the marked head `body_head` with
     main (`branch_updated`). For a revert, `merged_sha` is the merge the issue's trusted marker names
     and `exact_revert` whether the head is its exact inverse (`exact_reason` says why not; None: not
-    checked). `verdict_id` and `verdict_body`: the shadow comment already posted for the head."""
+    checked). `verdict_id` and `verdict_body`: the App's shadow comment already posted for the head (R50(3)).
+    `conflicted`: GitHub reports `mergeable_state` dirty, the branch conflicts with main (R50(1))."""
 
     number: int
     author: str
@@ -161,6 +162,7 @@ class PullFacts:
     maintainers: frozenset[str] = frozenset()
     verdict_id: int | None = None
     verdict_body: str = ""
+    conflicted: bool = False
 
 
 @dataclass(frozen=True)
@@ -309,6 +311,8 @@ def _fence_row(facts: PullFacts, kind: Kind | None) -> Row:
 
 
 def _up_to_date_row(facts: PullFacts) -> Row:
+    if facts.conflicted:
+        return Row(CONDITIONS[_UP_TO_DATE], False, f"conflicts with {MAIN}")
     if facts.behind:
         return Row(CONDITIONS[_UP_TO_DATE], False, f"behind {MAIN}")
     return Row(CONDITIONS[_UP_TO_DATE], True, "yes")
@@ -361,7 +365,7 @@ def evaluate(facts: PullFacts, mode: str, app_login: str, limits: Limits) -> Ver
     failed = [i for i, row in enumerate(rows) if not row.ok]
     if not failed:
         return Verdict("merge", rows)
-    if failed == [_UP_TO_DATE]:
+    if failed == [_UP_TO_DATE] and not facts.conflicted:
         return Verdict("update-branch", rows)
     return Verdict("block", rows)
 
@@ -554,10 +558,11 @@ def merges_in_window(gh: Any, api: str, app_login: str, now: datetime | None = N
     return count
 
 
-def posted_verdict(gh: Any, api: str, pr: int, head: str, trusted: frozenset[str]) -> tuple[int, str] | None:
-    """(id, body) of the newest trusted comment whose marker block carries a verdict for `head`, the
-    one comment a later run edits in place (R48(c), R49(4)); None when there is none."""
-    allowed = {login.lower() for login in trusted}
+def posted_verdict(gh: Any, api: str, pr: int, head: str, app_login: str) -> tuple[int, str] | None:
+    """(id, body) of the newest comment authored by the App whose marker block carries a verdict for
+    `head`, the one comment a later run edits in place (R48(c), R49(4)); None when there is none. An
+    owner's comment with a verdict is never edited (R50(3)): the merger then posts its own, once."""
+    allowed = {app_login.lower()} if app_login else set()
     found: tuple[tuple[str, int], str] | None = None
     for comment in gh.paginate(f"{api}/issues/{pr}/comments", {"per_page": PER_PAGE}):
         if not isinstance(comment, dict) or type(comment.get("id")) is not int:
@@ -629,7 +634,7 @@ def gather(
     # Read here, trusted only by evaluate: when the App opened the pull request and it names the head.
     body_head = head_in(body)
     updated = kind == "fix" and body_head is not None and body_head != head and branch_updated(repo, pr, head, body_head)
-    posted = posted_verdict(gh, api, pr, head, trusted)
+    posted = posted_verdict(gh, api, pr, head, app_login)
     return PullFacts(
         number=pr,
         author=_login(pull),
@@ -659,6 +664,7 @@ def gather(
         maintainers=maintainers,
         verdict_id=posted[0] if posted else None,
         verdict_body=posted[1] if posted else "",
+        conflicted=pull.get("mergeable_state") == "dirty",
     )
 
 
@@ -752,19 +758,48 @@ def _merge(gh: Any, api: str, facts: PullFacts, config: Config) -> str:
     return "merged"
 
 
-def _auto(gh: Any, api: str, facts: PullFacts, verdict: Verdict, config: Config) -> str:
-    if verdict.action == "update-branch":
-        try:
-            gh.request("PUT", f"{api}/pulls/{facts.number}/update-branch", {"expected_head_sha": facts.head_sha})
-        except GitHubError as error:
-            if error.status == 422:
-                raise Race(
-                    f"#{facts.number}: GitHub refused to update {_short(facts.head_sha)} (422: the head moved, or the "
-                    f"branch cannot be merged with {MAIN}); a later run decides"
-                ) from error
+CONFLICT_COMMENT = "This pull request conflicts with main; a person needs to resolve it."
+
+
+def _hand_over_conflict(gh: Any, api: str, facts: PullFacts) -> str:
+    """R50(1): the branch conflicts with main, which only a person can resolve. Label the pull request
+    and its issue factory:needs-human, take the issue off factory:fixing and say so once, in a fixed
+    text. The labels come first: they stop every later run (the "Not taken over" row), so the comment
+    is never repeated."""
+    gh.request("POST", f"{api}/issues/{facts.number}/labels", {"labels": [NEEDS_HUMAN]})
+    if facts.issue is not None:
+        gh.request("POST", f"{api}/issues/{facts.issue}/labels", {"labels": [NEEDS_HUMAN]})
+        if _kind(facts) == "fix":
+            _remove_label(gh, api, facts.issue, FIXING)
+    _comment(gh, api, facts.number, CONFLICT_COMMENT)
+    print(f"#{facts.number}: conflicts with {MAIN}; labelled {NEEDS_HUMAN} for a person")
+    return "handed over"
+
+
+def _update_branch(gh: Any, api: str, facts: PullFacts) -> str:
+    try:
+        gh.request("PUT", f"{api}/pulls/{facts.number}/update-branch", {"expected_head_sha": facts.head_sha})
+    except GitHubError as error:
+        if error.status != 422:
             raise
-        print(f"#{facts.number}: updated {_short(facts.head_sha)} with {MAIN}; Check and the review run again")
-        return "updated"
+        # 422 is both a head that moved (expected_head_sha) and a branch that cannot merge with main:
+        # read the pull request again to tell them apart (R50(1)).
+        now = gh.request("GET", f"{api}/pulls/{facts.number}") or {}
+        if (now.get("head") or {}).get("sha") == facts.head_sha or now.get("mergeable_state") == "dirty":
+            return _hand_over_conflict(gh, api, facts)
+        raise Race(
+            f"#{facts.number}: GitHub refused to update {_short(facts.head_sha)} (422: the head moved); "
+            "a later run decides"
+        ) from error
+    print(f"#{facts.number}: updated {_short(facts.head_sha)} with {MAIN}; Check and the review run again")
+    return "updated"
+
+
+def _auto(gh: Any, api: str, facts: PullFacts, verdict: Verdict, config: Config) -> str:
+    if facts.conflicted and verdict.rows[_PULL].ok and NEEDS_HUMAN not in facts.labels:
+        return _hand_over_conflict(gh, api, facts)
+    if verdict.action == "update-branch":
+        return _update_branch(gh, api, facts)
     if verdict.action != "merge":
         return "blocked"
     return _merge(gh, api, facts, config)
@@ -824,6 +859,7 @@ def _closed_fixes(gh: Any, name: str, app_login: str, since: datetime) -> list[t
             or pull.get("state") != "closed"
             or FACTORY not in labels
             or REVERT in labels
+            or (pull.get("base") or {}).get("ref") != MAIN  # R50(4): reconcile and verify assume main
             or (head.get("repo") or {}).get("full_name") != name
         ):
             continue
@@ -867,6 +903,14 @@ def reconcile(
                 raise GitHubError(0, f"#{number} was merged but names no merge commit")
             comments = gh.paginate(f"{api}/issues/{issue}/comments", {"per_page": PER_PAGE})
             if number in _marked_pulls(comments, trusted):
+                # R50(2): an interrupted follow-up (the marker is posted, the labels are not). With no
+                # open factory pull request for the issue (a re-attempt after a revert has one), finish it.
+                if issue in open_issues:
+                    continue
+                gh.request("POST", f"{api}/issues/{issue}/labels", {"labels": [MERGED]})
+                _remove_label(gh, api, issue, FIXING)
+                merged_any = True
+                done.append(f"#{issue}: #{number} was merged as {_short(sha)}; finished the interrupted follow-up")
                 continue
             _comment(gh, api, issue, _merged_text(number, sha, "Merged outside the factory's merger"))
             gh.request("POST", f"{api}/issues/{issue}/labels", {"labels": [MERGED]})

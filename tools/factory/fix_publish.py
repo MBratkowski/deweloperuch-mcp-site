@@ -146,11 +146,25 @@ def head_in(body: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _clean_merge(repo: Path, commit: str, first: str, second: str) -> bool:
+    """Whether the tree of `commit` is exactly what merging `second` into `first` gives (R50(5)): a real
+    "Update branch" is a clean merge, so anything else (a hand-made merge carrying changes of its own)
+    is refused. `git merge-tree --write-tree` needs git 2.38; where it is missing, or the merge
+    conflicts, this fails closed (False). It only writes objects."""
+    try:
+        merged = git(repo, "merge-tree", "--write-tree", first, second).splitlines()
+        tree = git(repo, "rev-parse", "--verify", f"{commit}^{{tree}}")
+    except FixError:
+        return False
+    return bool(merged) and merged[0] == tree
+
+
 def branch_updated(repo: Path, pr: int, head: str, marked: str | None) -> bool:
     """Whether `head` is GitHub's update of the pull request's branch at the marked commit `marked`
     with main ("Update branch", `PUT update-branch`), once or several times in a row (R49(1)): from
     `head`, every commit along the first parents is a merge with exactly two parents whose second
-    parent is already on main, until the first parent is `marked`. R44 then still trusts the body's
+    parent is already on main and whose tree is the clean merge of its two parents (R50(5)), until the
+    first parent is `marked`. R44 then still trusts the body's
     markers, which describe `marked`; the fence and the evidence diff the merge base of main and
     `head`.
 
@@ -169,6 +183,8 @@ def branch_updated(repo: Path, pr: int, head: str, marked: str | None) -> bool:
     for _ in range(MAX_UPDATES):
         parents = git(repo, "rev-list", "--parents", "-n", "1", commit).split()[1:]
         if len(parents) != 2 or not is_ancestor(repo, parents[1], MAIN_REF):
+            return False
+        if not _clean_merge(repo, commit, parents[0], parents[1]):
             return False
         if parents[0] == marked:
             return True
