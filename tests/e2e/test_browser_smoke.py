@@ -5,7 +5,7 @@ import sys
 import pytest
 from playwright.sync_api import Page, Route, expect
 
-from tests.e2e.test_pages import WIDE_ELEMENTS
+from tools.factory.detectors import WIDE_ELEMENTS
 
 
 def open_navigation_if_collapsed(page: Page) -> None:

@@ -1,0 +1,13 @@
+2026-10-16T16:30:42.6759014Z ============================= test session starts ==============================
+2026-10-16T16:30:42.6759607Z platform linux -- Python 3.12.3, pytest-9.1.1, pluggy-1.7.0
+2026-10-16T16:30:42.6760178Z rootdir: /home/runner/work/deweloperuch-mcp-site/deweloperuch-mcp-site
+2026-10-16T16:33:07.8663557Z =================================== FAILURES ===================================
+2026-10-16T16:33:07.8664126Z ____ test_toc_tracks_anchor_navigation_and_history[chromium-no-preference] _____
+2026-10-16T16:33:07.8664380Z 
+2026-10-16T16:33:07.8688000Z [... trimmed ...]
+2026-10-16T16:33:07.8688610Z =========================== short test summary info ============================
+2026-10-16T16:33:07.8688987Z SKIPPED [1] tests/test_check_facts.py:308: needs PyPI and uvx; run with LANDING_NETWORK=1
+2026-10-16T16:33:07.8689417Z SKIPPED [1] tests/test_sync_server.py:150: needs PyPI and uvx; run with LANDING_NETWORK=1
+2026-10-16T16:33:07.8690198Z FAILED tests/e2e/test_docs.py::test_toc_tracks_anchor_navigation_and_history[chromium-no-preference] - playwright._impl._errors.TimeoutError: Page.wait_for_function: Timeout 5000ms exceeded.
+2026-10-16T16:33:07.8690877Z ===== 1 failed, 371 passed, 2 skipped, 14 deselected in 146.47s (0:02:26) ======
+2026-10-16T16:33:08.0393154Z ##[error]Process completed with exit code 1.

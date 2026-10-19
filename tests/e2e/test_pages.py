@@ -4,6 +4,7 @@ import pytest
 from playwright.sync_api import BrowserContext, Page
 
 from tests.e2e.conftest import ANALYTICS_HOSTS, LOCAL_HOSTS
+from tools.factory.detectors import FOCUS_PROBLEMS, WIDE_ELEMENTS
 
 # Counts calls of navigator.clipboard.writeText and whether each ran synchronously inside
 # a click listener: Safari drops a write that comes after an await or a timer.
@@ -24,43 +25,6 @@ navigator.clipboard.writeText = (text) => {
   return Promise.resolve();
 };
 """
-
-# `.page` clips horizontal overflow (overflow-x: clip), so the document never scrolls
-# sideways and a too-wide element is cut off instead. Hence the check looks for elements
-# past the right edge of the viewport that no scrolling box holds: a long command or a
-# table must scroll inside its own row (overflow-x: auto), not get cut off by a box with
-# overflow: hidden. Decorative art is aria-hidden and may bleed out.
-WIDE_ELEMENTS = """width => {
-  const contained = (el) => {
-    for (let box = el.parentElement; box && !box.matches('.page, body'); box = box.parentElement) {
-      const scrolls = ['auto', 'scroll'].includes(getComputedStyle(box).overflowX);
-      if (scrolls && box.getBoundingClientRect().right <= width + 1) return true;
-    }
-    return false;
-  };
-  return Array.from(document.querySelectorAll('body *'))
-    .filter(e => e.checkVisibility() && !e.closest('[aria-hidden="true"]'))
-    .filter(e => e.getBoundingClientRect().right > width + 1 && !contained(e))
-    .slice(0, 5)
-    .map(e => `${e.tagName.toLowerCase()}.${e.className} right=${Math.round(e.getBoundingClientRect().right)}`);
-}"""
-
-FOCUS_PROBLEMS = """() => {
-  const describe = (el) => `${el.tagName.toLowerCase()} ${JSON.stringify((el.innerText || el.getAttribute('aria-label') || '').trim().slice(0, 40))}`;
-  const problems = [];
-  const elements = document.querySelectorAll('a[href], button, summary, [tabindex]:not([tabindex="-1"])');
-  for (const el of elements) {
-    if (el.hidden || !el.checkVisibility()) continue;
-    el.focus();
-    if (document.activeElement !== el) { problems.push(`${describe(el)}: not focusable`); continue; }
-    const style = getComputedStyle(el);
-    const visible = el.matches(':focus-visible') && style.outlineStyle !== 'none'
-      && parseFloat(style.outlineWidth) >= 2 && style.outlineColor !== 'rgba(0, 0, 0, 0)';
-    if (!visible) problems.push(`${describe(el)}: outline ${style.outlineStyle} ${style.outlineWidth} ${style.outlineColor}`);
-  }
-  return { checked: elements.length, problems };
-}"""
-
 
 def scroll_through(page: Page) -> None:
     """Scroll to the bottom so lazy work (the demo, images) starts, then let the network settle."""

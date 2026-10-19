@@ -1,0 +1,751 @@
+"""The fence: allowed and forbidden paths, size, weakened tests and the copy guard."""
+
+import subprocess
+from collections import Counter
+from pathlib import Path
+
+import pytest
+
+from tools.factory.config import load_config
+from tools.factory.fence import (
+    check_fence,
+    js_polish_strings,
+    main,
+    matches,
+    visible_text,
+)
+
+CONFIG = load_config()
+ENV = {
+    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com",
+    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+    "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
+    "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
+}
+
+
+def git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True, env=ENV
+    ).stdout.strip()
+
+
+def write(repo: Path, files: dict[str, str | bytes | None]) -> None:
+    for name, content in files.items():
+        path = repo / name
+        if content is None:
+            path.unlink()
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content, encoding="utf-8")
+
+
+def run(tmp_path: Path, base: dict, head: dict, rename: tuple[str, str] | None = None):
+    repo = tmp_path / "repo"
+    repo.mkdir(parents=True)
+    git(repo, "init", "-q")
+    write(repo, base)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+    first = git(repo, "rev-parse", "HEAD")
+    if rename:
+        (repo / rename[1]).parent.mkdir(parents=True, exist_ok=True)
+        git(repo, "mv", rename[0], rename[1])
+    write(repo, head)
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "head")
+    return repo, first, git(repo, "rev-parse", "HEAD")
+
+
+def check(tmp_path: Path, base: dict, head: dict, rename=None):
+    repo, first, last = run(tmp_path, base, head, rename)
+    return check_fence(repo, first, last, CONFIG.fence, CONFIG.limits)
+
+
+def lines(n: int, tag: str) -> str:
+    return "".join(f".{tag}{i} {{}}\n" for i in range(n))
+
+
+def test_matches() -> None:
+    assert matches("css/a.css", "css/**")
+    assert not matches("css", "css/**")
+    assert not matches("cssx/a.css", "css/**")
+    assert matches("CLAUDE.md", "CLAUDE.md")
+    assert not matches("docs/CLAUDE.md", "CLAUDE.md")
+
+
+def test_allowed_css_change(tmp_path: Path) -> None:
+    report = check(tmp_path, {"css/a.css": "a{}\n"}, {"css/a.css": "a{color:red}\n"})
+    assert report.ok and report.reasons == [] and not report.copy_changed
+    assert report.changed_lines == 2
+
+
+def test_forbidden_path(tmp_path: Path) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {".github/workflows/x.yml": "on: push\n"})
+    assert not report.ok
+    assert any(r.startswith("forbidden path") for r in report.reasons)
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["css/CLAUDE.md", "css/claude.local.md", "js/Agents.md", "css/.claude/settings.json", ".CLAUDE/x.css", "css/agents.md/a.css"],
+)
+def test_harness_file_anywhere_in_the_tree_is_hard(tmp_path: Path, path: str) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {path: "a{}\n"})
+    assert not report.ok
+    assert f"harness file: {path}" in report.reasons
+
+
+def test_harness_name_as_a_substring_is_no_harness_file(tmp_path: Path) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {"css/my-claude.md.css": "a{}\n"})
+    assert not any(r.startswith("harness file") for r in report.reasons)
+
+
+def test_outside_both_lists(tmp_path: Path) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {"README.md": "hello\n"})
+    assert not report.ok
+    assert "outside the allowed paths: README.md" in report.reasons
+
+
+def test_rename_into_forbidden(tmp_path: Path) -> None:
+    report = check(tmp_path, {"css/a.css": "a{}\n" * 5}, {}, rename=("css/a.css", ".github/a.css"))
+    assert not report.ok
+    assert "forbidden path: .github/a.css" in report.reasons
+
+
+def test_rename_out_of_forbidden(tmp_path: Path) -> None:
+    report = check(tmp_path, {".github/a.css": "a{}\n" * 5}, {}, rename=(".github/a.css", "css/a.css"))
+    assert not report.ok
+    assert "forbidden path: .github/a.css" in report.reasons
+
+
+def test_deleting_a_disallowed_file(tmp_path: Path) -> None:
+    report = check(tmp_path, {"CLAUDE.md": "rules\n"}, {"CLAUDE.md": None})
+    assert not report.ok
+
+
+TEST_BASE = (
+    "import pytest\n\n"
+    "@pytest.mark.parametrize('n', [1, 2, 3])\n"
+    "def test_x(n, page):\n"
+    "    page.wait_for(timeout=1000)\n"
+    "    assert n > 0\n"
+    "    assert n > 0\n"
+    "    expect(page).to_be_ok()\n"
+)
+
+
+def hard(report, needle: str) -> bool:
+    return not report.ok and any(needle in r for r in report.reasons)
+
+
+def only_review(report) -> bool:
+    return report.ok and report.needs_human and report.review
+
+
+def test_deleted_test_file_needs_a_human(tmp_path: Path) -> None:
+    report = check(tmp_path, {"tests/e2e/test_x.py": TEST_BASE}, {"tests/e2e/test_x.py": None})
+    assert report.ok and report.review == ["existing tests changed: tests/e2e/test_x.py"]
+    assert report.needs_human
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "@pytest.mark.skip",
+        "@pytest.mark.xfail",
+        "@pytest.mark.skipif(True, reason='x')",
+        "@pytest.mark.network",
+        "@pytest.mark.visual",
+        "pytestmark = pytest.mark.skip",
+        "__test__ = False",
+        "pytest.skip('no')",
+        "pytest.importorskip('x')",
+        "request.node.add_marker(pytest.mark.skip)",
+        "request.applymarker(m)",
+        "def pytest_collection_modifyitems(items): pass",
+    ],
+)
+def test_added_skip_forms_are_hard(tmp_path: Path, marker: str) -> None:
+    head = TEST_BASE + marker + "\n"
+    assert hard(check(tmp_path, {"tests/test_x.py": TEST_BASE}, {"tests/test_x.py": head}), "weakened tests")
+
+
+def test_adding_a_test_to_an_existing_file_is_ok(tmp_path: Path) -> None:
+    head = TEST_BASE + "\n\ndef test_y():\n    assert 2\n"
+    report = check(tmp_path, {"tests/test_x.py": TEST_BASE}, {"tests/test_x.py": head})
+    assert report.ok and not report.needs_human and report.reasons == []
+
+
+def test_new_test_file_is_ok(tmp_path: Path) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {"tests/e2e/test_new.py": "def test_z():\n    assert 1\n"})
+    assert report.ok and not report.needs_human
+
+
+def test_changed_baseline_png_is_ok(tmp_path: Path) -> None:
+    report = check(
+        tmp_path, {"tests/visual/baselines/a.png": b"\x89PNG\0old"}, {"tests/visual/baselines/a.png": b"\x89PNG\0new"}
+    )
+    assert report.ok and not report.needs_human
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        TEST_BASE.replace("    assert n > 0\n    assert n > 0\n", "    assert n > 0\n"),
+        TEST_BASE.replace("assert n > 0", "assert n > -5"),
+        TEST_BASE.replace("[1, 2, 3]", "[1]"),
+        TEST_BASE.replace("    expect(page).to_be_ok()\n", ""),
+        TEST_BASE.replace("timeout=1000", "timeout=10_000"),
+        TEST_BASE.replace("timeout=1000", "timeout=5000"),
+        TEST_BASE.replace("def test_x", "def _test_x"),
+    ],
+)
+def test_changes_to_existing_lines_need_a_human(tmp_path: Path, edit: str) -> None:
+    report = check(tmp_path, {"tests/test_x.py": TEST_BASE}, {"tests/test_x.py": edit})
+    assert "existing tests changed: tests/test_x.py" in report.review or hard(report, "weakened")
+    assert report.needs_human
+
+
+def test_renamed_test_function_is_hard(tmp_path: Path) -> None:
+    head = TEST_BASE.replace("def test_x", "def _test_x")
+    assert hard(check(tmp_path, {"tests/test_x.py": TEST_BASE}, {"tests/test_x.py": head}), "test removed")
+
+
+def test_inserted_return_is_hard(tmp_path: Path) -> None:
+    base = "def test_x():\n    y = 1\n    assert y\n"
+    head = "def test_x():\n    y = 1\n    return\n    assert y\n"
+    assert hard(check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head}), "early exit")
+
+
+def test_inserted_if_false_is_hard(tmp_path: Path) -> None:
+    base = "def test_x():\n    y = 1\n    assert y\n"
+    head = "def test_x():\n    y = 1\n    if False:\n        pass\n    assert y\n"
+    assert hard(check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head}), "early exit")
+
+
+def test_added_decorator_needs_a_human(tmp_path: Path) -> None:
+    base = "def test_x(n):\n    assert n\n"
+    head = "@pytest.mark.parametrize('n', [])\ndef test_x(n):\n    assert n\n"
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head})
+    assert report.ok and "test code needs a human: tests/test_x.py: decorators changed" in report.review
+
+
+def test_redefined_test_is_hard(tmp_path: Path) -> None:
+    base = "def test_x():\n    assert 1\n"
+    head = base + "\ndef test_x():\n    pass\n"
+    assert hard(check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head}), "repeated")
+
+
+def test_unparsable_head_is_hard(tmp_path: Path) -> None:
+    base = "def test_x():\n    assert 1\n"
+    head = base + "def broken(:\n"
+    assert hard(check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head}), "does not parse")
+
+
+def test_rename_test_file_is_hard(tmp_path: Path) -> None:
+    report = check(tmp_path, {"tests/test_x.py": TEST_BASE}, {}, rename=("tests/test_x.py", "css/test_x.py"))
+    assert hard(report, "test file renamed")
+    report = check(tmp_path / "b", {"tests/test_x.py": TEST_BASE}, {}, rename=("tests/test_x.py", "tests/test_y.py"))
+    assert hard(report, "test file renamed")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "tests/visual/conftest.py",
+        "tests/conftest.py",
+        "tests/visual/comparison/__init__.py",
+        "tests/pytest.ini",
+        "tests/tox.ini",
+        "tests/setup.cfg",
+        ".gitattributes",
+        "tests/__pycache__/x.pyc",
+        "tests/helper.pyc",
+        "tests/data.json",
+        "tests/visual/helper.py",
+    ],
+)
+def test_test_infrastructure_and_unlisted_new_files(tmp_path: Path, path: str) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {path: "x\n"})
+    assert not report.ok
+
+
+def test_changing_visual_conftest_is_hard(tmp_path: Path) -> None:
+    base = {"tests/visual/conftest.py": "default = False\n"}
+    report = check(tmp_path, base, {"tests/visual/conftest.py": "default = True\n"})
+    assert hard(report, "test infrastructure")
+
+
+def test_comparison_py_edit(tmp_path: Path) -> None:
+    report = check(
+        tmp_path, {"tests/visual/comparison.py": "TOL = 1\n"}, {"tests/visual/comparison.py": "TOL = 2\n"}
+    )
+    assert "weakened tests" in report.reasons
+    assert any(r.startswith("forbidden path") for r in report.reasons)
+
+
+def test_symlink_is_hard(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    write(repo, {"css/a.css": "a\n"})
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+    first = git(repo, "rev-parse", "HEAD")
+    (repo / "css" / "link.css").symlink_to("/etc/passwd")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "head")
+    report = check_fence(repo, first, git(repo, "rev-parse", "HEAD"), CONFIG.fence, CONFIG.limits)
+    assert hard(report, "symlink")
+
+
+def test_gitlink_is_hard(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    write(repo, {"css/a.css": "a\n"})
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+    first = git(repo, "rev-parse", "HEAD")
+    git(repo, "update-index", "--add", "--cacheinfo", f"160000,{first},css/sub")
+    git(repo, "commit", "-qm", "head")
+    report = check_fence(repo, first, git(repo, "rev-parse", "HEAD"), CONFIG.fence, CONFIG.limits)
+    assert hard(report, "symlink or submodule")
+
+
+def test_binary_non_png_is_hard_and_nul_css_is_binary(tmp_path: Path) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {"css/a.css": "a\0\n" + lines(400, "n")})
+    assert hard(report, "binary file: css/a.css")
+
+
+def add_raw_path(repo: Path, path: bytes, content: bytes) -> None:
+    """Stage `content` under a path given as bytes (macOS file systems refuse names that are not
+    UTF-8, so the index is written directly)."""
+    blob = subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-w", "--stdin"], input=content, capture_output=True, check=True, env=ENV
+    ).stdout.decode().strip()
+    subprocess.run(
+        ["git", "-C", str(repo), "update-index", "--add", "--index-info"],
+        input=b"100644 " + blob.encode() + b"\t" + path + b"\n",
+        capture_output=True,
+        check=True,
+        env=ENV,
+    )
+
+
+def test_a_path_that_is_not_utf8_is_hard(tmp_path: Path) -> None:
+    """D46: inside an allowed directory, a name with bytes that are not UTF-8 is still refused (a
+    lossy decoding would name another file); every reason stays printable."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    write(repo, {"css/a.css": "a\n"})
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "base")
+    first = git(repo, "rev-parse", "HEAD")
+    add_raw_path(repo, b"css/\xff.css", b".a {}\n")
+    git(repo, "commit", "-qm", "head")
+    report = check_fence(repo, first, git(repo, "rev-parse", "HEAD"), CONFIG.fence, CONFIG.limits)
+    assert not report.ok
+    assert "path is not UTF-8: css/\\xff.css" in report.reasons
+    for reason in report.reasons + report.review:
+        reason.encode("utf-8")  # no lone surrogate escapes
+    assert main(["--repo", str(repo), "--base", first, "--head", git(repo, "rev-parse", "HEAD")]) == 1
+
+
+def test_control_character_path_is_hard(tmp_path: Path) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {"css/a\tb.css": "x\n"})
+    assert hard(report, "invalid path")
+    report = check(tmp_path / "c", {"css/a.css": "a\n"}, {"css/<!--.css": "x\n"})
+    assert hard(report, "invalid path")
+
+
+MODULE = (
+    "import pytest\nfrom tests.helpers import expect\n\nLIMIT = 5\n\n"
+    "def helper(x):\n    return x\n\n"
+    "def test_head(page):\n    expect(page).to_be_ok()\n    assert LIMIT\n"
+)
+CONFTEST = "import pytest\n\n@pytest.fixture\ndef assert_visual():\n    return 1\n"
+
+
+def module_check(tmp_path: Path, head: str, base: str | None = MODULE, extra=None):
+    """A diff of tests/visual/test_a.py (or a new module when base is None)."""
+    files = {"css/a.css": "a\n"}
+    if base is not None:
+        files["tests/visual/test_a.py"] = base
+    # conftest files are shared, so seed one in both commits through the base files
+    files["tests/visual/conftest.py"] = CONFTEST
+    return check(tmp_path, files, {"tests/visual/test_a.py": head, **(extra or {})})
+
+
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "print('x')",
+        "pytest_plugins = ['evil']",
+        "pytest_plugins = ['evil']\n",
+        "import os\nos.environ['A'] = '1'",
+        "_c.compare_image = None",
+        "del test_head",
+        "test_head = lambda page: None",
+        "test_head.__code__ = helper.__code__",
+        "if True:\n    pass",
+        "try:\n    pass\nexcept Exception:\n    pass",
+        "with open('x'):\n    pass",
+        "for i in range(1):\n    pass",
+        "def pytest_runtest_call(item):\n    pass",
+        "def pytest_collection_modifyitems(items):\n    del items[:]",
+        "@pytest.fixture\ndef assert_visual():\n    return None",
+        "def assert_visual():\n    return None",
+        "def expect(page):\n    return None",
+        "def helper(x):\n    return None",
+        "LIMIT = 6",
+        "from tests.helpers import expect",
+        "from tests.visual.thing import *",
+        "__test__ = False",
+        "@pytest.mark.skip\ndef test_other():\n    pass",
+        "def test_other():\n    raise pytest.skip.Exception('x')",
+        "def test_other():\n    import unittest\n    raise unittest.SkipTest('x')",
+        "def test_other():\n    eval('1')",
+    ],
+)
+def test_added_code_in_existing_test_module_is_hard(tmp_path: Path, addition: str) -> None:
+    head = MODULE + "\n" + addition + "\n"
+    if "_c." in addition:
+        head = "import tests.visual.conftest as _c\n" + head
+    report = module_check(tmp_path, head)
+    assert not report.ok, report.reasons
+
+
+@pytest.mark.parametrize(
+    "addition",
+    [
+        "print('x')",
+        "pytest_plugins = ['evil']",
+        "import tests.visual.conftest as _c\n_c.compare_image = None",
+        "def pytest_runtest_call(item):\n    pass",
+        "@pytest.fixture\ndef assert_visual():\n    return None",
+        "if True:\n    pass",
+    ],
+)
+def test_new_test_module_is_scanned(tmp_path: Path, addition: str) -> None:
+    head = "import pytest\n\ndef test_new(page):\n    assert page\n\n" + addition + "\n"
+    report = module_check(tmp_path, head, base=None)
+    assert not report.ok, report.reasons
+
+
+def soft(report, needle: str) -> bool:
+    return report.ok and report.needs_human and any(
+        r.startswith("test code needs a human") and needle in r for r in report.review
+    )
+
+
+@pytest.mark.parametrize(
+    ("addition", "needle"),
+    [
+        ("@U or (lambda f: f)\ndef test_o():\n    assert 1", "decorator"),
+        ("@make()\ndef test_o():\n    assert 1", "decorator"),
+        ("def test_o(x=compute()):\n    assert 1", "default argument"),
+        ("def test_o(*, x=(lambda: 1)):\n    assert 1", "default argument"),
+        ("def test_o(x: compute()):\n    assert 1", "annotation"),
+        ("def test_o() -> compute():\n    assert 1", "annotation"),
+        ("y: compute() = 1", "annotation"),
+        ("class TestA(make()):\n    pass", "class bases"),
+        ("class TestA(metaclass=make()):\n    pass", "class bases"),
+        ("@dec\nclass TestA:\n    pass", "decorator"),
+        ("class TestA:\n    type.__setattr__(object, 'x', 1)", "class body statement"),
+        ("class TestA:\n    x = compute()", "class body statement"),
+        ("class TestA:\n    @dec\n    def test_a(self):\n        assert 1", "decorator"),
+        ("def setup_module():\n    pass", "setup or teardown function"),
+        ("def teardown_function(f):\n    pass", "setup or teardown function"),
+        ("@pytest.fixture(autouse=True)\ndef _auto():\n    pass", "autouse fixture"),
+        ("def test_o():\n    getattr(object, 'a' + 'b')", "non-literal getattr"),
+        ("def test_o():\n    os.environ['X'] = '1'", "attribute or item assigned"),
+        ("def test_o(card_data):\n    card_data['headline'] = 'x'", "attribute or item assigned"),
+        ("def test_o():\n    import tests.visual.conftest as c\n    c.compare_image = None", "attribute or item assigned"),
+        ("def _helper2():\n    raise ValueError", None),
+        ("LIMIT_2 = compute()", "computed assignment"),
+        ("ROOT = Path(__file__).resolve().parents[2]", "computed assignment"),
+        ("def test_o(monkeypatch):\n    monkeypatch.setattr(c, 'x', 1)", "dynamic attribute set"),
+        ("def test_o():\n    builtins.setattr(c, 'compare_image', None)", "dynamic attribute set"),
+        ("def test_o():\n    object.__setattr__(c, 'compare_image', None)", "dynamic attribute set"),
+        ("def test_o():\n    type.__setattr__(_pytest.python.Function, 'runtest', lambda self: None)", "dynamic attribute set"),
+        ("def test_o():\n    c.__dict__.update(compare_image=None)", "dynamic attribute set"),
+        ("from builtins import setattr as s\n\ndef test_o():\n    s(c, 'compare_image', None)", "dynamic attribute set"),
+    ],
+)
+def test_definition_time_and_state_code_needs_a_human(tmp_path: Path, addition: str, needle) -> None:
+    head = MODULE + "\n" + addition + "\n"
+    report = module_check(tmp_path, head)
+    if needle is None:  # a new helper that raises is fine on its own
+        assert report.ok and not report.needs_human
+        return
+    assert soft(report, needle), (report.reasons, report.review)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "builtins.setattr(c, 'compare_image', None)",
+        "type.__setattr__(_pytest.python.Function, 'runtest', lambda self: None)",
+        "c.__dict__.update(compare_image=None)",
+        "monkeypatch.setattr(c, 'x', 1)",
+    ],
+)
+def test_dynamic_attribute_set_in_a_new_module_needs_a_human(tmp_path: Path, body: str) -> None:
+    head = "import pytest\n\ndef test_new(monkeypatch):\n    " + body + "\n"
+    report = module_check(tmp_path, head, base=None)
+    assert soft(report, "dynamic attribute set"), (report.reasons, report.review)
+
+
+def test_new_module_with_repo_idiom_is_review_not_hard(tmp_path: Path) -> None:
+    head = (
+        "import json\nfrom pathlib import Path\n\n"
+        "ROOT = Path(__file__).resolve().parents[2]\n"
+        "DEMO = json.loads((ROOT / 'data.json').read_text())\n\n"
+        "def test_new():\n    assert DEMO\n"
+    )
+    report = module_check(tmp_path, head, base=None)
+    assert soft(report, "computed assignment"), (report.reasons, report.review)
+
+
+def test_bare_top_level_call_is_still_hard(tmp_path: Path) -> None:
+    head = "import json\n\njson.loads('1')\n\ndef test_new():\n    assert 1\n"
+    assert hard(module_check(tmp_path, head, base=None), "at the top level")
+
+
+def test_raise_added_in_an_existing_helper_needs_a_human(tmp_path: Path) -> None:
+    head = MODULE.replace("    return x\n", "    if x is None:\n        raise ValueError\n    return x\n")
+    report = module_check(tmp_path, head)
+    assert soft(report, "raise added in a helper")
+
+
+def test_extending_an_import_is_review_not_hard(tmp_path: Path) -> None:
+    base = "from playwright.sync_api import Page\n\ndef test_x(page: Page):\n    assert page\n"
+    head = base.replace("import Page", "import Page, expect")
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head})
+    assert report.ok and report.review == ["existing tests changed: tests/test_x.py"]
+
+
+def test_separate_added_import_is_ok(tmp_path: Path) -> None:
+    base = "from playwright.sync_api import Page\n\ndef test_x(page: Page):\n    assert page\n"
+    head = base.replace("\n\ndef", "\nfrom playwright.sync_api import expect\n\ndef", 1)
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head})
+    assert report.ok and not report.needs_human, report.reasons
+
+
+@pytest.mark.parametrize("old, new", [("[1, 2]", "[1, 2, 3]"), ("(1, 2)", "(1, 2, 3)")])
+def test_extending_a_constant_is_review_not_hard(tmp_path: Path, old: str, new: str) -> None:
+    base = f"VALUES = {old}\n\ndef test_x():\n    assert VALUES\n"
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": base.replace(old, new)})
+    assert report.ok and report.review == ["existing tests changed: tests/test_x.py"]
+
+
+def test_import_from_another_module_is_hard(tmp_path: Path) -> None:
+    base = "from tests.helpers import expect\n\ndef test_x():\n    assert 1\n"
+    head = base.replace("tests.helpers", "evil.helpers")
+    assert hard(check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head}), "rebinds")
+
+
+def test_inserted_raise_in_existing_test_is_hard(tmp_path: Path) -> None:
+    head = MODULE.replace("    assert LIMIT\n", "    raise SystemExit\n    assert LIMIT\n")
+    assert not module_check(tmp_path, head).ok
+
+
+def test_early_exit_inside_else_or_except_is_hard(tmp_path: Path) -> None:
+    base = "def test_x():\n    try:\n        pass\n    except Exception:\n        pass\n    else:\n        assert 1\n"
+    head = base.replace("        assert 1\n", "        return\n        assert 1\n")
+    report = check(tmp_path, {"tests/test_x.py": base}, {"tests/test_x.py": head})
+    assert hard(report, "early exit")
+
+
+def test_legitimate_new_module_is_ok(tmp_path: Path) -> None:
+    head = (
+        '"""Tests for the thing."""\n'
+        "import pytest\nfrom tests.helpers import expect\n\n"
+        "LIMIT = 5\nNAMES = ['a', 'b']\n\n"
+        "def _helper(x):\n    return x\n\n"
+        "class TestThing:\n    def test_a(self, assert_visual):\n        assert assert_visual\n\n"
+        "@pytest.mark.parametrize('n', [1, 2])\n"
+        "def test_new(page, assert_visual, n):\n    expect(page).to_be_ok()\n    assert n\n"
+    )
+    report = module_check(tmp_path, head, base=None)
+    assert report.ok and not report.needs_human, report.reasons
+
+
+def test_adding_a_test_to_an_existing_module_with_fixtures_is_ok(tmp_path: Path) -> None:
+    head = MODULE + "\n\ndef test_new(page, assert_visual):\n    assert assert_visual\n"
+    report = module_check(tmp_path, head)
+    assert report.ok and not report.needs_human, report.reasons
+
+
+PAGE = '<html><head><title>T</title><meta name="description" content="Opis"></head><body><p>Cześć   świecie</p><img src="a.png" alt="Logo"><script>var x = "zażółć";</script></body></html>'
+
+
+def test_visible_text() -> None:
+    text = visible_text(PAGE)
+    assert text == ["T Cześć świecie", "meta=Opis", "alt=Logo"]
+    assert "zażółć" not in " ".join(text)
+
+
+def test_visible_text_attributes() -> None:
+    html = '<meta property="og:title" content="OG"><input placeholder="Szukaj" aria-label="Pole" title="Tytuł"><style>p{}</style>'
+    assert visible_text(html) == ["", "meta=OG", "placeholder=Szukaj", "aria-label=Pole", "title=Tytuł"]
+
+
+def test_duplicate_attributes_are_all_recorded() -> None:
+    assert visible_text('<img alt="Nowe" alt="Stare">')[1:] == ["alt=Nowe", "alt=Stare"]
+
+
+def test_wrapping_in_span_is_not_a_change() -> None:
+    assert visible_text("<p>Cześć świecie</p>") == visible_text("<p>Cze<span>ść</span> <wbr>świecie</p>")
+    assert visible_text("<p>Cześć świecie</p>") != visible_text("<p>Cześć świat</p>")
+
+
+def test_js_polish_strings() -> None:
+    source = "a('plain'); b(\"zażółć\"); c(`gęś ${x}`); d('it\\'s żółw'); e('Tak'); // 'Komentarz ą'\n/* \"Inny tekst\" */"
+    assert js_polish_strings(source) == Counter({"zażółć": 1, "gęś ${x}": 1, "it's żółw": 1, "Tak": 1})
+
+
+def test_js_escapes_are_decoded() -> None:
+    assert js_polish_strings('x("za\\u017c\\u00f3\\u0142\\u0107")') == Counter({"zażółć": 1})
+    assert js_polish_strings('x("\\u{17c}ar")') == Counter({"żar": 1})
+    assert js_polish_strings('x("\\xF3d\\u017a")') == Counter({"ódź": 1})
+
+
+def test_changed_text_node(tmp_path: Path) -> None:
+    report = check(tmp_path, {"index.html": PAGE}, {"index.html": PAGE.replace("Cześć", "Hej")})
+    assert report.copy_changed and "copy" in report.reasons
+
+
+def test_changed_alt_text(tmp_path: Path) -> None:
+    report = check(tmp_path, {"docs/index.html": PAGE}, {"docs/index.html": PAGE.replace("Logo", "Znak")})
+    assert report.copy_changed
+
+
+def test_duplicate_alt_attribute_is_copy(tmp_path: Path) -> None:
+    head = PAGE.replace('alt="Logo"', 'alt="Nowe" alt="Logo"')
+    assert check(tmp_path, {"index.html": PAGE}, {"index.html": head}).copy_changed
+
+
+def test_added_script_or_style_or_textarea_is_copy(tmp_path: Path) -> None:
+    for i, extra in enumerate(["<script>1</script>", "<style>p{}</style>", "<textarea>Hej</textarea>"]):
+        head = PAGE.replace("</body>", extra + "</body>")
+        assert check(tmp_path / str(i), {"index.html": PAGE}, {"index.html": head}).copy_changed
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "<!-->Nowy tekst<!-- -->",
+        "<!--->Nowy tekst-->",
+        "<!-- x --!>",
+        '<input value="Nowe">',
+        '<meta name="twitter:title" content="Nowe">',
+    ],
+)
+def test_hidden_or_extra_copy_is_seen(tmp_path: Path, extra: str) -> None:
+    head = PAGE.replace("</body>", extra + "</body>")
+    assert check(tmp_path, {"index.html": PAGE}, {"index.html": head}).copy_changed
+
+
+def test_reused_script_end_tag_is_seen(tmp_path: Path) -> None:
+    base = PAGE.replace("</body>", "<script>1</script></body>")
+    head = PAGE.replace("</body>", "<script>1</script x><p>Nowy tekst</p></body>")
+    # same count of `</script`, but one of them is not a plain end tag
+    assert _counts_equal(base, head)
+    assert check(tmp_path, {"index.html": base}, {"index.html": head}).copy_changed
+
+
+def test_count_preserving_comment_trick_is_seen(tmp_path: Path) -> None:
+    base = PAGE.replace("</body>", "<!-- a --></body>")
+    head = PAGE.replace("</body>", "<!-->Nowy tekst-- ></body>")
+    assert check(tmp_path, {"index.html": base}, {"index.html": head}).copy_changed
+
+
+def _counts_equal(a: str, b: str) -> bool:
+    from tools.factory.fence import _markup_counts
+
+    return _markup_counts(a) == _markup_counts(b)
+
+
+def test_markup_only_page_change_keeps_copy(tmp_path: Path) -> None:
+    report = check(tmp_path, {"index.html": PAGE}, {"index.html": PAGE.replace("<p>", '<p class="x">')})
+    assert report.ok and not report.copy_changed
+
+
+def test_wrapping_text_in_span_keeps_copy(tmp_path: Path) -> None:
+    head = PAGE.replace("<p>Cześć", "<p><span>Cześć</span>")
+    report = check(tmp_path, {"index.html": PAGE}, {"index.html": head})
+    assert report.ok and not report.copy_changed
+
+
+def test_css_content_string_is_copy(tmp_path: Path) -> None:
+    base = {"css/a.css": 'a::after { content: "Dalej"; }\n'}
+    report = check(tmp_path, base, {"css/a.css": 'a::after { content: "Wstecz"; }\n'})
+    assert report.copy_changed
+    same = check(tmp_path / "s", base, {"css/a.css": 'a::after { content: "Dalej"; color: red; }\n'})
+    assert same.ok and not same.copy_changed
+
+
+def test_changed_polish_literal(tmp_path: Path) -> None:
+    base = {"js/site.js": 'const a = "Zażółć";\nconst b = "plain";\n'}
+    head = {"js/site.js": 'const a = "Zażółć gęślą";\nconst b = "plain";\n'}
+    report = check(tmp_path, base, head)
+    assert report.copy_changed and "copy" in report.reasons
+
+
+def test_duplicate_or_commented_copy_is_seen(tmp_path: Path) -> None:
+    base = {"js/site.js": 'a("Zażółć");\n'}
+    dup = check(tmp_path / "a", base, {"js/site.js": 'a("Zażółć");\na("Zażółć");\n'})
+    assert dup.copy_changed
+    swapped = check(tmp_path / "b", base, {"js/site.js": '// a("Zażółć");\na("Inne");\n'})
+    assert swapped.copy_changed
+
+
+def test_non_polish_js_change_is_fine(tmp_path: Path) -> None:
+    base = {"js/site.js": 'const a = "Zażółć";\nconst b = "plain";\n'}
+    head = {"js/site.js": 'const a = "Zażółć";\nconst b = "other";\n'}
+    assert check(tmp_path, base, head).ok
+
+
+def test_size_limits(tmp_path: Path) -> None:
+    at_limit = check(tmp_path / "b", {"css/a.css": lines(150, "o")}, {"css/a.css": lines(149, "n")})
+    assert at_limit.changed_lines == 299 and at_limit.ok
+    over = check(tmp_path / "c", {"css/a.css": lines(150, "o")}, {"css/a.css": lines(151, "n")})
+    assert over.changed_lines == 301 and "size" in over.reasons
+
+
+def test_generated_files_do_not_count(tmp_path: Path) -> None:
+    body = "<html><body><p>x</p>\n" + "<div></div>\n" * 400 + "</body></html>\n"
+    report = check(
+        tmp_path,
+        {"index.html": "<html><body><p>x</p></body></html>\n", "css/a.css": "a{}\n"},
+        {"index.html": body, "css/a.css": "a{}\n" + lines(10, "n")},
+    )
+    assert report.ok and report.changed_lines == 10
+
+
+def test_png_does_not_count(tmp_path: Path) -> None:
+    png = bytes(range(256)) * 4000
+    report = check(tmp_path, {"tests/visual/baselines/a.png": b"\x89PNG\0old"}, {"tests/visual/baselines/a.png": png})
+    assert report.ok and report.changed_lines == 0
+
+
+def test_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    repo, first, last = run(tmp_path, {"css/a.css": "a\n"}, {"css/a.css": "b\n"})
+    assert main(["--base", first, "--head", last, "--repo", str(repo)]) == 0
+    assert '"ok": true' in capsys.readouterr().out
+    repo2, first2, last2 = run(tmp_path / "x", {"css/a.css": "a\n"}, {"CLAUDE.md": "x\n"})
+    assert main(["--base", first2, "--head", last2, "--repo", str(repo2)]) == 1
+    assert main(["--base", "nope", "--head", last, "--repo", str(repo)]) == 2
+
+
+def test_cli_exit_three_for_review(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    repo, first, last = run(tmp_path, {"tests/test_x.py": TEST_BASE}, {"tests/test_x.py": None})
+    assert main(["--base", first, "--head", last, "--repo", str(repo)]) == 3
+    assert '"needs_human": true' in capsys.readouterr().out

@@ -2,6 +2,8 @@ name: Check
 
 on:
   push:
+    # The factory's orphan branch of screenshots and scripts holds no site to check.
+    branches-ignore: [factory-evidence]
   pull_request:
   workflow_dispatch:
 

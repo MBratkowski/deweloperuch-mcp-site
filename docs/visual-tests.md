@@ -74,3 +74,5 @@ uv run pytest tests/e2e/test_browser_smoke.py --browser firefox --browser webkit
 ```
 
 The smoke suite exercises landing → docs → installation anchors → landing navigation, responsive containment at 1440, 768, 375 and 320 px, every copy button, clipboard rejection and a missing clipboard API. It uses viewport resizing because Firefox does not support Playwright's `is_mobile` emulation. It stubs the clipboard boundary rather than requesting Chromium-only clipboard permissions, and verifies synchronous click-time writes, the success label, and manual selection fallback. The ordinary Chromium suite still verifies real clipboard contents. CI uploads retained traces and failure screenshots as `browser-smoke-results`.
+
+The agent factory's fixer renders baselines in the same pinned image inside its fix job (`factory-fix.yml`), and only baselines that the fix explains may change; the fence and the reviewer check this.

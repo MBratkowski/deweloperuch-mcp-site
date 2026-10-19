@@ -1,0 +1,37 @@
+{
+  "workflow_runs": [
+    {
+      "id": 38932423200,
+      "name": "Pages",
+      "head_sha": "8b6ec7beb1d3fc2e3c93126df1e68e695445cb9b",
+      "head_branch": "main",
+      "event": "push",
+      "status": "completed",
+      "conclusion": "failure",
+      "created_at": "2026-10-16T16:30:00Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38932423200"
+    },
+    {
+      "id": 38911277683,
+      "name": "Pages",
+      "head_sha": "1f104d1bd39245054cf2f24f2d0729dee399428f",
+      "head_branch": "main",
+      "event": "push",
+      "status": "completed",
+      "conclusion": "success",
+      "created_at": "2026-10-16T13:52:47Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38911277683"
+    },
+    {
+      "id": 38911234846,
+      "name": "Pages",
+      "head_sha": "a1baaa7d6d45d49ff2224e8d694612ddf35f3df3",
+      "head_branch": "main",
+      "event": "push",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "created_at": "2026-10-16T13:52:27Z",
+      "html_url": "https://github.com/MBratkowski/deweloperuch-mcp-site/actions/runs/38911234846"
+    }
+  ]
+}

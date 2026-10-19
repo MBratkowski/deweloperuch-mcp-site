@@ -68,6 +68,9 @@ jobs:
         # GitHub mounts /github/home with another owner; Firefox requires the container user's actual home.
         env:
           HOME: /root
+      - run: uv run pytest tests/factory -m multi_engine --browser chromium --tracing retain-on-failure --screenshot only-on-failure
+        env:
+          HOME: /root
       - uses: actions/upload-artifact@v7
         if: failure()
         with:

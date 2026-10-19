@@ -1,0 +1,623 @@
+name: Factory QA
+
+# The agent factory's QA loop (docs/superpowers/specs/2026-10-18-agent-factory-design.md, "QA agent"):
+# probe the live site, verify merged fixes, let the QA agent triage, check its drafts, file what
+# survives, promote issues to the fixer and update the status issue. Agents propose, code disposes:
+# the agent writes reproduction scripts but cannot run them and holds no write token; the scripts
+# run in jobs without secrets (check, verify); the App token is minted only in jobs that run no
+# agent code. The QA agent's job uses the environment factory-agent, which holds only the Claude
+# token; the App-token jobs use factory, which holds only the App's private key. Every artifact is
+# downloaded by id, never by name: check and verify run the agent's scripts, and an id cannot be
+# replaced by an artifact uploaded later under the same name.
+#
+#   guard -> probe -> verify -> verify-act -------------------------------------> dispatch-status
+#                  -> triage -> check -> file (after verify) -------------------^
+#
+# One failure does not stop the whole intake (M1): file runs when check succeeded, whatever verify
+# did; dispatch-status runs after a green probe when file succeeded or was skipped, whatever
+# verify-act did. At most `limits.qa_agent_runs_per_day` runs a day (UTC) run the QA agent (M11): the
+# guard counts today's runs whose triage job succeeded, and beyond the limit triage, check and file
+# are skipped while probe, verify and the status still run.
+#
+# FACTORY_MODE is an allow-list (off | dry | shadow | auto): QA runs in dry, shadow and auto; an
+# unset, unknown or off mode runs nothing. In dry mode, or with the dry_run input, the run is a dry
+# run: verify-act and dispatch-status are skipped (no promotion, no status issue) and file writes the
+# issue bodies to the job summary with the read-only token instead of GitHub: a dry run writes
+# nothing to GitHub.
+on:
+  schedule:
+    - cron: "30 2 * * *"
+  workflow_run:
+    workflows: [Pages]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Write the issue bodies to the job summary instead of filing them
+        type: boolean
+        default: false
+      simulate_failed_verify:
+        description: Fingerprint of a factory:merged issue whose live verification is treated as failed
+        type: string
+        default: ""
+
+permissions: {}
+
+concurrency:
+  group: factory-qa
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  guard:
+    name: Factory mode and configuration
+    # Only in dry, shadow or auto mode (an unset, unknown or off mode ends the run here); a failed
+    # Pages run deployed nothing new to check.
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE) && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # actions: read counts today's QA agent runs (the daily cap).
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      # "true" in dry mode or for a dispatch with dry_run; the writing jobs run only on "false".
+      dry: ${{ steps.config.outputs.dry }}
+      # "true" while today's QA agent runs are below limits.qa_agent_runs_per_day.
+      agent: ${{ steps.cap.outputs.agent }}
+      live_url: ${{ steps.config.outputs.live_url }}
+      suggestions: ${{ steps.config.outputs.suggestions }}
+      qa_model: ${{ steps.config.outputs.qa_model }}
+      qa_max_turns: ${{ steps.config.outputs.qa_max_turns }}
+      drafts_schema: ${{ steps.config.outputs.drafts_schema }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      # Limits, models and the site come from .github/factory/config.json, never from this file.
+      - name: Read the configuration
+        id: config
+        env:
+          MODE: ${{ vars.FACTORY_MODE }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          config=.github/factory/config.json
+          live_url=$(jq -er '.site.live_url' "$config")
+          suggestions=$(jq -er '.limits.suggestions_per_run' "$config")
+          qa_model=$(jq -er '.models.qa' "$config")
+          qa_max_turns=$(jq -er '.max_turns.qa' "$config")
+          # claude_args takes the schema inline and splits it like a shell line, inside single quotes.
+          # "$schema" names the 2020-12 dialect; the schema uses nothing newer than draft 7, so it goes.
+          drafts_schema=$(jq -c 'del(."$schema")' .github/factory/schemas/drafts.json)
+          [[ $live_url =~ ^https://[^[:space:]]+/$ ]] || { echo "::error::site.live_url is not an https URL ending in /: $live_url"; exit 1; }
+          [[ $suggestions =~ ^[0-9]+$ ]] || { echo "::error::limits.suggestions_per_run is not a number: $suggestions"; exit 1; }
+          [[ $qa_model =~ ^[a-z0-9.-]+$ ]] || { echo "::error::models.qa is not a model id: $qa_model"; exit 1; }
+          [[ $qa_max_turns =~ ^[0-9]+$ ]] || { echo "::error::max_turns.qa is not a number: $qa_max_turns"; exit 1; }
+          [[ $drafts_schema != *"'"* ]] || { echo "::error::the drafts schema must not contain a single quote"; exit 1; }
+          case "$MODE" in
+            dry) dry=true ;;
+            shadow | auto) if [ "$DRY_RUN" = true ]; then dry=true; else dry=false; fi ;;
+            *) echo "::error::FACTORY_MODE is not dry, shadow or auto: ${MODE:-unset}"; exit 1 ;;
+          esac
+          {
+            echo "dry=$dry"
+            echo "live_url=$live_url"
+            echo "suggestions=$suggestions"
+            echo "qa_model=$qa_model"
+            echo "qa_max_turns=$qa_max_turns"
+            echo "drafts_schema=$drafts_schema"
+          } >> "$GITHUB_OUTPUT"
+          echo "Factory mode: $MODE. Event: $GITHUB_EVENT_NAME. Dry run: $dry." >> "$GITHUB_STEP_SUMMARY"
+      # The spec's cost bound: at most limits.qa_agent_runs_per_day QA agent runs a day. When the count
+      # cannot be read, the agent is skipped (the cheap side); probe, verify and the status still run.
+      - name: Count today's QA agent runs
+        id: cap
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          status=0
+          out=$(uv run python -m tools.factory.status qa-cap) || status=$?
+          agent=$(printf '%s\n' "$out" | grep -E '^agent=(true|false)$' | cut -d= -f2 || true)
+          if [ "$status" -ne 0 ] || [ -z "$agent" ]; then
+            echo "::warning::today's QA agent runs could not be counted; the agent is skipped"
+            agent=false
+          fi
+          echo "agent=$agent" >> "$GITHUB_OUTPUT"
+          if [ "$agent" = false ]; then
+            echo "The QA agent is skipped in this run: ${out:-no count} (limits.qa_agent_runs_per_day)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  probe:
+    name: Probe the live site
+    needs: guard
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+    container:
+      # The image of validate.yml's visual job; keep it in sync with uv.lock (Playwright).
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --ipc=host
+    env:
+      # GitHub mounts /github/home with another owner; Firefox requires the container user's actual home.
+      HOME: /root
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked --python 3.12
+      # Exit 2 (the site is down or half-loaded) fails the run before anything is triaged or filed.
+      # main is checked per draft by check_drafts in the triage job, not with a second matrix.
+      - name: Probe the matrix on the live site
+        env:
+          LIVE_URL: ${{ needs.guard.outputs.live_url }}
+        run: uv run python -m tools.factory.probe --target "$LIVE_URL" --out probe-out/live
+      - name: Read the deployment and the CI history
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: uv run python -m tools.factory.ci_facts --out probe-out/ci
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: probe
+          path: probe-out/
+          if-no-files-found: error
+          retention-days: 14
+
+  verify:
+    name: Verify merged fixes on the live site
+    # After the probe: a new S1 or S2 finding on a page a merge changed counts as a regression.
+    needs: [guard, probe]
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
+      deployments: read
+      issues: read
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --ipc=host
+    env:
+      HOME: /root
+      # The reproduction scripts run as the image's unprivileged user (D40): no root /proc of the
+      # job's processes, no Docker socket. Everything else in the job stays root.
+      FACTORY_SCRIPT_USER: pwuser
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          # Local builds of each merge commit and its parent.
+          fetch-depth: 0
+          # Reproduction scripts from the evidence branch run in this job.
+          persist-credentials: false
+      - name: Configure git for the container
+        run: |
+          # The checkout belongs to the runner's user, not to root in the container.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Reproduction scripts run in this checkout; no hook they leave runs on a local build.
+          git config --global core.hooksPath /dev/null
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      # The project's Python outside /root (mode 700), so the scripts can run it as pwuser.
+      - run: uv sync --locked --python 3.12
+        env:
+          UV_PYTHON_INSTALL_DIR: /opt/uv-python
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.probe.outputs.artifact }}
+          path: factory-in/probe
+          merge-multiple: true
+      # Read-only token; verify drops it from the environment of the reproduction scripts.
+      - name: Rerun the reproductions of merged issues
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          SIMULATE: ${{ inputs.simulate_failed_verify }}
+        run: |
+          args=(--out verify-out/outcomes.json --probe-out factory-in/probe)
+          if [ -n "$SIMULATE" ]; then
+            args+=(--simulate-failed-verify "$SIMULATE")
+          fi
+          uv run python -m tools.factory.verify check "${args[@]}"
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: verify
+          path: verify-out/
+          if-no-files-found: error
+          retention-days: 14
+
+  verify-act:
+    name: Close fixed issues and revert regressions
+    needs: [guard, verify]
+    # Writes to GitHub: only in shadow or auto mode, and never in a dry run.
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.dry == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: factory
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          # git revert of the merge commit.
+          fetch-depth: 0
+          # git authenticates with the App token; a stored GITHUB_TOKEN header would override it.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact }}
+          path: verify-out
+          merge-multiple: true
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-actions: read
+          permission-contents: write
+          permission-deployments: read
+          permission-issues: write
+          permission-pull-requests: write
+      # outcomes.json comes from a job that ran reproduction scripts: act treats it as data and
+      # re-reads every issue it touches. It also closes the deploy-stale issue once Pages caught up.
+      - name: Act on the outcomes
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+        run: uv run python -m tools.factory.verify act --outcomes verify-out/outcomes.json
+
+  triage:
+    name: Triage the findings (QA agent)
+    needs: [guard, probe]
+    # Skipped beyond the daily cap of QA agent runs (the guard's count); check and file follow.
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.agent == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # The Claude token only: the App's private key lives in the environment factory, never here.
+    environment: factory-agent
+    # The agent holds no write token: this GITHUB_TOKEN is read-only and the App token is never minted here.
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --ipc=host
+    env:
+      # Firefox needs it for the probe CLI; it is also the first fallback if the action fails in the container.
+      HOME: /root
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked --python 3.12
+      # Inputs land in factory-in/, never at the repository root (the Python import root).
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.probe.outputs.artifact }}
+          path: factory-in/probe
+          merge-multiple: true
+      - name: Write the prompt
+        id: prompt
+        env:
+          LIVE_URL: ${{ needs.guard.outputs.live_url }}
+          SUGGESTIONS: ${{ needs.guard.outputs.suggestions }}
+        run: |
+          mkdir -p factory-out/repros
+          {
+            echo "text<<FACTORY_QA_PROMPT_END"
+            cat .github/factory/prompts/qa.md
+            cat <<EOF
+
+          ## This run
+
+          - Live site, the \`--base-url\` the check job passes to your scripts: $LIVE_URL
+          - Detector findings of the live site: \`factory-in/probe/live/findings.json\`
+          - CI facts (deploy-stale, flaky): \`factory-in/probe/ci/findings.json\`
+          - Contact sheets: \`factory-in/probe/live/sheets/<page>-<engine>.png\`
+          - Full-page screenshots: \`factory-in/probe/live/shots/<page>-<engine>-<width>-<mode>.png\`
+          - Evidence of each group: \`factory-in/probe/live/groups/<fingerprint>/viewport.png\` and \`crop.png\`
+          - The design reference (\`docs/design/noc.dc.html\`) rendered at 1440 px: \`factory-in/probe/live/reference.png\`
+          - The landing page spec: \`docs/superpowers/specs/2026-10-15-landing-page-design.md\`
+          - The factory spec: \`docs/superpowers/specs/2026-10-18-agent-factory-design.md\`
+          - Suggestions allowed in this run: $SUGGESTIONS
+          EOF
+            echo "FACTORY_QA_PROMPT_END"
+          } >> "$GITHUB_OUTPUT"
+      # The agent needs no git. Without a repository the action cannot store its token in the remote
+      # URL in .git/config, where read-only commands such as `grep -r` could read it.
+      - name: Drop the git metadata
+        run: rm -rf .git
+      # The agent writes reproduction scripts but cannot run them; the check job does, without secrets.
+      - name: QA agent
+        id: claude
+        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+        env:
+          # Keep the Claude and GitHub tokens out of the environment of every command the agent runs.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Pages runs started by the App's merges reach this job through workflow_run.
+          allowed_bots: "${{ vars.FACTORY_APP_SLUG }}[bot],github-actions[bot]"
+          prompt: ${{ steps.prompt.outputs.text }}
+          # Read, Grep and Glob refuse every path outside the workspace (Claude Code 2.1.257 and later).
+          settings: '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
+          # Edit(path) is the rule Claude Code consults for the Write tool; Write(path) rules are ignored.
+          # The denies repeat the block for the places a token can sit, keep git out entirely, and stop
+          # the read-only commands that can print an environment (Claude Code 2.1.289 runs them unprompted).
+          claude_args: |
+            --model ${{ needs.guard.outputs.qa_model }}
+            --max-turns ${{ needs.guard.outputs.qa_max_turns }}
+            --json-schema '${{ needs.guard.outputs.drafts_schema }}'
+            --allowedTools "Read(./**),Glob,Grep,Edit(./factory-out/repros/**),Bash(uv run python -m tools.factory.probe:*),Bash(uv run python -m tools.factory.findings fingerprint:*)"
+            --disallowedTools "WebFetch,WebSearch,Read(//proc/**),Read(//sys/**),Read(//etc/**),Read(//root/**),Read(//home/**),Read(//github/**),Read(//tmp/**),Read(~/**),Read(./.git/**),Bash(git:*),Bash(ps:*),Bash(env:*),Bash(printenv:*),Bash(set:*),Bash(declare:*),Bash(export:*),Bash(compgen:*)"
+      - name: Save the drafts
+        env:
+          DRAFTS: ${{ steps.claude.outputs.structured_output }}
+        run: printf '%s' "$DRAFTS" > factory-out/drafts.json
+      # Artifacts of a public repository can be downloaded by any signed-in user: agent output that
+      # looks like a token or a key fails the job instead. Standard library only (-I -S).
+      - name: Scan the agent's output for secret shapes
+        run: uv run python -I -S tools/factory/secret_scan.py factory-out/drafts.json factory-out/repros
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: drafts
+          path: |
+            factory-out/drafts.json
+            factory-out/repros/
+          if-no-files-found: error
+          retention-days: 1
+
+  check:
+    name: Check the drafts on the live site and on main
+    # Runs the agent's reproduction scripts: no environment, no secret, a read-only token.
+    needs: [guard, probe, triage]
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --ipc=host
+    env:
+      # Firefox needs it for the detector reproductions; each script gets a HOME of its own.
+      HOME: /root
+      # The agent's scripts run as the image's unprivileged user (D40): no root /proc of the job's
+      # processes, no Docker socket. Everything else in the job stays root.
+      FACTORY_SCRIPT_USER: pwuser
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      # The project's Python outside /root (mode 700), so the scripts can run it as pwuser.
+      - run: uv sync --locked --python 3.12
+        env:
+          UV_PYTHON_INSTALL_DIR: /opt/uv-python
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.probe.outputs.artifact }}
+          path: factory-in/probe
+          merge-multiple: true
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.triage.outputs.artifact }}
+          path: factory-in/drafts
+          merge-multiple: true
+      # check_drafts resolves factory-out/repros/<name>.py against the checkout; only flat .py files are copied.
+      - name: Place the agent's scripts
+        run: |
+          mkdir -p factory-out/repros
+          if [ -d factory-in/drafts/repros ]; then
+            find factory-in/drafts/repros -maxdepth 1 -type f -name '*.py' -exec cp {} factory-out/repros/ \;
+          fi
+      # main is packaged from this fresh checkout before any script runs.
+      - name: Rerun every draft's reproduction on the live site and on main
+        env:
+          LIVE_URL: ${{ needs.guard.outputs.live_url }}
+        run: >-
+          uv run python -m tools.factory.check_drafts
+          --drafts factory-in/drafts/drafts.json
+          --live "$LIVE_URL"
+          --main-root .
+          --probe-findings factory-in/probe/live/findings.json
+          --ci-findings factory-in/probe/ci/findings.json
+          --out factory-out/validated.json
+          --ignored-out factory-out/ignored.json
+      # The owner reads why each finding was dropped, which drafts wait beyond the per-run limit and
+      # which findings the agent ignored (in neither a draft nor dropped, M4).
+      - name: Summarize the triage
+        run: |
+          uv run python -I - factory-out/validated.json factory-out/ignored.json >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          import json
+          import sys
+
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          ignored = json.load(open(sys.argv[2], encoding="utf-8"))
+
+
+          def plain(text):
+              return " ".join(str(text).split())
+
+
+          print("## QA triage\n")
+          print(f"{len(data['drafts'])} drafts reproduce on the live site and on main; the file job files")
+          print("the most severe ones up to the per-run limit.\n")
+          for draft in data["drafts"]:
+              print(f"- {draft['severity']} {plain(draft['title'])} ({', '.join(draft['fingerprints'])})")
+          print(f"\n### Suggestions ({len(data['suggestions'])})\n")
+          for suggestion in data["suggestions"]:
+              print(f"- {plain(suggestion['title'])}")
+          print(f"\n### Dropped ({len(data['dropped'])})\n")
+          for dropped in data["dropped"]:
+              print(f"- {dropped['fingerprint']}: {plain(dropped['reason'])}")
+          print(f"\n### Ignored by the agent ({len(ignored)})\n")
+          print("Findings of this run in neither a draft nor dropped.\n")
+          for item in ignored:
+              print(f"- {item['fingerprint']}: {plain(item['check'])} {plain(item['selector'])} on {plain(item['page'])}")
+          EOF
+      # Best effort: the scripts ran in this job before this step.
+      - name: Scan the checked output for secret shapes
+        run: uv run python -I -S tools/factory/secret_scan.py factory-out/validated.json factory-out/repros
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: validated
+          path: |
+            factory-out/validated.json
+            factory-out/repros/
+          if-no-files-found: error
+          retention-days: 1
+
+  file:
+    name: File the issues
+    # After verify: its dedup sees the issues as they were before this run filed any.
+    needs: [guard, probe, check, verify]
+    # After check succeeded, whatever verify did: a failed verification never blocks filing (M1).
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE) && !cancelled() && needs.check.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: factory
+    # Read-only GITHUB_TOKEN for a dry run; a real run (shadow or auto mode, not dry) files with the
+    # App token, and only a job that minted it files for real.
+    permissions:
+      contents: read
+      deployments: read
+      issues: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          # Evidence is pushed with the App token; a stored GITHUB_TOKEN header would override it.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      # The evidence images and this run's findings: file_issues takes every draft's groups from them,
+      # never from validated.json, which a job that ran the agent's scripts wrote.
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.probe.outputs.artifact }}
+          path: factory-in/probe
+          merge-multiple: true
+      # validated.json and the agent's scripts; file_issues reads the scripts, never runs them.
+      - uses: actions/download-artifact@v8
+        with:
+          artifact-ids: ${{ needs.check.outputs.artifact }}
+          path: factory-out
+          merge-multiple: true
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        if: needs.guard.outputs.dry == 'false' && contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE)
+        id: app
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-actions: read
+          permission-contents: write
+          permission-deployments: read
+          permission-issues: write
+      # A dry run unless the App token was minted (fail closed).
+      - name: File the issues
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          DRY_RUN: ${{ steps.app.outcome != 'success' }}
+        run: |
+          args=(--validated factory-out/validated.json --probe-out factory-in/probe)
+          if [ "$DRY_RUN" != false ]; then
+            args+=(--dry-run)
+          fi
+          uv run python -m tools.factory.file_issues "${args[@]}"
+
+  dispatch-status:
+    name: Promote issues and update the status issue
+    needs: [guard, probe, file, verify-act]
+    # Writes to GitHub: only in shadow or auto mode, and never in a dry run. After a green probe, when
+    # file succeeded or was skipped (no check, or the agent's daily cap), whatever verify-act did (M1).
+    if: >-
+      contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && !cancelled() && needs.guard.outputs.dry == 'false' &&
+      needs.probe.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.file.result)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: factory
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-actions: read
+          permission-issues: write
+          permission-pull-requests: read
+      # factory:ready set by the App starts the fixer (factory-fix.yml).
+      - name: Promote found issues within the WIP limit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: uv run python -m tools.factory.dispatch promote
+      - name: Update the status issue
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          FACTORY_MODE: ${{ vars.FACTORY_MODE }}
+        run: uv run python -m tools.factory.status update

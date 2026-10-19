@@ -255,6 +255,19 @@ python3 -m http.server --directory _site 8000
 
 Open the page at `http://127.0.0.1:8000/<path>`. This previews the same output directory that the Check workflow measures and the Pages workflow publishes. The `lighthouse` job's “Package the public site” step in `validate.yml` and the `deploy` job's matching step in `pages.yml` show the shared command in each path.
 
+## Agent factory
+
+A closed quality loop for the published site, run by GitHub Actions; GitHub issues, labels and pull requests are its only state. Four agents work in turn:
+
+- **QA** probes the live site in a matrix of browsers and widths, files each defect as an issue with a failing reproduction, and verifies merged fixes on the live site. A finding without a reproduction becomes a suggestion that is never fixed automatically. A fingerprint prevents duplicates, and the limits in `.github/factory/config.json` cap new issues per run and QA agent runs per day.
+- **Fixer** turns an issue's reproduction into a failing test, fixes the defect and opens a pull request. It writes only inside a fence of allowed paths, never changes page copy, and gets a limited number of attempts per issue; otherwise the issue goes to a person (`factory:needs-human`).
+- **Reviewer** judges the pull request from evidence produced in a job without secrets (the new test is red on the base and green on the head, the reproduction is gone, no new findings). The reviewer agent has no shell and no write token.
+- **Merger** is policy as code with no language model: it merges only when every condition holds (approval of the head, green required checks, the fence, an up-to-date branch, a green Pages run, a daily merge cap).
+
+The mode is the repository variable `FACTORY_MODE`: `off | dry | shadow | auto`. It starts `off`, and an unset or unknown value runs nothing. `dry` runs QA as a dry run that writes nothing to GitHub. `shadow` runs everything, but the merger only records a verdict and the owner merges. `auto` lets the merger merge; the owner switches to it once the shadow verdicts have agreed with the owner's decisions.
+
+Design: [`docs/superpowers/specs/2026-10-18-agent-factory-design.md`](docs/superpowers/specs/2026-10-18-agent-factory-design.md). Runbook, including the phase 0 setup, labels, operations and acceptance: [`docs/agent-factory.md`](docs/agent-factory.md).
+
 ## Licence
 
 MIT for the code (see `LICENSE`). The icon in `assets/icon/` is not covered by the MIT licence: all rights reserved, used with permission of the deweloperuch.pl authors.

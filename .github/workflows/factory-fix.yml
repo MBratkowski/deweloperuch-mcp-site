@@ -1,0 +1,396 @@
+name: Factory fix
+
+# The agent factory's fixer (docs/superpowers/specs/2026-10-18-agent-factory-design.md, "Fixer"): an
+# issue labelled factory:ready by the owner or the App gets a branch, a failing test, a fix, a
+# red-then-green proof and before/after images, then a pull request. Agents propose, code disposes:
+# the agent edits, tests and commits on a local branch in a job whose token is read-only; publish,
+# a separate job that holds the App token, runs nothing from the fix: it fetches the commits from a
+# bundle, builds one commit of its own from their tree (the factory as author, its own message),
+# fences and scans that commit with main's code, pushes it and opens or updates the pull request.
+#
+#   guard -> fix -> publish
+#        \-> decline       (the guard declines the issue: needs-human, merged, regressed, attempts
+#                           exhausted, no reproduction)
+#
+# A failed attempt dispatches the next one (workflow_dispatch with GITHUB_TOKEN); after the last
+# attempt, or when the fixer cannot reproduce the defect, the issue goes to factory:needs-human. An
+# issue the guard declines is released by `decline`: factory:ready comes off, so it holds no fixer
+# slot, and an issue no attempt can ever fix gets factory:needs-human with one fixed comment.
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: Issue number
+        type: number
+        required: true
+      attempt:
+        description: Attempt number (2 after a failed attempt, a failed check or requested changes)
+        type: number
+        required: true
+        default: 1
+
+permissions: {}
+
+# One fixer run per issue at a time. Other label events get a group of their own, so they never
+# replace a pending attempt (GitHub keeps one pending run per group).
+concurrency:
+  group: ${{ (github.event_name == 'workflow_dispatch' || github.event.label.name == 'factory:ready') && format('factory-fix-{0}', github.event.issue.number || inputs.issue) || format('factory-fix-ignored-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  guard:
+    name: Factory mode, sender and attempt
+    # Only in shadow or auto mode: an unset, unknown, off or dry mode runs nothing (the kill switch).
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && (github.event_name == 'workflow_dispatch' || github.event.label.name == 'factory:ready')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      go: ${{ steps.attempt.outputs.go }}
+      decline: ${{ steps.attempt.outputs.decline }}
+      issue: ${{ steps.attempt.outputs.issue }}
+      attempt: ${{ steps.attempt.outputs.attempt }}
+      fixer_model: ${{ steps.config.outputs.fixer_model }}
+      fixer_max_turns: ${{ steps.config.outputs.fixer_max_turns }}
+      report_schema: ${{ steps.config.outputs.report_schema }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      # The model and the turn limit come from .github/factory/config.json, never from this file.
+      - name: Read the configuration
+        id: config
+        run: |
+          config=.github/factory/config.json
+          fixer_model=$(jq -er '.models.fixer' "$config")
+          fixer_max_turns=$(jq -er '.max_turns.fixer' "$config")
+          # claude_args takes the schema inline and splits it like a shell line, inside single quotes.
+          # "$schema" names the 2020-12 dialect; the schema uses nothing newer than draft 7, so it goes.
+          report_schema=$(jq -c 'del(."$schema")' .github/factory/schemas/fix-report.json)
+          [[ $fixer_model =~ ^[a-z0-9.-]+$ ]] || { echo "::error::models.fixer is not a model id: $fixer_model"; exit 1; }
+          [[ $fixer_max_turns =~ ^[0-9]+$ ]] || { echo "::error::max_turns.fixer is not a number: $fixer_max_turns"; exit 1; }
+          [[ $report_schema != *"'"* ]] || { echo "::error::the report schema must not contain a single quote"; exit 1; }
+          {
+            echo "fixer_model=$fixer_model"
+            echo "fixer_max_turns=$fixer_max_turns"
+            echo "report_schema=$report_schema"
+          } >> "$GITHUB_OUTPUT"
+      # factory:ready counts only when the owner or the App set it; the attempt must be within the limit.
+      - name: Check the sender and the attempt
+        id: attempt
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          MODE: ${{ vars.FACTORY_MODE }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue }}
+          ATTEMPT: ${{ inputs.attempt }}
+        run: |
+          skip() {
+            echo "::notice::Issue #$ISSUE: $1"
+            echo "go=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          [[ $ISSUE =~ ^[1-9][0-9]*$ ]] || { echo "::error::not an issue number: $ISSUE"; exit 1; }
+          echo "issue=$ISSUE" >> "$GITHUB_OUTPUT"
+          args=(--issue "$ISSUE")
+          if [ "$GITHUB_EVENT_NAME" = issues ]; then
+            status=0
+            uv run python -m tools.factory.dispatch check-sender --issue "$ISSUE" || status=$?
+            if [ "$status" -eq 1 ]; then
+              skip "factory:ready was not set by the owner or the App"
+            elif [ "$status" -ne 0 ]; then
+              exit "$status"
+            fi
+          else
+            [[ $ATTEMPT =~ ^[1-9][0-9]*$ ]] || { echo "::error::not an attempt number: $ATTEMPT"; exit 1; }
+            args+=(--attempt "$ATTEMPT")
+          fi
+          status=0
+          line=$(uv run python -m tools.factory.fix guard "${args[@]}") || status=$?
+          if [ "$status" -eq 3 ]; then
+            # The decline job releases the issue (R53c); it decides again from GitHub's state.
+            echo "decline=true" >> "$GITHUB_OUTPUT"
+            skip "the fixer declines the issue (see the log); the decline job releases it"
+          elif [ "$status" -eq 1 ]; then
+            skip "no attempt to run (see the log)"
+          elif [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+          [[ $line =~ ^attempt=[1-9][0-9]*$ ]] || { echo "::error::unexpected guard output: $line"; exit 1; }
+          {
+            echo "$line"
+            echo "go=true"
+          } >> "$GITHUB_OUTPUT"
+          echo "Factory mode: ${MODE:-unset}. Issue #$ISSUE, ${line/=/ }." >> "$GITHUB_STEP_SUMMARY"
+
+  fix:
+    name: Fix the issue (fixer agent)
+    needs: guard
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    # The agent's turns, red and green, the full suite, and for a flaky test 100 throttled runs.
+    timeout-minutes: 90
+    # The Claude token only: the App's private key lives in the environment factory, never here.
+    environment: factory-agent
+    # The agent holds no write token: this GITHUB_TOKEN is read-only and the App token is never minted here.
+    permissions:
+      checks: read
+      contents: read
+      issues: read
+      pull-requests: read
+    container:
+      # The image of validate.yml's visual job, so the fixer can render visual baselines.
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --ipc=host
+    env:
+      # GitHub mounts /github/home with another owner; Firefox requires the container user's actual home.
+      HOME: /root
+      VISUAL_RENDERER: playwright-1.64.0-noble-amd64
+    outputs:
+      branch: ${{ steps.prepare.outputs.branch }}
+      # publish downloads the artifact by this id: the agent's code ran here, and an artifact
+      # uploaded later under the same name cannot replace it.
+      artifact: ${{ steps.upload.outputs.artifact-id }}
+      # A failed scan sends the issue to a person instead of another attempt.
+      scan: ${{ steps.scan.outcome }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          # origin/main and, for a later attempt, the pull request branch.
+          fetch-depth: 0
+          # No token in .git/config: the agent runs git, and its code runs in this checkout.
+          persist-credentials: false
+      - name: Configure git for the container
+        run: |
+          # The checkout belongs to the runner's user, not to root in the container.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # No hook the agent's code leaves behind runs on a later git command.
+          git config --global core.hooksPath /dev/null
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked --python 3.12
+      # The fixer runs `python3 -m tools.build_docs`; the image has no system Python.
+      - name: Put the project's Python first on PATH
+        run: echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      # Before the agent: the read-only token reads the issue, the comments and an earlier pull request,
+      # and the App bot's user record, whose noreply address the agent's local commits carry.
+      - name: Prepare the branch and the context
+        id: prepare
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          ISSUE: ${{ needs.guard.outputs.issue }}
+          ATTEMPT: ${{ needs.guard.outputs.attempt }}
+        run: uv run python -m tools.factory.fix prepare --issue "$ISSUE" --attempt "$ATTEMPT" --out factory-out >> "$GITHUB_OUTPUT"
+      - name: Write the prompt
+        id: prompt
+        env:
+          ISSUE: ${{ needs.guard.outputs.issue }}
+          ATTEMPT: ${{ needs.guard.outputs.attempt }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+          BASE: ${{ steps.prepare.outputs.base_sha }}
+          FLAKY: ${{ steps.prepare.outputs.flaky }}
+        run: |
+          {
+            echo "text<<FACTORY_FIX_PROMPT_END"
+            cat .github/factory/prompts/fixer.md
+            cat <<EOF
+
+          ## This run
+
+          - Issue #$ISSUE, attempt $ATTEMPT.
+          - The context (the issue, the comments, an earlier attempt's reviews and failed checks): \`factory-out/context.md\`
+          - The probe groups of the issue, whose cells the before and after images show: \`factory-out/groups.json\`
+          - The branch \`$BRANCH\` is checked out; the base commit is \`$BASE\`.
+          - Flaky-test issue: $FLAKY.
+          - The factory spec: \`docs/superpowers/specs/2026-10-18-agent-factory-design.md\`
+          EOF
+            echo "FACTORY_FIX_PROMPT_END"
+          } >> "$GITHUB_OUTPUT"
+      # The agent must run git to commit, so .git stays (no token in it: persist-credentials is off);
+      # it may not push, and nothing it writes leaves this job unscanned.
+      - name: Fixer agent
+        id: claude
+        uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+        env:
+          # Keep the Claude and GitHub tokens out of the environment of every command the agent runs.
+          CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: "1"
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Labels set by the App's dispatch reach this job through the issues event.
+          allowed_bots: "${{ vars.FACTORY_APP_SLUG }}[bot],github-actions[bot]"
+          prompt: ${{ steps.prompt.outputs.text }}
+          # Read, Grep and Glob refuse every path outside the workspace (Claude Code 2.1.257 and later).
+          settings: '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
+          # Edit(path) is the rule Claude Code consults for the Write tool; Write(path) rules are ignored.
+          # The denies repeat the block for the places a token can sit, keep edits out of the paths the
+          # fence forbids most, stop the read-only commands that can print an environment (Claude Code
+          # 2.1.289 runs them unprompted) and keep the network out of reach.
+          claude_args: |
+            --model ${{ needs.guard.outputs.fixer_model }}
+            --max-turns ${{ needs.guard.outputs.fixer_max_turns }}
+            --json-schema '${{ needs.guard.outputs.report_schema }}'
+            --allowedTools "Read(./**),Glob,Grep,Edit(./**),Bash(uv run pytest:*),Bash(python3 -m tools.build_docs:*),Bash(python3 -m tools.package_site:*),Bash(uv run python -m tools.render_images:*),Bash(uv run python -m tools.factory.probe:*),Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git commit:*),Bash(git log:*),Bash(git show:*)"
+            --disallowedTools "WebFetch,WebSearch,Read(//proc/**),Read(//sys/**),Read(//etc/**),Read(//root/**),Read(//home/**),Read(//github/**),Read(//tmp/**),Read(~/**),Read(./.git/**),Bash(ps:*),Bash(env:*),Bash(printenv:*),Bash(set:*),Bash(declare:*),Bash(export:*),Bash(compgen:*),Edit(./.git/**),Edit(./.github/**),Edit(./tools/factory/**),Edit(./CLAUDE.md),Edit(./data/**),Bash(git push:*),Bash(gh:*),Bash(curl:*)"
+      - name: Save the report
+        env:
+          REPORT: ${{ steps.claude.outputs.structured_output }}
+        run: printf '%s' "$REPORT" > factory-out/report.json
+      # From here on the agent's code runs (its tests, its build): no step below holds a token, and
+      # prove drops anything credential-like from the environment of what it starts.
+      - name: Prove red on the base and green on the head
+        env:
+          BASE: ${{ steps.prepare.outputs.base_sha }}
+          FLAKY: ${{ steps.prepare.outputs.flaky }}
+        run: |
+          args=(--report factory-out/report.json --base "$BASE" --out factory-out/proof.json)
+          if [ "$FLAKY" = true ]; then
+            args+=(--flaky)
+          fi
+          uv run python -m tools.factory.fix prove "${args[@]}"
+      - name: Render the issue's cells before and after
+        env:
+          BASE: ${{ steps.prepare.outputs.base_sha }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+        run: >-
+          uv run python -m tools.factory.fix before-after
+          --groups factory-out/groups.json --report factory-out/report.json
+          --base "$BASE" --head "refs/heads/$BRANCH" --out factory-out/images
+      - name: Bundle the commits
+        env:
+          BASE: ${{ steps.prepare.outputs.base_sha }}
+          BRANCH: ${{ steps.prepare.outputs.branch }}
+        run: |
+          # Every commit as text, binary blobs included, for the secret scan: the bundle is compressed.
+          git log --text --patch --format=fuller "$BASE..refs/heads/$BRANCH" > factory-out/changes.txt
+          if [ "$(git rev-list --count "$BASE..refs/heads/$BRANCH")" -gt 0 ]; then
+            git bundle create factory-out/fix.bundle "$BASE..refs/heads/$BRANCH"
+          fi
+      # Artifacts of a public repository can be downloaded by any signed-in user: anything shaped like a
+      # token or a key fails the job instead. publish scans again, with main's code, before it pushes.
+      - name: Scan the artifact for secret shapes
+        id: scan
+        run: uv run python -I -S tools/factory/secret_scan.py factory-out
+      - uses: actions/upload-artifact@v7
+        id: upload
+        with:
+          name: fix
+          path: factory-out/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Fence the fix and open the pull request
+    needs: [guard, fix]
+    # Also after a failed fix job: the attempt is used up and the next one starts, or a person takes over.
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && !cancelled() && needs.guard.outputs.go == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: factory
+    # GITHUB_TOKEN only dispatches the next attempt (workflow_dispatch of this workflow). The App
+    # has actions: read only, and an attempt that fails before any pull request exists has no
+    # reviewer to start the next one. The job runs nothing from the fix. The App token pushes,
+    # opens and labels.
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      # A fresh checkout of main: the fence and the publishing code are main's, never the fix's.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          # git authenticates with the App token; a stored GITHUB_TOKEN header would override it.
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      # Inputs land in factory-in/, never at the repository root (the Python import root).
+      - uses: actions/download-artifact@v8
+        if: needs.fix.result == 'success'
+        with:
+          artifact-ids: ${{ needs.fix.outputs.artifact }}
+          path: factory-in/fix
+          merge-multiple: true
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+      # The bundle is fetched, never checked out or run, and never pushed: publish builds one commit
+      # of its own from the fix's tree, fences and scans it, and pushes that. The report, the proof
+      # and the images are validated and scanned before anything reaches GitHub.
+      - name: Publish the attempt
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          DISPATCH_TOKEN: ${{ github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          ISSUE: ${{ needs.guard.outputs.issue }}
+          ATTEMPT: ${{ needs.guard.outputs.attempt }}
+          BRANCH: ${{ needs.fix.outputs.branch }}
+          FIX_RESULT: ${{ needs.fix.result }}
+          SCAN_RESULT: ${{ needs.fix.outputs.scan }}
+        run: >-
+          uv run python -m tools.factory.fix publish
+          --issue "$ISSUE" --attempt "$ATTEMPT" --branch "$BRANCH"
+          --in factory-in/fix --fix-result "$FIX_RESULT" --scan-result "$SCAN_RESULT"
+
+  decline:
+    name: Release an issue the fixer declines
+    needs: guard
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.decline == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # GITHUB_TOKEN with issues: write only, in a job that runs no agent and nothing from a pull
+    # request: main's code removes factory:ready (the fixer slot frees) and, when no attempt can ever
+    # run, labels the issue factory:needs-human with one fixed comment.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what a write-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      - name: Release the issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          ISSUE: ${{ needs.guard.outputs.issue }}
+          ATTEMPT: ${{ inputs.attempt }}
+        run: |
+          [[ $ISSUE =~ ^[1-9][0-9]*$ ]] || { echo "::error::not an issue number: $ISSUE"; exit 1; }
+          args=(--issue "$ISSUE")
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            [[ $ATTEMPT =~ ^[1-9][0-9]*$ ]] || { echo "::error::not an attempt number: $ATTEMPT"; exit 1; }
+            args+=(--attempt "$ATTEMPT")
+          fi
+          uv run python -m tools.factory.fix decline "${args[@]}"

@@ -1,0 +1,93 @@
+name: Factory merge
+
+# The agent factory's merger (docs/superpowers/specs/2026-10-18-agent-factory-design.md, "Merger"):
+# deterministic policy as code, no language model. It evaluates a factory pull request against the
+# spec's conditions (tools/factory/merge.py). In shadow mode it keeps one comment per head with the
+# condition table and the verdict, edited in place when the verdict changes, and labels
+# factory:merge-ready while it would merge; in auto mode it squash-merges the evaluated head with the
+# App token (so Pages runs), moves the issue to factory:merged and promotes the next issues, or updates
+# a branch that is behind main and stops.
+#
+# The reviewer dispatches it after an approval (an approval made with GITHUB_TOKEN starts no
+# workflow); the hourly sweep catches anything a lost event left behind and reconciles the factory's
+# fix pull requests closed outside the merger (merged by the owner: factory:merged; closed unmerged:
+# factory:needs-human). It runs no code from the pull request: the fence (or a revert's exact-revert
+# check) is recomputed from main's checkout over the head's git objects.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number (the hourly sweep evaluates every open factory pull request)
+        type: number
+        required: true
+  schedule:
+    - cron: "5 * * * *"
+
+permissions: {}
+
+# One merger at a time: two runs must never count the daily cap or decide on the same head at once.
+# A pending run that a newer one replaces is no loss: the sweep evaluates every pull request.
+concurrency:
+  group: factory-merge
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+# No git hook runs for any git command of the job (git 2.31 and later read this from the environment).
+env:
+  GIT_CONFIG_COUNT: "1"
+  GIT_CONFIG_KEY_0: core.hooksPath
+  GIT_CONFIG_VALUE_0: /dev/null
+
+jobs:
+  merge:
+    name: Merge policy (no model)
+    # The environment allows only main as well; a dispatch from another ref is skipped, not failed.
+    # Only in shadow or auto mode: an unset, unknown, off or dry mode runs nothing (the kill switch).
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: factory
+    # GITHUB_TOKEN only checks out. The App token reads the rules of main (metadata: read, which every
+    # installation token has), the check runs (checks) and the Pages runs (actions), and writes the
+    # comment, the labels, the merge, the branch update and the branch deletion.
+    permissions:
+      contents: read
+    steps:
+      # main's code and history: the fence diffs the pull request's head against its merge base with
+      # main, and fetches the head itself as git objects into a private ref, never checking it out.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app
+        with:
+          client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.FACTORY_APP_PRIVATE_KEY }}
+          permission-actions: read
+          permission-checks: read
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+      - name: Evaluate the pull request (dispatch) or every open factory pull request (schedule)
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          FACTORY_MODE: ${{ vars.FACTORY_MODE }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          PR: ${{ inputs.pr }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            [[ $PR =~ ^[1-9][0-9]*$ ]] || { echo "::error::not a pull request number: $PR"; exit 1; }
+            uv run python -m tools.factory.merge --pr "$PR"
+          else
+            uv run python -m tools.factory.merge --sweep
+          fi

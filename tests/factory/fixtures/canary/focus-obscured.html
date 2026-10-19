@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Focus obscured canary</title>
+<style>body{margin:0;font:18px/1.5 system-ui}
+header{position:sticky;top:0;height:80px;margin-bottom:-80px;background:#222;color:#fff;z-index:10}
+a{display:inline-block;min-height:44px;min-width:44px} a:focus-visible{outline:2px solid #0033aa;outline-offset:2px}
+.spacer{height:1500px}</style></head>
+<body><header><p>Sticky header</p></header><main><a id="planted" href="#x">Under the header</a><div class="spacer"></div></main></body></html>
