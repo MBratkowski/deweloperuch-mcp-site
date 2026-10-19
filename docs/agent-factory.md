@@ -41,21 +41,11 @@ One failure does not stop the whole intake: `file` runs once `check` succeeded, 
    - The `drafts` artifact holds the agent's output (`drafts.json`) and its scripts; `validated` holds what survived the check.
 4. If the QA agent step fails inside the Playwright container (the spec's container risk):
    - The `triage` job already sets `HOME: /root` for every step, as `validate.yml` does for Firefox. That is the first fallback.
-   - If the action still fails, typically while installing Bun, install Bun in a step before it and pass the path. 1.3.14 is the version the pinned action installs; Node.js is in the image.
-
-     ```yaml
-     - name: Install Bun
-       id: bun
-       run: |
-         npm install --global bun@1.3.14
-         echo "path=$(command -v bun)" >> "$GITHUB_OUTPUT"
-     ```
-
-     Then add `path_to_bun_executable: ${{ steps.bun.outputs.path }}` to the action's `with:`.
+   - Bun: the action installs it with `setup-bun`, which needs `unzip`, and the image has none (the first dry run stopped there). Both agent jobs in the image, `triage` and the fixer's `fix`, therefore install Bun from npm in a step before the action (`npm install --global bun@1.3.14`, the version the pinned action installs; Node.js is in the image) and pass `path_to_bun_executable: ${{ steps.bun.outputs.path }}`. The reviewer's agent job runs on the runner itself, which has `unzip`. When you re-pin the action, re-pin this Bun with it (`AGENT_BUN` in `tests/factory/test_workflows.py`).
    - The agent reads only the workspace: `settings` turns on `permissions.blockReadsOutsideWorkingDirectories` (Claude Code 2.1.257 and later), and `--disallowedTools` denies the places a token can sit (`/proc`, `/sys`, `/etc`, `/root`, `/home`, `/github`, `/tmp`, the home directory, `.git`) and git itself. The step before it deletes `.git`, so the action cannot store its token in `.git/config`. If the agent reports refused reads of its own inputs, check that they are under the workspace (`factory-in/`, `factory-out/`, the repository).
    - The agent step sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1`. If the agent's probe or fingerprint commands then fail with a sandbox error, install the isolation tools the action installs for that mode in a step before it (`apt-get update && apt-get install -y --no-install-recommends bubblewrap socat`; the container runs as root, without sudo).
    - Git "dubious ownership" messages from the action are expected: the checkout belongs to the runner's user, not to root in the container, and the agent needs no git. Only if they stop the action, add `git config --global --add safe.directory "$GITHUB_WORKSPACE"` in a step before it, as the `verify` job does.
-   - Record here what was needed: the fixer and reviewer jobs run the same action in the same image.
+   - Record here what was needed: the fixer runs the same action in the same image.
    - The `check` and `verify` jobs run the agent's scripts as `pwuser` (`FACTORY_SCRIPT_USER`), with the project's Python installed under `/opt/uv-python` (`UV_PYTHON_INSTALL_DIR` on `uv sync`), where `pwuser` can run it; `/root` is mode 700. If every script of the dry run reports a reproduction error, read the `check` log: a permission error there means a path the script needs is not readable by `pwuser`. A script that cannot be run as `pwuser` is never run as root instead.
    - Fixer dry run: check whether the action writes its `github_token` into `.git/config` (the fixer keeps `.git` to commit). Add a temporary step right after the agent step that prints only a count, never the value: `grep -ciE 'extraheader|x-access-token' .git/config || true`. A count above 0 means the read-only `GITHUB_TOKEN` sits where the agent's git commands can read it; record it under "Known residual risk".
    - If `prove` reports "uncommitted changes" that are files the action or Claude Code left in the workspace rather than the fixer's work, add their directory to the exclude list in `tools/factory/fix.py` (`prepare`, `_exclude`).

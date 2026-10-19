@@ -367,6 +367,13 @@ jobs:
       # URL in .git/config, where read-only commands such as `grep -r` could read it.
       - name: Drop the git metadata
         run: rm -rf .git
+      # The action installs Bun with setup-bun, which needs unzip, and this image has none: install the
+      # version the pinned action installs from npm (Node.js is in the image) and pass its path.
+      - name: Install Bun
+        id: bun
+        run: |
+          npm install --global bun@1.3.14
+          echo "path=$(command -v bun)" >> "$GITHUB_OUTPUT"
       # The agent writes reproduction scripts but cannot run them; the check job does, without secrets.
       - name: QA agent
         id: claude
@@ -380,6 +387,7 @@ jobs:
           # Pages runs started by the App's merges reach this job through workflow_run.
           allowed_bots: "${{ vars.FACTORY_APP_SLUG }}[bot],github-actions[bot]"
           prompt: ${{ steps.prompt.outputs.text }}
+          path_to_bun_executable: ${{ steps.bun.outputs.path }}
           # Read, Grep and Glob refuse every path outside the workspace (Claude Code 2.1.257 and later).
           settings: '{"permissions":{"blockReadsOutsideWorkingDirectories":true}}'
           # Edit(path) is the rule Claude Code consults for the Write tool; Write(path) rules are ignored.

@@ -30,6 +30,10 @@ APP_ENVIRONMENT = "factory"
 AGENT_ENVIRONMENT = "factory-agent"
 CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
 ENV_SCRUB = "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB"
+# The Bun the pinned claude-code-action installs itself, with setup-bun, which needs unzip: the
+# Playwright image has none, so the agent jobs in that image install this one from npm and pass its
+# path (the first QA dry run). Re-pin it with the action.
+AGENT_BUN = "bun@1.3.14"
 SETUP_UV = "astral-sh/setup-uv"
 # v10.2.0, the tag validate.yml uses, by the commit it names (D39): a moved tag cannot change what
 # runs next to a write token or the App token.
@@ -362,6 +366,22 @@ def test_agent_steps_scrub_the_environment_of_their_subprocesses() -> None:
     for path, workflow, name, job, step in _agent_steps():
         env = {**(workflow.get("env") or {}), **(job.get("env") or {}), **(step.get("env") or {})}
         assert str(env.get(ENV_SCRUB)) == "1", f"{path.name}: job {name} does not set {ENV_SCRUB}=1"
+
+
+def test_agent_steps_in_the_playwright_image_bring_their_own_bun() -> None:
+    seen = set()
+    for path, _, name, job, step in _agent_steps():
+        if "container" not in job:
+            continue
+        seen.add((path.name, name))
+        where = f"{path.name}: job {name}"
+        before = job["steps"][: job["steps"].index(step)]
+        bun = [s for s in before if s.get("id") == "bun"]
+        assert bun and f"npm install --global {AGENT_BUN}" in bun[0]["run"], f"{where} does not install {AGENT_BUN}"
+        assert step["with"].get("path_to_bun_executable") == "${{ steps.bun.outputs.path }}", (
+            f"{where} leaves the action to install Bun"
+        )
+    assert seen == {("factory-qa.yml", "triage"), ("factory-fix.yml", "fix")}
 
 
 def test_agents_cannot_run_the_scripts_they_write() -> None:
