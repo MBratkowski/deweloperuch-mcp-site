@@ -46,7 +46,8 @@ defaults:
 jobs:
   guard:
     name: Factory mode, sender and attempt
-    if: vars.FACTORY_MODE != 'off' && (github.event_name == 'workflow_dispatch' || github.event.label.name == 'factory:ready')
+    # Only in shadow or auto mode: an unset, unknown, off or dry mode runs nothing (the kill switch).
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && (github.event_name == 'workflow_dispatch' || github.event.label.name == 'factory:ready')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -139,7 +140,7 @@ jobs:
   fix:
     name: Fix the issue (fixer agent)
     needs: guard
-    if: vars.FACTORY_MODE != 'off' && needs.guard.outputs.go == 'true'
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.go == 'true'
     runs-on: ubuntu-24.04
     # The agent's turns, red and green, the full suite, and for a flaky test 100 throttled runs.
     timeout-minutes: 90
@@ -295,7 +296,7 @@ jobs:
     name: Fence the fix and open the pull request
     needs: [guard, fix]
     # Also after a failed fix job: the attempt is used up and the next one starts, or a person takes over.
-    if: vars.FACTORY_MODE != 'off' && !cancelled() && needs.guard.outputs.go == 'true'
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && !cancelled() && needs.guard.outputs.go == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: factory
@@ -354,7 +355,7 @@ jobs:
   decline:
     name: Release an issue the fixer declines
     needs: guard
-    if: vars.FACTORY_MODE != 'off' && needs.guard.outputs.decline == 'true'
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.decline == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # GITHUB_TOKEN with issues: write only, in a job that runs no agent and nothing from a pull

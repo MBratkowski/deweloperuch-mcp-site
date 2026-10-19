@@ -10,8 +10,11 @@ name: Factory QA
 #   guard -> probe -> verify -> verify-act -------------------------------------> dispatch-status
 #                  -> triage -> check -> file (also needs verify) -------------^
 #
-# With dry_run, verify-act and dispatch-status are skipped and file writes the issue bodies to the
-# job summary instead of GitHub: a dry run writes nothing to GitHub.
+# FACTORY_MODE is an allow-list (off | dry | shadow | auto): QA runs in dry, shadow and auto; an
+# unset, unknown or off mode runs nothing. In dry mode, or with the dry_run input, the run is a dry
+# run: verify-act and dispatch-status are skipped (no promotion, no status issue) and file writes the
+# issue bodies to the job summary with the read-only token instead of GitHub: a dry run writes
+# nothing to GitHub.
 on:
   schedule:
     - cron: "30 2 * * *"
@@ -43,13 +46,16 @@ defaults:
 jobs:
   guard:
     name: Factory mode and configuration
-    # FACTORY_MODE=off ends the run here; a failed Pages run deployed nothing new to check.
-    if: vars.FACTORY_MODE != 'off' && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
+    # Only in dry, shadow or auto mode (an unset, unknown or off mode ends the run here); a failed
+    # Pages run deployed nothing new to check.
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE) && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
     outputs:
+      # "true" in dry mode or for a dispatch with dry_run; the writing jobs run only on "false".
+      dry: ${{ steps.config.outputs.dry }}
       live_url: ${{ steps.config.outputs.live_url }}
       suggestions: ${{ steps.config.outputs.suggestions }}
       qa_model: ${{ steps.config.outputs.qa_model }}
@@ -81,19 +87,25 @@ jobs:
           [[ $qa_model =~ ^[a-z0-9.-]+$ ]] || { echo "::error::models.qa is not a model id: $qa_model"; exit 1; }
           [[ $qa_max_turns =~ ^[0-9]+$ ]] || { echo "::error::max_turns.qa is not a number: $qa_max_turns"; exit 1; }
           [[ $drafts_schema != *"'"* ]] || { echo "::error::the drafts schema must not contain a single quote"; exit 1; }
+          case "$MODE" in
+            dry) dry=true ;;
+            shadow | auto) if [ "$DRY_RUN" = true ]; then dry=true; else dry=false; fi ;;
+            *) echo "::error::FACTORY_MODE is not dry, shadow or auto: ${MODE:-unset}"; exit 1 ;;
+          esac
           {
+            echo "dry=$dry"
             echo "live_url=$live_url"
             echo "suggestions=$suggestions"
             echo "qa_model=$qa_model"
             echo "qa_max_turns=$qa_max_turns"
             echo "drafts_schema=$drafts_schema"
           } >> "$GITHUB_OUTPUT"
-          echo "Factory mode: ${MODE:-unset}. Event: $GITHUB_EVENT_NAME. Dry run: ${DRY_RUN:-false}." >> "$GITHUB_STEP_SUMMARY"
+          echo "Factory mode: $MODE. Event: $GITHUB_EVENT_NAME. Dry run: $dry." >> "$GITHUB_STEP_SUMMARY"
 
   probe:
     name: Probe the live site
     needs: guard
-    if: vars.FACTORY_MODE != 'off'
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -138,7 +150,7 @@ jobs:
     name: Verify merged fixes on the live site
     # After the probe: a new S1 or S2 finding on a page a merge changed counts as a regression.
     needs: [guard, probe]
-    if: vars.FACTORY_MODE != 'off'
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -201,8 +213,9 @@ jobs:
 
   verify-act:
     name: Close fixed issues and revert regressions
-    needs: verify
-    if: vars.FACTORY_MODE != 'off' && !inputs.dry_run
+    needs: [guard, verify]
+    # Writes to GitHub: only in shadow or auto mode, and never in a dry run.
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.dry == 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: factory
@@ -246,7 +259,7 @@ jobs:
   triage:
     name: Triage the findings (QA agent)
     needs: [guard, probe]
-    if: vars.FACTORY_MODE != 'off'
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: factory
@@ -351,7 +364,7 @@ jobs:
     name: Check the drafts on the live site and on main
     # Runs the agent's reproduction scripts: no environment, no secret, a read-only token.
     needs: [guard, triage]
-    if: vars.FACTORY_MODE != 'off'
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -446,12 +459,13 @@ jobs:
   file:
     name: File the issues
     # After verify: its dedup sees the issues as they were before this run filed any.
-    needs: [check, verify]
-    if: vars.FACTORY_MODE != 'off'
+    needs: [guard, check, verify]
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: factory
-    # Read-only GITHUB_TOKEN for the dry run; a real run files with the App token.
+    # Read-only GITHUB_TOKEN for a dry run; a real run (shadow or auto mode, not dry) files with the
+    # App token, and only a job that minted it files for real.
     permissions:
       contents: read
       deployments: read
@@ -479,7 +493,7 @@ jobs:
           name: validated
           path: factory-out
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        if: ${{ !inputs.dry_run }}
+        if: needs.guard.outputs.dry == 'false' && contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE)
         id: app
         with:
           client-id: ${{ vars.FACTORY_APP_CLIENT_ID }}
@@ -488,22 +502,24 @@ jobs:
           permission-contents: write
           permission-deployments: read
           permission-issues: write
+      # A dry run unless the App token was minted (fail closed).
       - name: File the issues
         env:
-          GH_TOKEN: ${{ inputs.dry_run && github.token || steps.app.outputs.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token || github.token }}
           FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
-          DRY_RUN: ${{ inputs.dry_run }}
+          DRY_RUN: ${{ steps.app.outcome != 'success' }}
         run: |
           args=(--validated factory-out/validated.json --probe-out factory-in/probe)
-          if [ "$DRY_RUN" = true ]; then
+          if [ "$DRY_RUN" != false ]; then
             args+=(--dry-run)
           fi
           uv run python -m tools.factory.file_issues "${args[@]}"
 
   dispatch-status:
     name: Promote issues and update the status issue
-    needs: [file, verify-act]
-    if: vars.FACTORY_MODE != 'off' && !inputs.dry_run
+    needs: [guard, file, verify-act]
+    # Writes to GitHub: only in shadow or auto mode, and never in a dry run.
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.dry == 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: factory
@@ -536,4 +552,5 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          FACTORY_MODE: ${{ vars.FACTORY_MODE }}
         run: uv run python -m tools.factory.status update

@@ -7,6 +7,14 @@ from typing import Any
 
 CONFIG_PATH = Path(__file__).resolve().parents[2] / ".github" / "factory" / "config.json"
 
+# FACTORY_MODE, the repository variable (R54). Every factory job runs only for a mode on its
+# allow-list, so an unset or unknown value runs nothing: QA in dry, shadow and auto (dry is a dry run:
+# nothing is written to GitHub), the fixer, the reviewer and the merger in shadow and auto. Setup
+# creates the variable as `off`.
+MODES = ("off", "dry", "shadow", "auto")
+QA_MODES = ("dry", "shadow", "auto")
+WRITE_MODES = ("shadow", "auto")
+
 
 class ConfigError(ValueError):
     """The configuration file is missing a field or holds an invalid value."""

@@ -11,7 +11,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from tools.factory.config import load_config
+from tools.factory.config import MODES, load_config
 from tools.factory.github import GitHub, GitHubError
 
 ENVIRONMENT = "factory"
@@ -160,7 +160,9 @@ def cmd_environment(gh: GitHub, apply: bool) -> None:
 
 
 def cmd_variables(gh: GitHub, apply: bool, client_id: str | None, slug: str | None) -> None:
-    values = {"FACTORY_MODE": "off", "FACTORY_APP_CLIENT_ID": client_id, "FACTORY_APP_SLUG": slug}
+    """FACTORY_MODE starts as `off` (nothing runs); the owner moves it through the modes by hand."""
+    print(f"FACTORY_MODE is one of {' | '.join(MODES)}; it is set to {MODES[0]} here")
+    values = {"FACTORY_MODE": MODES[0], "FACTORY_APP_CLIENT_ID": client_id, "FACTORY_APP_SLUG": slug}
     for name, value in values.items():
         if value is None:
             print(f"skip {name}: pass --client-id and --slug (printed by app-convert)")

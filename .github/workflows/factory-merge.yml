@@ -45,7 +45,8 @@ jobs:
   merge:
     name: Merge policy (no model)
     # The environment allows only main as well; a dispatch from another ref is skipped, not failed.
-    if: vars.FACTORY_MODE != 'off' && github.ref == 'refs/heads/main'
+    # Only in shadow or auto mode: an unset, unknown, off or dry mode runs nothing (the kill switch).
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: factory

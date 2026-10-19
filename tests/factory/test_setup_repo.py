@@ -134,6 +134,9 @@ def test_apply_performs_the_writes(monkeypatch):
     assert ("POST", f"/repos/{REPO}/environments/factory/deployment-branch-policies") in writes
     assert ("PATCH", f"/repos/{REPO}/actions/variables/FACTORY_MODE") in writes
     assert ("POST", f"/repos/{REPO}/rulesets") in writes
+    # R54: the kill switch is the default; the owner moves through dry, shadow and auto by hand.
+    mode = next(b for m, p, b in gh.calls if (m, p) == ("PATCH", f"/repos/{REPO}/actions/variables/FACTORY_MODE"))
+    assert mode == {"name": "FACTORY_MODE", "value": "off"}
 
 
 def test_app_convert_never_prints_the_key(tmp_path, monkeypatch, capsys):

@@ -6,21 +6,24 @@ main, never checked out or run; for a revert it checks instead that the head is 
 the merge named by the issue's trusted `factory:merged` marker (R49(2)). `evaluate` checks the facts
 against the spec's eight conditions in order, plus R48(a) as a ninth row (the pull request, or a
 fix's issue, labelled factory:needs-human). `act` does what the verdict says in the mode the owner set
-(`FACTORY_MODE`):
+(`FACTORY_MODE`, an allow-list: shadow or auto; off, dry, an unset or an unknown mode does nothing):
 
 - shadow: one comment per head with the condition table and `<!-- factory:verdict=merge|block
-  sha=<head> -->`, and `factory:merge-ready` while it would merge (removed while it would not). Later
-  runs on the same head edit that comment in place when the action or the set of failed rows changed,
-  never add another (R48(c), R49(4)), and set the label again every run. Nothing is said before
-  github-actions[bot] reviewed the head, and nothing is written on a pull request that is no longer
-  open (R49(5)).
+  sha=<head> -->`, and `factory:merge-ready` while the factory would merge it. A branch that is behind
+  main and fails no other row counts as a merge (R52): its marker says `merge`, it gets
+  factory:merge-ready, and the comment says the factory would update the branch and then merge; any
+  other failed row is a `block` (the label is removed). Later runs on the same head edit that comment
+  in place when the action or the set of failed rows changed, never add another (R48(c), R49(4)),
+  and set the label again every run. Nothing is said before github-actions[bot] reviewed the head,
+  and nothing is written on a pull request that is no longer open (R49(5)).
 - auto: squash-merge with the App token for exactly the evaluated head (`sha`), with the pull
   request's title through safe_title and the message `Refs #N`, never the description (R48(d)); the
   issue then gets the `factory:merged` marker that verify reads, then moves from factory:fixing to
   factory:merged (R49(6)), the branch is deleted and dispatch promotes the next issues. A revert is
   merged and its branch deleted; its issue keeps factory:regressed and factory:needs-human. A branch
-  that is behind main, with everything else passing, is updated instead (for the evaluated head only)
-  and the merger stops: Check and the review run again on the new head.
+  that is behind main and fails no other row (the shadow verdict's "update, then merge", R52) is
+  updated instead, for the evaluated head only, and the merger stops: Check and the review run again
+  on the new head, and a later run merges it.
 
 The sweep also reconciles the App's fix pull requests closed in the last 7 days outside the merger
 (R49(3)): a merge (by anyone) whose issue is still factory:fixing gets the marker, then
@@ -55,7 +58,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from tools.factory import ci_facts, dispatch
-from tools.factory.config import Config, ConfigError, Limits, load_config
+from tools.factory.config import WRITE_MODES, Config, ConfigError, Limits, load_config
 from tools.factory.evidence import redact
 from tools.factory.fence import FenceReport, GitError, check_fence
 from tools.factory.fix import FIXING, FLAKY, NEEDS_HUMAN, REVIEWER, FixError, git
@@ -78,7 +81,7 @@ from tools.factory.secret_scan import secret_shape
 from tools.factory.verify import _MARKER as _MERGED_MARKER
 from tools.factory.verify import MERGED, REGRESSED, merge_marker
 
-MODES = ("shadow", "auto")
+MODES = WRITE_MODES  # the merger acts in these modes only (off, dry, unset or unknown: nothing)
 MERGE_READY = "factory:merge-ready"
 MAIN = "main"
 HEAD_REF = "refs/factory/merge-head"
@@ -809,7 +812,7 @@ def _auto(gh: Any, api: str, facts: PullFacts, verdict: Verdict, config: Config)
 def act(gh: Any, facts: PullFacts, verdict: Verdict, mode: str, *, config: Config | None = None) -> str:
     """Do what the verdict says in `mode`. Returns what happened: "commented", "edited",
     "unchanged", "waiting" or "not open" (shadow), "merged", "updated" or "blocked" (auto), "off" (any
-    other mode). Raises Race for a harmless race."""
+    other mode: off, dry, unset or unknown). Raises Race for a harmless race."""
     config = config or load_config()
     api = f"/repos/{config.site.repo}"
     if mode == "shadow":
@@ -969,7 +972,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     mode = os.environ.get("FACTORY_MODE", "")
     if mode not in MODES:
-        print(f"FACTORY_MODE is {mode or 'unset'}: the merger does nothing")
+        print(f"FACTORY_MODE is {mode or 'unset'}, not {' or '.join(MODES)}: the merger does nothing")
         return 0
     slug = os.environ.get("FACTORY_APP_SLUG", "")
     try:

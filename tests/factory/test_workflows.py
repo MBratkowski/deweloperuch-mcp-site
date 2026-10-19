@@ -15,7 +15,13 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
-MODE_GUARD = "vars.FACTORY_MODE != 'off'"
+# R54: every factory job runs only for a mode on its allow-list, so an unset or unknown
+# FACTORY_MODE runs nothing (the kill switch fails closed). QA runs in dry, shadow and auto; the jobs
+# that write to GitHub (QA's verify-act and dispatch-status, the fixer, the reviewer, the merger) in
+# shadow and auto only.
+QA_MODE_GUARD = """contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)"""
+WRITE_MODE_GUARD = """contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE)"""
+QA_WRITERS = {"verify-act", "dispatch-status"}
 AGENT_ACTION = "anthropics/claude-code-action"
 APP_TOKEN_ACTION = "actions/create-github-app-token"
 APP_KEY = "FACTORY_APP_PRIVATE_KEY"
@@ -159,15 +165,83 @@ def test_actionlint_passes() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_factory_jobs_guard_on_mode() -> None:
+def test_factory_jobs_run_only_for_a_mode_on_their_allow_list() -> None:
+    from tools.factory.config import MODES, QA_MODES, WRITE_MODES
+
+    assert MODES == ("off", "dry", "shadow", "auto")
+    assert QA_MODE_GUARD == f"contains(fromJSON('{json.dumps(list(QA_MODES))}'), vars.FACTORY_MODE)"
+    assert WRITE_MODE_GUARD == f"contains(fromJSON('{json.dumps(list(WRITE_MODES))}'), vars.FACTORY_MODE)"
     paths = _factory_workflows()
-    assert {WORKFLOWS / "factory-qa.yml", WORKFLOWS / "factory-fix.yml"} <= set(paths)
+    assert {WORKFLOWS / f"factory-{n}.yml" for n in ("qa", "fix", "review", "merge")} <= set(paths)
     for path in paths:
+        text = path.read_text(encoding="utf-8")
+        # Never a deny-list: "anything but off" would run for an unset or misspelt mode.
+        assert "!= 'off'" not in text and not re.search(r"FACTORY_MODE\s*!=", text), path.name
         jobs = load_yaml(path)["jobs"]
         assert jobs, f"{path.name} has no jobs"
         for name, job in jobs.items():
-            condition = str(job.get("if", ""))
-            assert MODE_GUARD in condition, f"{path.name}: job {name} runs when FACTORY_MODE is off"
+            condition = " ".join(str(job.get("if", "")).split())
+            qa_reader = path.name == "factory-qa.yml" and name not in QA_WRITERS
+            guard = QA_MODE_GUARD if qa_reader else WRITE_MODE_GUARD
+            # The allow-list is a conjunct of the whole condition.
+            assert condition.startswith((guard + " && ", "always() && " + guard + " && ")) or condition == guard, (
+                f"{path.name}: job {name} does not run only for {guard}: {condition}"
+            )
+
+
+@pytest.mark.parametrize(
+    ("mode", "dry_run", "dry"),
+    [
+        ("dry", "", "true"),
+        ("dry", "false", "true"),
+        ("shadow", "true", "true"),
+        ("shadow", "false", "false"),
+        ("shadow", "", "false"),
+        ("auto", "", "false"),
+        ("auto", "true", "true"),
+        ("off", "", None),
+        ("", "", None),
+        ("Shadow", "", None),
+    ],
+)
+def test_the_qa_guard_decides_the_dry_run(mode: str, dry_run: str, dry: str | None, tmp_path: Path) -> None:
+    """R54: dry mode, or a dispatch with dry_run, is a dry run; any other mode stops the guard."""
+    guard = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]["guard"]
+    step = next(s for s in guard["steps"] if s.get("id") == "config")
+    assert step["env"]["MODE"] == "${{ vars.FACTORY_MODE }}" and step["env"]["DRY_RUN"] == "${{ inputs.dry_run }}"
+    assert guard["outputs"]["dry"] == "${{ steps.config.outputs.dry }}"
+    script = step["run"]
+    case = script[script.index('case "$MODE" in') : script.index("esac") + len("esac")]
+    output = tmp_path / "output"
+    done = subprocess.run(
+        ["bash", "-c", case + '\necho "dry=$dry" >> "$GITHUB_OUTPUT"'],
+        env={"MODE": mode, "DRY_RUN": dry_run, "GITHUB_OUTPUT": str(output), "PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+    )
+    if dry is None:
+        assert done.returncode != 0 and not output.exists()
+    else:
+        assert done.returncode == 0 and output.read_text() == f"dry={dry}\n"
+
+
+def test_a_dry_run_writes_nothing_to_github() -> None:
+    """R54 and M9: the jobs that write (verify-act, dispatch-status) need the guard's dry run to be
+    "false"; file mints the App token only then, and files for real only with it (fail closed)."""
+    jobs = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]
+    for name in QA_WRITERS:
+        assert "guard" in jobs[name]["needs"], name
+        assert "needs.guard.outputs.dry == 'false'" in jobs[name]["if"], name
+    app_jobs = {name for name, job in jobs.items() if any(_uses(s, APP_TOKEN_ACTION) for s in job["steps"])}
+    assert app_jobs == {"file", *QA_WRITERS}
+    steps = jobs["file"]["steps"]
+    assert "guard" in jobs["file"]["needs"]
+    (app,) = [s for s in steps if _uses(s, APP_TOKEN_ACTION)]
+    assert app["if"] == f"needs.guard.outputs.dry == 'false' && {WRITE_MODE_GUARD}"
+    (filing,) = [s for s in steps if "tools.factory.file_issues" in str(s.get("run", ""))]
+    assert filing["env"]["DRY_RUN"] == "${{ steps.app.outcome != 'success' }}"
+    assert filing["env"]["GH_TOKEN"] == "${{ steps.app.outputs.token || github.token }}"
+    assert 'if [ "$DRY_RUN" != false ]; then\n  args+=(--dry-run)' in filing["run"]
 
 
 def test_agents_hold_no_write_token() -> None:
@@ -381,7 +455,7 @@ def test_review_workflow_triggers_jobs_and_concurrency() -> None:
     # failed or was cancelled (a timeout), and only for a review that started.
     failed = "contains(fromJSON('[\"failure\",\"cancelled\"]'), needs.{}.result)"
     expected = (
-        "always() && vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review' && ("
+        f"always() && {WRITE_MODE_GUARD} && needs.route.outputs.action == 'review' && ("
         + " || ".join(failed.format(name) for name in ("evidence", "review", "post"))
         + ")"
     )

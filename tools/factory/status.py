@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from tools.factory.config import load_config
+from tools.factory.config import MODES, load_config
 from tools.factory.github import GitHub, GitHubError
 
 MARKER = "<!-- factory:status -->"
@@ -65,10 +65,14 @@ def render_status(
     runs_per_day: Mapping[str, int],
     a: Agreement,
     generated: str = "",
+    mode: str = "",
 ) -> str:
     lines = [MARKER, "", "# Factory status", ""]
     if generated:
         lines += [f"Generated: {generated}", ""]
+    if mode:
+        shown = mode if mode in MODES else f"{mode} (not {', '.join(MODES)}: nothing runs)"
+        lines += [f"Mode (`FACTORY_MODE`): {shown}", ""]
     lines += ["## Open issues by state", "", "| Label | Issues |", "|---|---|"]
     lines += [f"| `{name}` | {counts[name]} |" for name in sorted(counts)]
     lines += [
@@ -182,7 +186,7 @@ def gather(gh: Any, repo: str, trusted: frozenset[str], now: datetime) -> dict:
     }
 
 
-def update(gh: Any, repo: str, trusted: frozenset[str], now: datetime) -> int:
+def update(gh: Any, repo: str, trusted: frozenset[str], now: datetime, mode: str = "") -> int:
     """Edit the status issue's body, creating and pinning it once if it does not exist."""
     data = gather(gh, repo, trusted, now)
     body = render_status(
@@ -193,6 +197,7 @@ def update(gh: Any, repo: str, trusted: frozenset[str], now: datetime) -> int:
         data["runs_per_day"],
         data["agreement"],
         generated=now.date().isoformat(),
+        mode=mode,
     )
     existing = [
         i
@@ -221,7 +226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     repo = config.site.repo
     trusted = config.trusted(os.environ.get("FACTORY_APP_SLUG"))
     try:
-        number = update(GitHub(repo), repo, trusted, datetime.now(timezone.utc))
+        number = update(GitHub(repo), repo, trusted, datetime.now(timezone.utc), os.environ.get("FACTORY_MODE", ""))
     except GitHubError as error:
         print(f"status failed: {error}", file=sys.stderr)
         return 2

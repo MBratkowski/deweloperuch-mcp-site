@@ -121,7 +121,9 @@ def test_passing_facts_merge_in_both_modes(mode: str) -> None:
 
 FLIPS = {
     "mode off": ({}, "off", MODE),
+    "mode dry": ({}, "dry", MODE),
     "mode unset": ({}, "", MODE),
+    "mode unknown": ({}, "Shadow", MODE),
     "wrong author": ({"author": OWNER}, "auto", PULL),
     "no factory label": ({"labels": frozenset()}, "auto", PULL),
     "from a fork": ({"same_repo": False}, "auto", PULL),
@@ -699,7 +701,7 @@ def test_shadow_never_updates_the_branch() -> None:
     assert not [call for call in gh.calls if "update-branch" in call[1] or call[0] in ("PUT", "PATCH")]
 
 
-@pytest.mark.parametrize("mode", ["off", "", "manual"])
+@pytest.mark.parametrize("mode", ["off", "dry", "", "manual", "Auto"])
 def test_act_does_nothing_unless_shadow_or_auto(mode: str) -> None:
     gh = FakeGitHub()
     assert act(gh, facts(), evaluate(facts(), mode, APP, LIMITS), mode, config=CONFIG) == "off"
@@ -1484,8 +1486,10 @@ def test_sweep_leaves_an_issue_with_an_open_pull_request_alone() -> None:
 # --- command line ---------------------------------------------------------------------------------
 
 
-def test_main_does_nothing_when_the_factory_is_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("FACTORY_MODE", "off")
+@pytest.mark.parametrize("mode", ["off", "dry", "", "on"])
+def test_main_does_nothing_when_the_factory_is_off(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """R54: the merger acts in shadow or auto mode only; off, dry, unset and unknown do nothing."""
+    monkeypatch.setenv("FACTORY_MODE", mode)
     monkeypatch.setenv("FACTORY_APP_SLUG", SLUG)
     monkeypatch.setattr(merge, "GitHub", lambda *a, **k: pytest.fail("GitHub was contacted"))
     assert merge.main(["--sweep"]) == 0

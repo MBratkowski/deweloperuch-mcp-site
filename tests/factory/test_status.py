@@ -67,6 +67,13 @@ def test_render_status_is_deterministic_and_complete() -> None:
     assert "| 2026-10-17 | 4 |" in text
 
 
+def test_render_status_names_the_mode() -> None:
+    assert "Mode (`FACTORY_MODE`): shadow" in render_status({}, 0, 0, 0, {}, Agreement(0, 0, []), mode="shadow")
+    odd = render_status({}, 0, 0, 0, {}, Agreement(0, 0, []), mode="Shadow")
+    assert "Shadow (not off, dry, shadow, auto: nothing runs)" in odd
+    assert "Mode" not in render_status({}, 0, 0, 0, {}, Agreement(0, 0, []))
+
+
 def test_render_status_lists_dangerous_and_says_no() -> None:
     text = render_status({}, 0, 0, 0, {}, Agreement(10, 9, [12, 5]))
     assert "#5, #12" in text

@@ -49,7 +49,8 @@ env:
 jobs:
   route:
     name: Route the pull request
-    if: vars.FACTORY_MODE != 'off' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request')
+    # Only in shadow or auto mode: an unset, unknown, off or dry mode runs nothing (the kill switch).
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -118,7 +119,7 @@ jobs:
   act:
     name: Dispatch the next attempt or hand over
     needs: route
-    if: vars.FACTORY_MODE != 'off' && (needs.route.outputs.action == 'fix' || needs.route.outputs.action == 'needs-human')
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && (needs.route.outputs.action == 'fix' || needs.route.outputs.action == 'needs-human')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # GITHUB_TOKEN dispatches the fixer, labels the issue and turns the pull request into a draft; the
@@ -147,7 +148,7 @@ jobs:
   evidence:
     name: Prove the fix again (no secrets)
     needs: route
-    if: vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review'
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.route.outputs.action == 'review'
     runs-on: ubuntu-24.04
     # The budget, in minutes: the checkout, uv and the fetch 10; the decisive phase's four test
     # sessions (the base and the head site, e2e and visual) and the rerun of the tests the head site
@@ -249,7 +250,7 @@ jobs:
   review:
     name: Review the pull request (reviewer agent)
     needs: [route, evidence]
-    if: vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review'
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.route.outputs.action == 'review'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: factory
@@ -396,7 +397,7 @@ jobs:
   post:
     name: Post the review
     needs: [route, evidence, review]
-    if: vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review'
+    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.route.outputs.action == 'review'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # The only write token of a review, used by `review post` alone: it posts the review as
@@ -458,7 +459,7 @@ jobs:
     # timeout-minutes may be reported as cancelled), and then only when evidence, review or post ended
     # that way. A review that never started (route) names no pull request.
     if: >-
-      always() && vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review' &&
+      always() && contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.route.outputs.action == 'review' &&
       (contains(fromJSON('["failure","cancelled"]'), needs.evidence.result) ||
       contains(fromJSON('["failure","cancelled"]'), needs.review.result) ||
       contains(fromJSON('["failure","cancelled"]'), needs.post.result))
