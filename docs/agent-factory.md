@@ -1,6 +1,6 @@
 # Agent factory runbook
 
-Spec: `docs/superpowers/specs/2026-10-18-agent-factory-design.md`. This file is extended phase by phase; it covers phase 0, the one-time repository setup done by the owner, the first dry run of the QA workflow, the fixer, the reviewer and the merger.
+Spec: `docs/superpowers/specs/2026-10-18-agent-factory-design.md`. It covers phase 0 (the one-time repository setup done by the owner), the first dry run of the QA workflow, the fixer, the reviewer and the merger as they run, then the owner's operations (modes, labels, the status issue, acceptance, the evidence branch) and where each job runs.
 
 Every setup subcommand is a dry run unless you pass `--apply`. Run them from the repository root with `GH_TOKEN` set to a token that may administer the repository (for example `export GH_TOKEN=$(gh auth token)`).
 
@@ -97,6 +97,120 @@ Every setup subcommand is a dry run unless you pass `--apply`. Run them from the
 - Harmless races end the run green with a log line: the head moved since it was read, GitHub's 409 on the merge (the head moved) or 422 on the update of the branch (the head moved, or the branch no longer merges cleanly with `main`: then update it by hand). A later run decides.
 - Reconciliation (the sweep, in shadow and auto mode): the App's `fix/<N>-…` pull requests labelled `factory` and closed in the last 7 days whose issue `#N` is still open and labelled `factory:fixing`. Merged by anyone (your merge in shadow mode, or an auto merge whose follow-up failed) and without a trusted `factory:merged` marker naming that pull request: the marker of its merge commit is posted first, then `factory:merged` replaces `factory:fixing` and dispatch promotes, so the WIP slot frees and verify takes the issue up. Closed unmerged: `factory:needs-human` replaces `factory:fixing`, unless an open factory pull request is a later attempt for the same issue. Merges are reconciled before closed attempts, and a second sweep finds nothing to do. If the marker was posted but the labels failed (an interrupted follow-up), the sweep finishes it while the issue is still `factory:fixing` and no open factory pull request exists for it: `factory:merged` replaces `factory:fixing` and dispatch promotes. Only pull requests into `main` are reconciled. The shadow comment is edited only when the App wrote it; if only an owner's comment carries a verdict for the head, the merger posts its own once. "Update branch" commits (R44) must also be clean merges: each tree equals `git merge-tree --write-tree` of its parents (git 2.38 or later; otherwise refused).
 - Dry run (shadow, after the first approval): check that the App token reads the rules of `main` (metadata: read comes with every installation token; an empty list blocks every pull request with "no required status checks") and that the required contexts match the check run names of Check on the head. Before switching to `auto`, check that the App's merge satisfies the ruleset (the approval of `github-actions[bot]`, the required checks, the branch up to date).
+
+## Operations
+
+### Modes and the kill switch
+
+`FACTORY_MODE` is a repository variable with three values. Phase 0 creates it as `off`. Every factory job checks it first.
+
+```
+gh variable set FACTORY_MODE --body off      # kill switch
+gh variable set FACTORY_MODE --body shadow
+gh variable set FACTORY_MODE --body auto
+```
+
+| Mode | QA | Fixer | Reviewer | Merger |
+|---|---|---|---|---|
+| `off` | every job is skipped | skipped | skipped | skipped |
+| `shadow` | runs, files issues, verifies, promotes, keeps the status issue | runs and opens pull requests | runs and posts reviews | writes a verdict comment and sets `factory:merge-ready`; never merges, never updates a branch. You merge or close. The sweep still reconciles pull requests you merged or closed. |
+| `auto` | as in shadow | as in shadow | as in shadow | squash-merges the evaluated head, updates a branch that is behind `main`, merges reverts, reconciles |
+
+`off` stops new work at once but does not cancel runs already started, and it does not undo anything: open pull requests, labels and comments stay as they are. To stop a run in progress too, cancel it in the Actions tab. To stop one issue only, see "Taking an issue back". `auto` needs the switch rule below; `off` or `shadow` can be set at any time.
+
+### Handing an issue to the factory
+
+- QA files `factory:found` issues with a failing reproduction. The nightly (or after-deploy) QA run promotes them to `factory:ready` itself (as the App) while fewer than `limits.fixes_in_progress` (2) issues are `factory:ready` or `factory:fixing`.
+- To hand one over yourself, add `factory:ready` to the issue (`gh issue edit N --add-label factory:ready`). The fixer honours the label only when the owner (`trusted_logins`) or the App set it; the guard checks the latest labelling event's sender. A label from anyone else is ignored, and the issue is never fixed.
+- It works the same for issues you wrote yourself. The fixer needs a reproducible, testable problem: say where, at which width and in which browser.
+- `factory:suggestion` issues (an AI-review finding without a reproduction) are never promoted; handing one over with `factory:ready` is your call.
+
+### Labels
+
+On issues:
+
+| Label | Meaning | Set by | Next |
+|---|---|---|---|
+| `factory:found` | A defect with a failing reproduction, waiting for a fixer slot | QA (`file`) | The promotion step adds `factory:ready` when a slot is free: flaky first while `main` is red, then by severity, then oldest. `deploy-stale` is never promoted. |
+| `factory:suggestion` | A finding without a reproduction | QA | Nothing. Read it; fix it by hand or close it. |
+| `factory:ready` | Handed to the fixer | The promotion step (App) or you | The fixer starts and, once its pull request exists, replaces the label with `factory:fixing`. |
+| `factory:fixing` | A fix branch or pull request exists | Fixer (`publish`) | The reviewer and the merger decide; after a merge it becomes `factory:merged`. |
+| `factory:merged` | The fix is on `main`; waiting for verification on the live site | Merger (auto) or the sweep (a merge by you) | QA's verify reruns the reproduction on the live site once Pages deployed the merge: gone, so a comment with the live image and the issue is closed; still there, so `factory:regressed`. |
+| `factory:regressed` | Live verification failed after a merge | QA (`verify-act`) | A `revert/<N>` pull request is open; the issue also gets `factory:needs-human`. |
+| `factory:flaky` | A test failed and passed on the same commit | QA, together with `factory:found` | Fixed like any defect, proven by 50 throttled runs. |
+| `factory:needs-human` | The factory stopped touching this issue | Fixer, reviewer, merger, verify | You decide, see below. |
+
+Severity labels `S1` to `S4` sit beside `bug` and `accessibility`.
+
+On pull requests: `factory` (every factory pull request), `factory:merge-ready` (the shadow verdict is "would merge"; set or removed on every merger run), `factory:revert` (a revert), `factory:needs-human` (a soft fence reason or a conflict).
+
+### `factory:needs-human`
+
+It means the factory will not act on this issue or pull request again: the guard and publish skip it, the reviewer routes it out, the merger blocks it, the dispatcher does not count it. Reasons are listed in the last comment or in the pull request's "Needs a human" section: attempts exhausted (`limits.attempts_per_issue`, 2), not reproducible, a change outside the fence or to page copy, a conflict with `main`, a failed review (a crash, no verdict), a failed live verification.
+
+- **Take it back:** fix it yourself on your own branch, or close it. Remove `factory:fixing` and `factory:ready` too if they remain, so the slot frees. A factory pull request you do not want: close it, the sweep then moves its issue to `factory:needs-human`.
+- **Return it to the factory:** remove `factory:needs-human`, then add `factory:ready` (as the owner) on an issue, or dispatch the next attempt: `gh workflow run factory-fix.yml --ref main -f issue=N -f attempt=K`. The guard counts the `<!-- factory:attempt=K -->` comments, so after the limit it refuses again; to allow another round, edit or delete those attempt comments, which is your decision. For a pull request, remove the label and mark it ready for review; Check then runs the reviewer again on a new head.
+- A revert's issue is always `factory:needs-human`: the revert is the factory's last act, what happens next is yours.
+
+### The status issue and the switch rule
+
+QA keeps one pinned issue, "Factory status", edited in place at the end of each real run (`dispatch-status`; a dry run does not touch it). It shows issues by state, merges and reverts in the last 7 days, flaky tests, agent runs per day and the shadow agreement.
+
+- **Agreement:** each factory pull request decided in shadow mode (merged or closed) is compared with its last verdict: merged by you means "merge", closed unmerged means "block". The issue counts the agreeing ones among the last 10 decided.
+- **Switch rule:** at least 10 decided, at least 9 of the last 10 agree, and no "would merge" that you closed (listed separately as dangerous). When the status issue says the rule holds, you may run `gh variable set FACTORY_MODE --body auto`. Nothing flips it automatically. Before the first switch, run the checks in the merger's dry run.
+- Go back to `shadow` at any time; it takes effect on the next run.
+
+### How shadow mode records verdicts
+
+The merger writes one comment per pull request head, with the condition table, the verdict ("would merge" or "would block: ...") and the marker `<!-- factory:verdict=merge|block sha=<head> -->`. Nothing is written before `github-actions[bot]` reviewed the head. Later runs on the same head edit that comment in place when the verdict or the failed rows change; a new head gets a new comment. The status issue reads the edited verdict.
+
+Owner merges are reconciled by the hourly sweep (minute 5): for a closed `fix/<N>-…` pull request of the App whose issue is still `factory:fixing`, a merge gets the `factory:merged` marker comment and label (so verify takes the issue up and the slot frees), and a close without merge gets `factory:needs-human`. Merging a factory pull request by hand therefore needs no follow-up; give the sweep up to an hour, or dispatch it: `gh workflow run factory-merge.yml --ref main`.
+
+## Acceptance
+
+Run in order, with phase 0 done and the workflows on `main`. Steps 2 to 5 are the owner's.
+
+- [ ] **1. QA dry run on the live site.** `gh variable set FACTORY_MODE --body shadow`, then `gh workflow run factory-qa.yml --ref main -f dry_run=true` and `gh run watch`. Expect: `probe` green; the `file` job summary lists at least the `deploy-stale` body (`1f104d1` against `8b6ec7b`, unless Pages has deployed `main` since) and the flaky docs history test; nothing is written to GitHub. Read the list and the dropped findings for false alarms.
+- [ ] **2. QA for real.** `gh workflow run factory-qa.yml --ref main`. Expect: at most 3 new issues (`limits.issues_per_run`), each with a reproduction and images linked from the evidence branch, and the "Factory status" issue created and pinned. The promotion step may add `factory:ready` to found issues, which starts the fixer (set `off` first if you want to read the issues before the fixer starts).
+- [ ] **3. Three fixes in shadow mode.** Add `factory:ready` to #45, #46 and the flaky-test issue. Expect for each: a `fix/<N>-…` pull request labelled `factory`, saying `Refs #N`, with before and after images; Check green; a review by `github-actions[bot]`; one merger comment with a "would merge" verdict and `factory:merge-ready`. Nothing is merged by the factory. Merge or close each yourself; the next sweep moves the issue to `factory:merged` or `factory:needs-human`.
+- [ ] **4. Shadow period.** Keep `shadow` for about 10 decided factory pull requests, until the status issue shows the switch rule holding. Read every "would block" and every disagreement. Expect, after each merge you make, that QA verifies it on the live site and closes the issue.
+- [ ] **5. The revert path once.** With a `factory:merged` issue (its fingerprint is in the issue), `gh workflow run factory-qa.yml --ref main -f simulate_failed_verify=<fingerprint>`. Expect: the issue becomes `factory:regressed` and `factory:needs-human`, and a `revert/<N>` pull request labelled `factory` and `factory:revert` goes through Check and the reviewer's exact-revert check; the merger's shadow comment says "would merge". Close it without merging.
+- [ ] **6. Auto (owner's decision).** Only when the status issue says the switch rule holds: `gh variable set FACTORY_MODE --body auto`. Expect the next approved pull request to be squash-merged by the App with `Refs #N`, Pages to run, and QA to verify it live.
+
+## Evidence branch
+
+Screenshots and reproduction scripts live on the orphan branch `factory-evidence`, pushed with the App token (`factory-evidence` commit identity); `check.yml` ignores pushes to it.
+
+- Issues: `issues/<fingerprint>/<run id>/…`. Pull requests: `prs/<number>/<sha>/{before,after,diff}/…`.
+- Issues and pull requests link the files as `https://raw.githubusercontent.com/MBratkowski/deweloperuch-mcp-site/<evidence commit>/<path>`. The link names the commit, so it never changes and survives later commits, but not a squash that drops the commit: do not squash a commit that an open issue or pull request still links.
+- Pruning rule: when the branch is over 200 MB (`git clone --branch factory-evidence` and `du -sh .git`, or the repository size in the settings), squash it to one commit that keeps only the images linked from open issues and pull requests. By hand:
+  1. Clone the branch (`git clone --branch factory-evidence --single-branch git@github.com:MBratkowski/deweloperuch-mcp-site.git /tmp/evidence`).
+  2. List what open issues and pull requests link: `gh issue list --state open --json number,body,comments` and `gh pr list --state open --json number,body,comments`, grep for `raw.githubusercontent.com/MBratkowski/deweloperuch-mcp-site/` and note each `<commit>/<path>`.
+  3. For each noted link, read the file at that commit (`git show <commit>:<path>`) and write it to the same path in a new orphan branch (`git checkout --orphan pruned`, remove everything else).
+  4. Commit once and force-push over `factory-evidence`. Links that name the old commits stop resolving unless GitHub still has the objects, so edit each open issue and pull request whose link changed to the new commit. Closed issues and pull requests lose their images; that is the rule.
+  5. Check one image in the browser from an open pull request. Nothing automated does this; the factory only adds commits.
+
+## Where things run
+
+Tokens: "read" is the job's own `GITHUB_TOKEN` with read scopes only; "App" is an installation token minted in the job with the listed scopes; "Claude" is `CLAUDE_CODE_OAUTH_TOKEN` (environment `factory`, held by the agent step). Jobs without a `factory` environment hold no secret.
+
+| Workflow | Trigger | Job | Token |
+|---|---|---|---|
+| `factory-qa.yml` | nightly 02:30 UTC; after a successful Pages run on `main`; by hand (`dry_run`, `simulate_failed_verify`) | `guard`, `probe`, `verify`, `check` | read, no secret |
+| | | `triage` (the QA agent) | read and Claude |
+| | | `file` | read in a dry run; App `contents`, `issues` write, `actions` and `deployments` read otherwise |
+| | | `verify-act` | App `contents`, `issues`, `pull-requests` write, `actions` and `deployments` read |
+| | | `dispatch-status` | App `issues` write, `actions` and `pull-requests` read |
+| `factory-fix.yml` | `factory:ready` labelled by the owner or the App; by hand or by a failed attempt (`issue`, `attempt`) | `guard` | read, no secret |
+| | | `fix` (the fixer agent) | read and Claude |
+| | | `publish` | App `contents`, `issues`, `pull-requests` write; `GITHUB_TOKEN` `actions: write` to dispatch the next attempt |
+| `factory-review.yml` | Check completed on a pull request; by hand (`pr`) | `route` | read, no secret |
+| | | `act` | `GITHUB_TOKEN` `actions`, `issues`, `pull-requests` write (next attempt or `needs-human`) |
+| | | `evidence` | read, no secret, no environment |
+| | | `review` (the reviewer agent) | read and Claude |
+| | | `post` | `GITHUB_TOKEN` `actions`, `issues`, `pull-requests` write (the review and the merger dispatch) |
+| | | `hand-over` | `GITHUB_TOKEN` `pull-requests` write |
+| `factory-merge.yml` | the reviewer after an approval; hourly at minute 5 (sweep); by hand (`pr`) | `merge` | App `contents`, `issues`, `pull-requests` write; `actions` and `checks` read |
 
 ## Known residual risk
 
