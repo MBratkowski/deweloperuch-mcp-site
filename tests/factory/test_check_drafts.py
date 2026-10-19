@@ -220,6 +220,28 @@ def test_without_a_script_user_scripts_run_as_before(monkeypatch: Any) -> None:
     assert check_drafts.script_user() is None
 
 
+def test_ignored_lists_findings_in_neither_a_draft_nor_dropped() -> None:
+    """M4: a finding of this run the agent neither drafted nor dropped is reported, not lost."""
+    drafted, dropped, left = group("overflow"), group("axe"), group("target-size")
+    flaky = Group("flaky", "ci", "default", "tests/e2e/test_x.py::test_y", (), (), (), note="n")
+    canonical = {g.fingerprint: g.to_json() for g in (drafted, dropped, left, flaky)}
+    incoming = {
+        "drafts": [draft_dict(drafted.fingerprint)],
+        "suggestions": [],
+        "dropped": [{"fingerprint": dropped.fingerprint, "reason": "a false alarm"}],
+    }
+    found = check_drafts.ignored(incoming, canonical)
+    assert found == sorted(
+        [
+            {"fingerprint": left.fingerprint, "check": "target-size", "page": "landing", "selector": "div.term"},
+            {"fingerprint": flaky.fingerprint, "check": "flaky", "page": "ci", "selector": "tests/e2e/test_x.py::test_y"},
+        ],
+        key=lambda item: item["fingerprint"],
+    )
+    assert check_drafts.ignored({**incoming, "dropped": [*incoming["dropped"], {"fingerprint": left.fingerprint, "reason": "r"},
+                                                          {"fingerprint": flaky.fingerprint, "reason": "r"}]}, canonical) == []
+
+
 def test_validated_json_keeps_survivors_limits_suggestions_and_extends_dropped() -> None:
     incoming = {
         "drafts": [draft_dict("a" * 12), draft_dict("b" * 12, check_name="axe")],

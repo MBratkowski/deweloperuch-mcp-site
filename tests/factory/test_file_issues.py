@@ -398,3 +398,73 @@ def test_ci_draft_groups_come_from_the_ci_findings(tmp_path: Path) -> None:
     run(gh, validated(draft("S1", flaky, reproduction={"kind": "detector", "groups": [planted], "script": None})), out)
     body = gh.created()[0]["body"]
     assert "planted" not in body and "https://x/runs/1" in body
+
+
+# --- suggestions are filed once (D34) ------------------------------------------------------------
+
+
+def suggestion_issue(number: int, body: str, *, state: str = "open", login: str = "deweloperuch-factory[bot]") -> dict:
+    return {
+        "number": number,
+        "state": state,
+        "state_reason": "not_planned" if state == "closed" else None,
+        "user": {"login": login},
+        "labels": [{"name": "factory:suggestion"}],
+        "body": body,
+    }
+
+
+def test_a_suggestion_carries_its_fingerprint_and_is_recognised(tmp_path: Path) -> None:
+    from tools.factory.file_issues import suggestion_fingerprint
+    from tools.factory.issues import fingerprints_in
+
+    out = probe_out(tmp_path)
+    idea = {"title": "The footer links are hard to tell apart", "problem": "p", "screenshot": "live/sheets/docs-webkit.png"}
+    gh = Fake()
+    run(gh, validated(suggestions=[idea]), out)
+    (created,) = gh.created()
+    fingerprint = suggestion_fingerprint("docs", idea["title"])
+    assert fingerprints_in(created["body"]) == {fingerprint}
+    assert created["labels"] == ["factory:suggestion"]
+
+    # The same idea again, open or closed (also as not planned), worded with other capitals and
+    # punctuation: never filed twice.
+    for state in ("open", "closed"):
+        again = {**idea, "title": "The footer links are hard to tell apart!", "screenshot": "live/shots/docs-chromium-375-default.png"}
+        gh = Fake([suggestion_issue(41, created["body"], state=state)])
+        run(gh, validated(suggestions=[again]), out)
+        assert gh.created() == []
+    # A stranger's issue carrying the marker does not count; another page is another suggestion.
+    gh = Fake([suggestion_issue(41, created["body"], login="stranger")])
+    run(gh, validated(suggestions=[idea]), out)
+    assert len(gh.created()) == 1
+    gh = Fake([suggestion_issue(41, created["body"])])
+    run(gh, validated(suggestions=[{**idea, "screenshot": "live/sheets/landing-webkit.png"}]), out)
+    assert len(gh.created()) == 1
+
+
+def test_suggestion_fingerprint_normalises_the_title() -> None:
+    from tools.factory.file_issues import normalised_title, suggestion_fingerprint
+
+    assert normalised_title("  The Footer   links, hard_to tell apart!? ") == "the footer links hard to tell apart"
+    assert suggestion_fingerprint("docs", "Footer links: hard to tell apart") == suggestion_fingerprint(
+        "docs", "footer links hard to tell apart."
+    )
+    assert suggestion_fingerprint("docs", "x") != suggestion_fingerprint("landing", "x")
+
+
+def test_suggestion_page_comes_from_the_screenshot() -> None:
+    from tools.factory.file_issues import suggestion_page
+    from tools.factory.issues import Suggestion
+
+    g = group()  # on landing
+    canonical = {g.fingerprint: g.to_json()}
+
+    def page(shot: str) -> str:
+        return suggestion_page(Suggestion("t", "p", shot), CONFIG, canonical)
+
+    assert page(f"live/groups/{g.fingerprint}/viewport.png") == "landing"
+    assert page("live/groups/ffffffffffff/viewport.png") == "site"
+    assert page("live/shots/docs-chromium-375-default.png") == "docs"
+    assert page("live/sheets/landing-webkit.png") == "landing"
+    assert page("reference.png") == "site"

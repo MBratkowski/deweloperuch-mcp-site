@@ -28,6 +28,8 @@ class Limits:
     attempts_per_issue: int
     merges_per_day: int
     max_changed_lines: int
+    # QA runs per UTC day whose agent (the triage job) succeeded; later runs skip the agent (M11).
+    qa_agent_runs_per_day: int
 
 
 @dataclass(frozen=True)

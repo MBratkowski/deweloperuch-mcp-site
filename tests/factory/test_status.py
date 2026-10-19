@@ -1,6 +1,9 @@
 """The status issue: shadow agreement, the switch rule, and one pinned issue edited in place."""
 
 from datetime import datetime, timezone
+from typing import Any
+
+import pytest
 
 from tools.factory import status
 from tools.factory.config import load_config
@@ -38,12 +41,18 @@ def test_agreement_classifies_each_outcome() -> None:
     assert (a.decided, a.agree, a.dangerous) == (4, 2, [3])
 
 
-def test_agreement_uses_only_the_last_ten_by_number() -> None:
+def test_agreement_counts_the_last_ten_and_every_dangerous_merge() -> None:
+    """M3: agreement is over the last 10 decided pull requests by number; a "would merge" the owner
+    closed is dangerous among all of them, so an old one still keeps the factory in shadow mode."""
     old = [{"number": 1, "merged": False, "verdict": "merge"}]
     a = agreement(old + [
         {"number": n, "merged": True, "verdict": "merge"} for n in range(2, 12)
     ])
-    assert (a.decided, a.agree, a.dangerous) == (10, 10, [])
+    assert (a.decided, a.agree, a.dangerous) == (10, 10, [1])
+    assert not ready_for_auto(a)
+    assert ready_for_auto(agreement([{**old[0], "merged": True}] + [
+        {"number": n, "merged": True, "verdict": "merge"} for n in range(2, 12)
+    ]))
 
 
 def test_ready_for_auto_boundaries() -> None:
@@ -176,3 +185,98 @@ def test_update_creates_pins_once_then_patches() -> None:
     patches = [c for c in again.calls if c[0] == "PATCH"]
     assert len(patches) == 1 and patches[0][1] == f"{API}/issues/51"
     assert patches[0][2]["body"].startswith("<!-- factory:status -->")
+
+
+class PagedRuns(FakeGitHub):
+    """Run listings answered page by page; any other path as FakeGitHub."""
+
+    def __init__(self, runs: dict[str, list[dict]], responses: dict | None = None) -> None:
+        super().__init__(responses or {})
+        self.runs = runs
+
+    def request(self, method: str, path: str, body: dict | None = None, params: dict | None = None) -> Any:
+        if method == "GET" and path in self.runs:
+            self.calls.append((method, path, params))
+            page, size = (params or {}).get("page", 1), (params or {}).get("per_page", 30)
+            return {"workflow_runs": self.runs[path][(page - 1) * size : page * size]}
+        return super().request(method, path, body, params)
+
+
+def runs_path(workflow: str) -> str:
+    return f"{API}/actions/workflows/{workflow}/runs"
+
+
+def test_runs_per_day_pages_past_a_hundred_and_skips_skipped_runs() -> None:
+    """M3: a busy week has more than 100 runs, and a run that ended skipped ran no agent."""
+    busy = [{"id": i, "created_at": "2026-10-18T03:00:00Z", "conclusion": "success"} for i in range(150)]
+    skipped = [{"id": 900 + i, "created_at": "2026-10-18T04:00:00Z", "conclusion": "skipped"} for i in range(30)]
+    fake = PagedRuns(
+        {
+            runs_path("factory-qa.yml"): busy + skipped,
+            runs_path("factory-fix.yml"): [{"id": 1, "created_at": "2026-10-17T03:00:00Z", "conclusion": None}],
+            runs_path("factory-review.yml"): [],
+        }
+    )
+    counts = status.runs_per_day(fake, REPO, NOW)
+    assert counts["2026-10-18"] == 150 and counts["2026-10-17"] == 1
+    pages = [p["page"] for _, path, p in fake.calls if path == runs_path("factory-qa.yml")]
+    assert pages == [1, 2]
+
+
+def qa_run(run_id: int, created: str) -> dict:
+    return {"id": run_id, "created_at": created, "conclusion": "success"}
+
+
+def jobs(*conclusions: str | None) -> dict:
+    return {
+        "jobs": [{"name": status.TRIAGE_JOB, "conclusion": c, "run_attempt": i + 1} for i, c in enumerate(conclusions)]
+        + [{"name": "Probe the live site", "conclusion": "success"}]
+    }
+
+
+def cap_github() -> PagedRuns:
+    return PagedRuns(
+        {
+            runs_path("factory-qa.yml"): [
+                qa_run(10, "2026-10-18T02:30:00Z"),  # nightly: the agent ran
+                qa_run(11, "2026-10-18T06:00:00Z"),  # after a deploy: the agent failed, then a re-run passed
+                qa_run(12, "2026-10-18T08:00:00Z"),  # the guard skipped the agent (the cap)
+                qa_run(13, "2026-10-18T09:00:00Z"),  # the agent failed
+                qa_run(14, "2026-10-18T12:00:00Z"),  # this run
+                qa_run(9, "2026-10-17T23:59:00Z"),  # yesterday (UTC)
+            ]
+        },
+        {
+            ("GET", f"{API}/actions/runs/10/jobs"): jobs("success"),
+            ("GET", f"{API}/actions/runs/11/jobs"): jobs("failure", "success"),
+            ("GET", f"{API}/actions/runs/12/jobs"): jobs("skipped"),
+            ("GET", f"{API}/actions/runs/13/jobs"): jobs("failure"),
+            ("GET", f"{API}/actions/runs/14/jobs"): jobs("success"),
+            ("GET", f"{API}/actions/runs/9/jobs"): jobs("success"),
+        },
+    )
+
+
+def test_qa_agent_runs_today_counts_runs_whose_triage_succeeded() -> None:
+    """M11: today's (UTC) QA runs, besides this one, whose triage job succeeded in some attempt."""
+    fake = cap_github()
+    assert status.qa_agent_runs_today(fake, REPO, NOW, current=14) == 2
+    listed = [p for _, path, p in fake.calls if path == runs_path("factory-qa.yml")]
+    assert listed[0]["created"] == ">=2026-10-18"
+    assert ("GET", f"{API}/actions/runs/11/jobs", {"filter": "all", "per_page": 100, "page": 1}) in fake.calls
+    assert status.qa_agent_runs_today(fake, REPO, NOW) == 3
+
+
+@pytest.mark.parametrize(("earlier", "agent"), [(0, "true"), (1, "true"), (2, "false"), (3, "false")])
+def test_cli_qa_cap(earlier: int, agent: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """M11: at `limits.qa_agent_runs_per_day` (2) earlier agent runs today, the guard skips the agent."""
+    runs = [qa_run(20 + i, f"2026-10-18T0{i}:00:00Z") for i in range(earlier)] + [qa_run(30, "2026-10-18T11:00:00Z")]
+    responses = {("GET", f"{API}/actions/runs/{20 + i}/jobs"): jobs("success") for i in range(earlier)}
+    responses[("GET", f"{API}/actions/runs/30/jobs")] = jobs(None)  # this run: triage has not run yet
+    fake = PagedRuns({runs_path("factory-qa.yml"): runs}, responses)
+    monkeypatch.setattr(status, "GitHub", lambda repo, *a, **k: fake)
+    monkeypatch.setattr(status, "_now", lambda: NOW)
+    monkeypatch.setenv("GITHUB_RUN_ID", "30")
+    assert status.main(["qa-cap"]) == 0
+    assert capsys.readouterr().out.splitlines() == [f"qa_agent_runs={earlier}", f"agent={agent}"]
+    assert not [c for c in fake.calls if c[0] != "GET"]

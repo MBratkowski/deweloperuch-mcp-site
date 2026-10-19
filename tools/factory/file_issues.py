@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
+import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -21,6 +24,7 @@ from tools.factory.findings import Group
 from tools.factory.github import GitHub, GitHubError
 from tools.factory.identity import bot_email
 from tools.factory.issues import (
+    SENTINEL,
     SEVERITIES,
     Draft,
     DraftError,
@@ -29,12 +33,16 @@ from tools.factory.issues import (
     _check_plain,
     canonical_groups,
     dedup,
+    fingerprints_in,
     load_drafts,
     rebuild_groups,
     render_issue,
 )
 
 ACCESSIBILITY_CHECKS = frozenset({"axe", "target-size", "focus"})
+SUGGESTION_LABEL = "factory:suggestion"
+SITE = "site"
+_NOT_WORD = re.compile(r"[\W_]+")
 DRY_RUN_URL = "(dry run)"
 IMAGE_NAMES = ("viewport", "crop")
 
@@ -161,8 +169,49 @@ def _publish(
     return {name: urls[path] for name, (path, _) in files.items()}
 
 
-def render_suggestion(suggestion: Suggestion, image_url: str | None) -> tuple[str, str]:
-    """A small body: the problem and, when there is one, a screenshot. No markers."""
+def normalised_title(title: str) -> str:
+    """The words of a title, case-folded, without punctuation or extra spaces."""
+    return " ".join(_NOT_WORD.sub(" ", unicodedata.normalize("NFKC", title).casefold()).split())
+
+
+def suggestion_fingerprint(page: str, title: str) -> str:
+    """A suggestion's fingerprint (D34): a short hash of its page and its normalised title, so the
+    same idea seen again, worded with other capitals or punctuation, is the same suggestion."""
+    return hashlib.sha256(f"suggestion\0{page}\0{normalised_title(title)}".encode()).hexdigest()[:12]
+
+
+def suggestion_page(suggestion: Suggestion, config: Config, canonical: Mapping[str, dict[str, Any]]) -> str:
+    """The page a suggestion is about, from its screenshot: a probe group's folder `groups/<fp>/`
+    names its group's page, a shot or contact sheet `<page>-…png` its page; "site" otherwise."""
+    parts = Path(suggestion.screenshot).parts
+    for index, part in enumerate(parts[:-1]):
+        if part == "groups" and parts[index + 1] in canonical:
+            page = canonical[parts[index + 1]].get("page")
+            return page if isinstance(page, str) and page in config.site.pages else SITE
+    name = parts[-1] if parts else ""
+    for page in sorted(config.site.pages, key=len, reverse=True):
+        if name.startswith(f"{page}-"):
+            return page
+    return SITE
+
+
+def known_suggestion(fingerprint: str, issues: Sequence[dict[str, Any]], trusted: frozenset[str]) -> int | None:
+    """The suggestion issue (open or closed, by a trusted author) that already carries `fingerprint`."""
+    for issue in issues:
+        if "pull_request" in issue or (issue.get("user") or {}).get("login") not in trusted:
+            continue
+        if SUGGESTION_LABEL not in {label["name"] for label in issue.get("labels", [])}:
+            continue
+        if fingerprint in fingerprints_in(issue.get("body") or ""):
+            return int(issue["number"])
+    return None
+
+
+def render_suggestion(
+    suggestion: Suggestion, image_url: str | None, fingerprint: str | None = None
+) -> tuple[str, str]:
+    """A small body: the problem and, when there is one, a screenshot; then the marker block with the
+    suggestion's fingerprint, by which a later run recognises it (D34)."""
     for field in ("title", "problem"):
         _check_plain(getattr(suggestion, field), f"suggestion.{field}")
     if image_url is not None:
@@ -170,7 +219,10 @@ def render_suggestion(suggestion: Suggestion, image_url: str | None) -> tuple[st
     parts = [f"## Problem\n\n{suggestion.problem}"]
     if image_url is not None:
         parts.append(f"## Evidence\n\n![screenshot]({image_url})")
-    return suggestion.title, "\n\n".join(parts) + "\n"
+    body = "\n\n".join(parts) + "\n"
+    if fingerprint is not None:
+        body += f"\n{SENTINEL}\n<!-- factory:fp={fingerprint} -->\n"
+    return suggestion.title, body
 
 
 def _suggestion_image(suggestion: Suggestion, probe_out: Path) -> Path | None:
@@ -256,18 +308,29 @@ def file(
         created = gh.request("POST", path, {"title": title, "body": body, "labels": labels})
         numbers.append(created["number"])
 
-    for suggestion in suggestions[: config.limits.suggestions_per_run]:
+    suggested = 0
+    for suggestion in suggestions:
+        if suggested >= config.limits.suggestions_per_run:
+            break
+        fingerprint = suggestion_fingerprint(suggestion_page(suggestion, config, canonical), suggestion.title)
+        # D34: the same suggestion, open or closed, is never filed twice.
+        known = known_suggestion(fingerprint, issues, trusted)
+        if known is not None or fingerprint in filed:
+            print(f"suggestion {fingerprint} is already #{known or 'filed in this run'}; skipped", file=sys.stderr)
+            continue
         image = _suggestion_image(suggestion, probe_out)
         urls = {}
         if image is not None:
             published = f"suggestions/{run_id}/{image.name}"
             urls = _publish({"screenshot": (published, image)}, publish_evidence, dry_run)
-        title, body = render_suggestion(suggestion, urls.get("screenshot"))
+        title, body = render_suggestion(suggestion, urls.get("screenshot"), fingerprint)
+        suggested += 1
+        filed.add(fingerprint)
         if dry_run:
             _emit(title, body)
             continue
         created = gh.request(
-            "POST", path, {"title": title, "body": body, "labels": ["factory:suggestion"]}
+            "POST", path, {"title": title, "body": body, "labels": [SUGGESTION_LABEL]}
         )
         numbers.append(created["number"])
     return numbers

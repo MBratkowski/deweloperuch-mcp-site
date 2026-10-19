@@ -245,6 +245,25 @@ def build_validated(
     }
 
 
+def ignored(incoming: Mapping[str, Any], canonical: Mapping[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """The findings of this run (the probe's and the CI facts', by fingerprint) that the agent put in
+    neither a draft nor `dropped`: silently ignored, so the owner sees them in the summary (M4)."""
+    seen: set[str] = set()
+    for draft in incoming.get("drafts") or []:
+        seen.update(fp for fp in draft.get("fingerprints") or [] if isinstance(fp, str))
+    seen.update(item.get("fingerprint") for item in incoming.get("dropped") or [] if isinstance(item, dict))
+    return [
+        {
+            "fingerprint": fingerprint,
+            "check": group.get("check", ""),
+            "page": group.get("page", ""),
+            "selector": group.get("selector", ""),
+        }
+        for fingerprint, group in sorted(canonical.items())
+        if fingerprint not in seen
+    ]
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m tools.factory.check_drafts")
     parser.add_argument("--drafts", type=Path, required=True, help="the QA agent's drafts.json")
@@ -255,6 +274,9 @@ def _parser() -> argparse.ArgumentParser:
         "--probe-findings", type=Path, required=True, help="findings.json of this run's live probe"
     )
     parser.add_argument("--ci-findings", type=Path, help="findings.json from this run's ci_facts")
+    parser.add_argument(
+        "--ignored-out", type=Path, help="JSON list of this run's findings in neither a draft nor dropped"
+    )
     return parser
 
 
@@ -266,6 +288,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         load_drafts(incoming)
         canonical = canonical_groups(args.probe_findings, args.ci_findings)
         ci_fingerprints = set(canonical_groups(args.ci_findings)) if args.ci_findings else None
+        # Before any script runs: what the agent's output left out of both drafts and dropped.
+        left_out = ignored(incoming, canonical)
         from playwright.sync_api import sync_playwright
 
         from tools.factory.probe import local_site, reproduce
@@ -289,7 +313,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-    print(f"{len(result['drafts'])} kept, {len(result['dropped'])} dropped -> {args.out}")
+    if args.ignored_out is not None:
+        args.ignored_out.parent.mkdir(parents=True, exist_ok=True)
+        args.ignored_out.write_text(json.dumps(left_out, indent=2) + "\n", encoding="utf-8")
+    print(f"{len(result['drafts'])} kept, {len(result['dropped'])} dropped, {len(left_out)} ignored -> {args.out}")
     return 0
 
 

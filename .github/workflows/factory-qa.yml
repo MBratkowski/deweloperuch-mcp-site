@@ -11,7 +11,13 @@ name: Factory QA
 # replaced by an artifact uploaded later under the same name.
 #
 #   guard -> probe -> verify -> verify-act -------------------------------------> dispatch-status
-#                  -> triage -> check -> file (also needs verify) -------------^
+#                  -> triage -> check -> file (after verify) -------------------^
+#
+# One failure does not stop the whole intake (M1): file runs when check succeeded, whatever verify
+# did; dispatch-status runs after a green probe when file succeeded or was skipped, whatever
+# verify-act did. At most `limits.qa_agent_runs_per_day` runs a day (UTC) run the QA agent (M11): the
+# guard counts today's runs whose triage job succeeded, and beyond the limit triage, check and file
+# are skipped while probe, verify and the status still run.
 #
 # FACTORY_MODE is an allow-list (off | dry | shadow | auto): QA runs in dry, shadow and auto; an
 # unset, unknown or off mode runs nothing. In dry mode, or with the dry_run input, the run is a dry
@@ -53,12 +59,16 @@ jobs:
     # Pages run deployed nothing new to check.
     if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE) && (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    # actions: read counts today's QA agent runs (the daily cap).
     permissions:
+      actions: read
       contents: read
     outputs:
       # "true" in dry mode or for a dispatch with dry_run; the writing jobs run only on "false".
       dry: ${{ steps.config.outputs.dry }}
+      # "true" while today's QA agent runs are below limits.qa_agent_runs_per_day.
+      agent: ${{ steps.cap.outputs.agent }}
       live_url: ${{ steps.config.outputs.live_url }}
       suggestions: ${{ steps.config.outputs.suggestions }}
       qa_model: ${{ steps.config.outputs.qa_model }}
@@ -69,7 +79,11 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-          sparse-checkout: .github/factory
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what an App-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
       # Limits, models and the site come from .github/factory/config.json, never from this file.
       - name: Read the configuration
         id: config
@@ -104,6 +118,24 @@ jobs:
             echo "drafts_schema=$drafts_schema"
           } >> "$GITHUB_OUTPUT"
           echo "Factory mode: $MODE. Event: $GITHUB_EVENT_NAME. Dry run: $dry." >> "$GITHUB_STEP_SUMMARY"
+      # The spec's cost bound: at most limits.qa_agent_runs_per_day QA agent runs a day. When the count
+      # cannot be read, the agent is skipped (the cheap side); probe, verify and the status still run.
+      - name: Count today's QA agent runs
+        id: cap
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          status=0
+          out=$(uv run python -m tools.factory.status qa-cap) || status=$?
+          agent=$(printf '%s\n' "$out" | grep -E '^agent=(true|false)$' | cut -d= -f2 || true)
+          if [ "$status" -ne 0 ] || [ -z "$agent" ]; then
+            echo "::warning::today's QA agent runs could not be counted; the agent is skipped"
+            agent=false
+          fi
+          echo "agent=$agent" >> "$GITHUB_OUTPUT"
+          if [ "$agent" = false ]; then
+            echo "The QA agent is skipped in this run: ${out:-no count} (limits.qa_agent_runs_per_day)." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   probe:
     name: Probe the live site
@@ -270,7 +302,8 @@ jobs:
   triage:
     name: Triage the findings (QA agent)
     needs: [guard, probe]
-    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
+    # Skipped beyond the daily cap of QA agent runs (the guard's count); check and file follow.
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.agent == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     # The Claude token only: the App's private key lives in the environment factory, never here.
@@ -438,14 +471,17 @@ jobs:
           --probe-findings factory-in/probe/live/findings.json
           --ci-findings factory-in/probe/ci/findings.json
           --out factory-out/validated.json
-      # The owner reads why each finding was dropped and which drafts wait beyond the per-run limit.
+          --ignored-out factory-out/ignored.json
+      # The owner reads why each finding was dropped, which drafts wait beyond the per-run limit and
+      # which findings the agent ignored (in neither a draft nor dropped, M4).
       - name: Summarize the triage
         run: |
-          uv run python -I - factory-out/validated.json >> "$GITHUB_STEP_SUMMARY" <<'EOF'
+          uv run python -I - factory-out/validated.json factory-out/ignored.json >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           import json
           import sys
 
           data = json.load(open(sys.argv[1], encoding="utf-8"))
+          ignored = json.load(open(sys.argv[2], encoding="utf-8"))
 
 
           def plain(text):
@@ -463,6 +499,10 @@ jobs:
           print(f"\n### Dropped ({len(data['dropped'])})\n")
           for dropped in data["dropped"]:
               print(f"- {dropped['fingerprint']}: {plain(dropped['reason'])}")
+          print(f"\n### Ignored by the agent ({len(ignored)})\n")
+          print("Findings of this run in neither a draft nor dropped.\n")
+          for item in ignored:
+              print(f"- {item['fingerprint']}: {plain(item['check'])} {plain(item['selector'])} on {plain(item['page'])}")
           EOF
       # Best effort: the scripts ran in this job before this step.
       - name: Scan the checked output for secret shapes
@@ -481,7 +521,8 @@ jobs:
     name: File the issues
     # After verify: its dedup sees the issues as they were before this run filed any.
     needs: [guard, probe, check, verify]
-    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE)
+    # After check succeeded, whatever verify did: a failed verification never blocks filing (M1).
+    if: contains(fromJSON('["dry", "shadow", "auto"]'), vars.FACTORY_MODE) && !cancelled() && needs.check.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: factory
@@ -540,9 +581,12 @@ jobs:
 
   dispatch-status:
     name: Promote issues and update the status issue
-    needs: [guard, file, verify-act]
-    # Writes to GitHub: only in shadow or auto mode, and never in a dry run.
-    if: contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && needs.guard.outputs.dry == 'false'
+    needs: [guard, probe, file, verify-act]
+    # Writes to GitHub: only in shadow or auto mode, and never in a dry run. After a green probe, when
+    # file succeeded or was skipped (no check, or the agent's daily cap), whatever verify-act did (M1).
+    if: >-
+      contains(fromJSON('["shadow", "auto"]'), vars.FACTORY_MODE) && !cancelled() && needs.guard.outputs.dry == 'false' &&
+      needs.probe.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.file.result)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: factory

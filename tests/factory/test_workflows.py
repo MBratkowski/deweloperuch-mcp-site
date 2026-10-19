@@ -228,6 +228,78 @@ def test_the_qa_guard_decides_the_dry_run(mode: str, dry_run: str, dry: str | No
         assert done.returncode == 0 and output.read_text() == f"dry={dry}\n"
 
 
+QA_NEEDS = {
+    "guard": [],
+    "probe": ["guard"],
+    "verify": ["guard", "probe"],
+    "verify-act": ["guard", "verify"],
+    "triage": ["guard", "probe"],
+    "check": ["guard", "probe", "triage"],
+    "file": ["check", "guard", "probe", "verify"],
+    "dispatch-status": ["file", "guard", "probe", "verify-act"],
+}
+
+
+def test_the_qa_job_graph_and_its_gating() -> None:
+    """M1, M9, M11: one failure does not stop the whole intake. file runs once check succeeded,
+    whatever verify did; dispatch-status after a green probe once file succeeded or was skipped,
+    whatever verify-act did; triage only below the daily cap of QA agent runs."""
+    from tools.factory import status
+
+    jobs = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]
+    graph = {name: sorted([job["needs"]] if isinstance(job.get("needs"), str) else job.get("needs") or []) for name, job in jobs.items()}
+    assert graph == QA_NEEDS
+    conditions = {name: " ".join(str(job.get("if", "")).split()) for name, job in jobs.items()}
+    assert conditions["file"] == f"{QA_MODE_GUARD} && !cancelled() && needs.check.result == 'success'"
+    assert conditions["dispatch-status"] == (
+        f"{WRITE_MODE_GUARD} && !cancelled() && needs.guard.outputs.dry == 'false' && "
+        "needs.probe.result == 'success' && contains(fromJSON('[\"success\", \"skipped\"]'), needs.file.result)"
+    )
+    assert conditions["triage"] == f"{QA_MODE_GUARD} && needs.guard.outputs.agent == 'true'"
+    for name, condition in conditions.items():
+        if name not in ("file", "dispatch-status"):
+            assert not re.search(r"cancelled\(\)|always\(\)|failure\(\)", condition), name
+        assert "needs.verify.result" not in condition and "needs.verify-act.result" not in condition, name
+    # The cap counts the runs of the agent job by its name.
+    assert jobs["triage"]["name"] == status.TRIAGE_JOB
+    guard = jobs["guard"]
+    assert guard["permissions"] == {"actions": "read", "contents": "read"}
+    assert guard["outputs"]["agent"] == "${{ steps.cap.outputs.agent }}"
+    (cap,) = [s for s in guard["steps"] if s.get("id") == "cap"]
+    assert cap["env"] == {"GITHUB_TOKEN": "${{ github.token }}"}
+    assert "uv run python -m tools.factory.status qa-cap" in cap["run"]
+
+
+@pytest.mark.parametrize(
+    ("printed", "code", "agent"),
+    [
+        ("qa_agent_runs=1\nagent=true", 0, "true"),
+        ("qa_agent_runs=2\nagent=false", 0, "false"),
+        ("", 2, "false"),
+        ("agent=maybe", 0, "false"),
+    ],
+)
+def test_the_qa_cap_step_skips_the_agent_unless_it_is_sure(printed: str, code: int, agent: str, tmp_path: Path) -> None:
+    """M11: the cap step trusts only a clean `agent=true`; a failed or odd count skips the agent."""
+    jobs = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]
+    (cap,) = [s for s in jobs["guard"]["steps"] if s.get("id") == "cap"]
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake_uv = bin_dir / "uv"
+    fake_uv.write_text(f"#!/bin/bash\nprintf '%s\\n' {shlex.quote(printed)}\nexit {code}\n")
+    fake_uv.chmod(0o755)
+    output, summary = tmp_path / "output", tmp_path / "summary"
+    done = subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", cap["run"]],
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary)},
+        capture_output=True,
+        text=True,
+    )
+    assert done.returncode == 0, done.stderr
+    assert output.read_text() == f"agent={agent}\n"
+    assert summary.exists() == (agent == "false")
+
+
 def test_a_dry_run_writes_nothing_to_github() -> None:
     """R54 and M9: the jobs that write (verify-act, dispatch-status) need the guard's dry run to be
     "false"; file mints the App token only then, and files for real only with it (fail closed)."""
@@ -864,6 +936,26 @@ def test_check_job_holds_only_a_read_token() -> None:
         assert reference not in text, f"the check job mentions {reference}"
     checkouts = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout")]
     assert checkouts and all((s.get("with") or {}).get("persist-credentials") is False for s in checkouts)
+
+
+def test_the_check_summary_lists_the_findings_the_agent_ignored(tmp_path: Path) -> None:
+    """M4: check_drafts writes the findings in neither a draft nor dropped, and the summary step
+    prints them for the owner."""
+    steps = load_yaml(WORKFLOWS / "factory-qa.yml")["jobs"]["check"]["steps"]
+    (command,) = [s["run"] for s in steps if "tools.factory.check_drafts" in str(s.get("run", ""))]
+    assert "--ignored-out factory-out/ignored.json" in command
+    (summary,) = [s["run"] for s in steps if s.get("name") == "Summarize the triage"]
+    assert summary.startswith("uv run python -I - factory-out/validated.json factory-out/ignored.json")
+    script = summary.split("<<'EOF'\n", 1)[1].rsplit("EOF", 1)[0]
+    validated = tmp_path / "validated.json"
+    validated.write_text(json.dumps({"drafts": [], "suggestions": [], "dropped": [{"fingerprint": "a" * 12, "reason": "x"}]}))
+    ignored = tmp_path / "ignored.json"
+    ignored.write_text(json.dumps([{"fingerprint": "b" * 12, "check": "axe", "page": "docs", "selector": "a.toc"}]))
+    done = subprocess.run(
+        [sys.executable, "-I", "-", str(validated), str(ignored)], input=script, capture_output=True, text=True, check=True
+    )
+    assert "### Ignored by the agent (1)" in done.stdout
+    assert f"- {'b' * 12}: axe a.toc on docs" in done.stdout
 
 
 def test_file_job_takes_groups_from_the_probe_artifact() -> None:

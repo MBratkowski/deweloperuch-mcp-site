@@ -5,7 +5,8 @@
     "fixes_in_progress": 2,
     "attempts_per_issue": 2,
     "merges_per_day": 5,
-    "max_changed_lines": 300
+    "max_changed_lines": 300,
+    "qa_agent_runs_per_day": 2
   },
   "site": {
     "live_url": "https://mbratkowski.github.io/deweloperuch-mcp-site/",

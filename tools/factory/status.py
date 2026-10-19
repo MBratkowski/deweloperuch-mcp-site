@@ -1,4 +1,13 @@
-"""The pinned "Factory status" issue: counts, activity, and the shadow-mode agreement."""
+"""The pinned "Factory status" issue: counts, activity, and the shadow-mode agreement; and the QA
+guard's daily cap on agent runs.
+
+Command line:
+
+  python -m tools.factory.status update    edit (or create and pin) the status issue (App token)
+  python -m tools.factory.status qa-cap    print `agent=true` while fewer than
+                                           `limits.qa_agent_runs_per_day` QA runs today (UTC) had a
+                                           successful triage job, else `agent=false` (read token)
+"""
 
 from __future__ import annotations
 
@@ -10,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from tools.factory.ci_facts import _pages
 from tools.factory.config import MODES, load_config
 from tools.factory.github import GitHub, GitHubError
 
@@ -28,6 +38,9 @@ LABELS = (
     "factory:needs-human",
 )
 AGENT_WORKFLOWS = ("factory-qa.yml", "factory-fix.yml", "factory-review.yml")
+QA_WORKFLOW = "factory-qa.yml"
+# The name of factory-qa.yml's agent job; a test keeps it equal to the workflow's.
+TRIAGE_JOB = "Triage the findings (QA agent)"
 _VERDICT = re.compile(r"<!-- factory:verdict=(merge|block) sha=\S+ -->")
 _PIN = "mutation($id: ID!) { pinIssue(input: {issueId: $id}) { issue { id } } }"
 
@@ -40,16 +53,13 @@ class Agreement:
 
 
 def agreement(prs: Sequence[dict]) -> Agreement:
-    """Compare shadow verdicts with outcomes over the last 10 decided pull requests."""
-    recent = sorted(prs, key=lambda pr: pr["number"], reverse=True)[:WINDOW]
-    agree = 0
-    dangerous: list[int] = []
-    for pr in recent:
-        would_merge = pr["verdict"] == "merge"
-        if pr["merged"] == would_merge:
-            agree += 1
-        elif would_merge:
-            dangerous.append(pr["number"])
+    """Compare shadow verdicts with outcomes over the last 10 decided pull requests; every "would
+    merge" the owner closed, among all decided pull requests, is dangerous (the spec's switch rule:
+    no such pull request at all, M3)."""
+    ordered = sorted(prs, key=lambda pr: pr["number"], reverse=True)
+    recent = ordered[:WINDOW]
+    agree = sum(1 for pr in recent if pr["merged"] == (pr["verdict"] == "merge"))
+    dangerous = [pr["number"] for pr in ordered if pr["verdict"] == "merge" and not pr["merged"]]
     return Agreement(len(recent), agree, dangerous)
 
 
@@ -96,10 +106,11 @@ def render_status(
         f"{a.agree} of the last {a.decided} decided pull requests agree.",
         "",
     ]
+    # Among every decided pull request, not only the last 10: one is enough to keep the factory in shadow.
     if a.dangerous:
-        lines.append("Would merge, but closed by the owner: " + ", ".join(f"#{n}" for n in sorted(a.dangerous)))
+        lines.append("Would merge, but closed by the owner (dangerous): " + ", ".join(f"#{n}" for n in sorted(a.dangerous)))
     else:
-        lines.append("Would merge, but closed by the owner: none")
+        lines.append("Would merge, but closed by the owner (dangerous): none")
     lines += ["", f"Ready for auto: {'yes' if ready_for_auto(a) else 'no'}", ""]
     return "\n".join(lines)
 
@@ -144,25 +155,47 @@ def decided_prs(gh: Any, repo: str, prs: Sequence[dict], trusted: frozenset[str]
     return decided
 
 
+def _runs_since(gh: Any, repo: str, workflow: str, day: str) -> list[dict]:
+    """Every run of `workflow` created on or after `day` (UTC), past the first 100 (M3)."""
+    path = f"/repos/{repo}/actions/workflows/{workflow}/runs"
+    return _pages(gh, path, "workflow_runs", {"created": f">={day}"})
+
+
 def runs_per_day(gh: Any, repo: str, now: datetime) -> dict[str, int]:
+    """Runs of the agent workflows per UTC day over the last 7 days; a run that ended `skipped` (the
+    mode, the label or the guard ended it before any job ran) is no agent run (M3)."""
     days = [(now - timedelta(days=i)).date().isoformat() for i in range(7)]
     counts = dict.fromkeys(sorted(days), 0)
     for workflow in AGENT_WORKFLOWS:
         try:
-            data = gh.request(
-                "GET",
-                f"/repos/{repo}/actions/workflows/{workflow}/runs",
-                params={"per_page": 100, "created": f">={min(days)}"},
-            )
+            runs = _runs_since(gh, repo, workflow, min(days))
         except GitHubError as error:
             if error.status == 404:
                 continue
             raise
-        for run in (data or {}).get("workflow_runs", []):
+        for run in runs:
+            if run.get("conclusion") == "skipped":
+                continue
             day = _parse(run["created_at"]).astimezone(timezone.utc).date().isoformat()
             if day in counts:
                 counts[day] += 1
     return counts
+
+
+def qa_agent_runs_today(gh: Any, repo: str, now: datetime, current: int | None = None) -> int:
+    """QA runs created today (UTC), other than `current`, whose triage job succeeded in any attempt:
+    the QA agent's runs that count against `limits.qa_agent_runs_per_day` (M11)."""
+    today = now.astimezone(timezone.utc).date().isoformat()
+    count = 0
+    for run in _runs_since(gh, repo, QA_WORKFLOW, today):
+        if run.get("id") == current:
+            continue
+        if _parse(run["created_at"]).astimezone(timezone.utc).date().isoformat() != today:
+            continue
+        jobs = _pages(gh, f"/repos/{repo}/actions/runs/{run['id']}/jobs", "jobs", {"filter": "all"})
+        if any(job.get("name") == TRIAGE_JOB and job.get("conclusion") == "success" for job in jobs):
+            count += 1
+    return count
 
 
 def gather(gh: Any, repo: str, trusted: frozenset[str], now: datetime) -> dict:
@@ -216,17 +249,29 @@ def update(gh: Any, repo: str, trusted: frozenset[str], now: datetime, mode: str
     return created["number"]
 
 
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     import os
 
     parser = argparse.ArgumentParser(prog="python -m tools.factory.status")
-    parser.add_argument("command", choices=["update"])
-    parser.parse_args(argv)
+    parser.add_argument("command", choices=["update", "qa-cap"])
+    args = parser.parse_args(argv)
     config = load_config()
     repo = config.site.repo
     trusted = config.trusted(os.environ.get("FACTORY_APP_SLUG"))
+    now = _now()
     try:
-        number = update(GitHub(repo), repo, trusted, datetime.now(timezone.utc), os.environ.get("FACTORY_MODE", ""))
+        if args.command == "qa-cap":
+            current = os.environ.get("GITHUB_RUN_ID", "")
+            used = qa_agent_runs_today(GitHub(repo), repo, now, int(current) if current.isdigit() else None)
+            limit = config.limits.qa_agent_runs_per_day
+            print(f"qa_agent_runs={used}")
+            print(f"agent={'true' if used < limit else 'false'}")
+            return 0
+        number = update(GitHub(repo), repo, trusted, now, os.environ.get("FACTORY_MODE", ""))
     except GitHubError as error:
         print(f"status failed: {error}", file=sys.stderr)
         return 2

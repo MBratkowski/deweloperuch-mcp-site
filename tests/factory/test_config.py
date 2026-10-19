@@ -16,7 +16,7 @@ from tools.factory.config import (
 
 def test_config_matches_the_spec() -> None:
     config = load_config()
-    assert config.limits == Limits(3, 1, 2, 2, 5, 300)
+    assert config.limits == Limits(3, 1, 2, 2, 5, 300, 2)
     assert config.matrix.engines == ("chromium", "firefox", "webkit")
     assert config.matrix.widths == (
         320, 375, 390, 414, 719, 721, 759, 761, 768, 1024, 1280, 1440, 1920,
