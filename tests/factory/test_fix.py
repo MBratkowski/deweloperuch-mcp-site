@@ -1455,6 +1455,8 @@ def test_prove_runs_a_visual_test_against_the_baselines_it_changed(tmp_path: Pat
         repo,
         "Base",
         {
+            # As in the real repository: the pytest run below writes bytecode, and prove refuses an untracked file.
+            ".gitignore": "__pycache__/\n.pytest_cache/\n",
             "pyproject.toml": real_pytest_options(),
             "swatch.py": "def color() -> str:\n    return 'red'\n",
             "tests/test_unit.py": "def test_unit() -> None:\n    assert True\n",
