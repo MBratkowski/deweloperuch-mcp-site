@@ -14,10 +14,11 @@ comment on the pull request naming the failed jobs and the run.
 Trust (R44): the pull request must be the App's, from this repository, labelled `factory` and not
 `factory:needs-human`, open and not a draft, and its current head must be the commit Check ran on. Its
 body's markers (`factory:attempt`, `factory:tests`, `factory:head`) count only in the block our code
-renders and only while `factory:head` names that head; otherwise the route is `ignore` and a later
-event retries. A revert (`factory:revert`, from `revert/<N>`) carries no markers: the merge it must
-exactly undo comes from the issue's trusted `factory:merged` marker. `act`, `post` and `hand-over`
-route again from GitHub instead of trusting what an earlier job wrote.
+renders and only while `factory:head` names that head, or a commit that head updates with main
+(GitHub's "Update branch", read with git from main's checkout: R49(1)); otherwise the route is
+`ignore` and a later event retries. A revert (`factory:revert`, from `revert/<N>`) carries no markers:
+the merge it must exactly undo comes from the issue's trusted `factory:merged` marker. `act`, `post`
+and `hand-over` route again from GitHub instead of trusting what an earlier job wrote.
 
 Command line, `python -m tools.factory.review`:
 
@@ -62,6 +63,7 @@ from tools.factory.fix_publish import (
     _line,
     _neutral,
     attempt_in,
+    branch_updated,
     head_in,
     marked_test_ids,
 )
@@ -255,11 +257,15 @@ def _tests_marker_ok(body: str) -> bool:
     return True
 
 
-def route(event: Mapping[str, Any], gh: Any, config: Config, trusted: frozenset[str]) -> Route:
+def route(
+    event: Mapping[str, Any], gh: Any, config: Config, trusted: frozenset[str], *, repo: Path | None = None
+) -> Route:
     """Decide what happens after Check (a workflow_run event) or on the owner's request (a
-    workflow_dispatch event with `pr`). Reads GitHub only."""
-    repo = config.site.repo
-    api = f"/repos/{repo}"
+    workflow_dispatch event with `pr`). Reads GitHub, and with main's checkout `repo` git objects
+    only when the head is not the marked one (`branch_updated`); without `repo` only the marked head
+    counts."""
+    name = config.site.repo
+    api = f"/repos/{name}"
     app = _app_logins(trusted)
     if not app:
         return _ignore("no App login is configured (FACTORY_APP_SLUG); factory pull requests cannot be told apart")
@@ -268,7 +274,7 @@ def route(event: Mapping[str, Any], gh: Any, config: Config, trusted: frozenset[
     if isinstance(run, dict):
         if run.get("event") != "pull_request":
             return _ignore(f"Check ran for a {run.get('event') or 'unknown'} event, not for a pull request")
-        if (run.get("head_repository") or {}).get("full_name") != repo:
+        if (run.get("head_repository") or {}).get("full_name") != name:
             return _ignore("the head is in another repository (a fork)")
         head = str(run.get("head_sha") or "")
         numbers = sorted({
@@ -284,7 +290,7 @@ def route(event: Mapping[str, Any], gh: Any, config: Config, trusted: frozenset[
         number = int(value)
         pull = gh.request("GET", f"{api}/pulls/{number}") or {}
         head = str((pull.get("head") or {}).get("sha") or "")
-        latest = _latest_check(gh, api, repo, head)
+        latest = _latest_check(gh, api, name, head)
         if latest is None:
             return _ignore(f"Check has not run on {_short(head)} of #{number} for its pull request yet", pr=number)
         if latest.get("status") != "completed":
@@ -294,7 +300,9 @@ def route(event: Mapping[str, Any], gh: Any, config: Config, trusted: frozenset[
         return _ignore("neither a workflow_run nor a workflow_dispatch event")
     if not _SHA.fullmatch(head):
         return _ignore("the event names no head commit", pr=number)
-    return _decide(gh, config, api, app, trusted, number, head, conclusion, run_id if isinstance(run_id, int) else None, pull)
+    return _decide(
+        gh, config, api, app, trusted, number, head, conclusion, run_id if isinstance(run_id, int) else None, pull, repo
+    )
 
 
 def _latest_check(gh: Any, api: str, repo: str, head: str) -> dict[str, Any] | None:
@@ -327,6 +335,7 @@ def _decide(
     conclusion: str,
     run_id: int | None,
     pull: dict[str, Any] | None,
+    repo_path: Path | None = None,
 ) -> Route:
     repo = config.site.repo
     pull = pull or gh.request("GET", f"{api}/pulls/{number}") or {}
@@ -368,8 +377,13 @@ def _decide(
     else:
         if NEEDS_HUMAN in issue_labels:
             return _ignore(f"#{issue} is labelled {NEEDS_HUMAN}: the factory leaves it alone", **known)
-        if head_in(body) != head:
-            return _ignore(f"the body of #{number} does not name {_short(head)} in factory:head (R44); a later event retries", **known)
+        marked = head_in(body)
+        if marked != head and not (repo_path is not None and branch_updated(repo_path, number, head, marked)):
+            return _ignore(
+                f"the body of #{number} names neither {_short(head)} in factory:head nor a commit {_short(head)} "
+                "updates with main (R44); a later event retries",
+                **known,
+            )
         attempt = attempt_in(body) or 0
         if attempt < 1 or not _tests_marker_ok(body):
             return _ignore(f"the body of #{number} carries no valid factory:attempt and factory:tests markers", **known)
@@ -996,7 +1010,7 @@ def _fresh_route(args: argparse.Namespace, config: Config) -> tuple[Any, Route]:
     event = json.loads(args.event.read_text(encoding="utf-8"))
     if not isinstance(event, dict):
         raise ValueError("the event payload is not an object")
-    return gh, route(event, gh, config, trusted)
+    return gh, route(event, gh, config, trusted, repo=Path.cwd())
 
 
 def _outputs(result: Route) -> list[str]:

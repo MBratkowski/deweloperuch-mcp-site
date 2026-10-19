@@ -2,14 +2,17 @@ name: Factory merge
 
 # The agent factory's merger (docs/superpowers/specs/2026-10-18-agent-factory-design.md, "Merger"):
 # deterministic policy as code, no language model. It evaluates a factory pull request against the
-# spec's conditions (tools/factory/merge.py). In shadow mode it comments once per head with the
-# condition table and the verdict and labels factory:merge-ready when it would merge; in auto mode it
-# squash-merges the evaluated head with the App token (so Pages runs), moves the issue to
-# factory:merged and promotes the next issues, or updates a branch that is behind main and stops.
+# spec's conditions (tools/factory/merge.py). In shadow mode it keeps one comment per head with the
+# condition table and the verdict, edited in place when the verdict changes, and labels
+# factory:merge-ready while it would merge; in auto mode it squash-merges the evaluated head with the
+# App token (so Pages runs), moves the issue to factory:merged and promotes the next issues, or updates
+# a branch that is behind main and stops.
 #
 # The reviewer dispatches it after an approval (an approval made with GITHUB_TOKEN starts no
-# workflow); the hourly sweep catches anything a lost event left behind. It runs no code from the
-# pull request: the fence is recomputed from main's checkout over the head's git objects.
+# workflow); the hourly sweep catches anything a lost event left behind and reconciles the factory's
+# fix pull requests closed outside the merger (merged by the owner: factory:merged; closed unmerged:
+# factory:needs-human). It runs no code from the pull request: the fence (or a revert's exact-revert
+# check) is recomputed from main's checkout over the head's git objects.
 on:
   workflow_dispatch:
     inputs:

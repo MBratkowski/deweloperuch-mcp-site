@@ -99,7 +99,8 @@ jobs:
             echo "verdict_schema=$verdict_schema"
           } >> "$GITHUB_OUTPUT"
       # Ignore unless the pull request is the App's, from this repository, labelled factory, its head is
-      # the commit Check ran on, and its body's markers name that head (R44).
+      # the commit Check ran on, and its body's markers name that head or a commit the head updates
+      # with main (R44; GitHub's "Update branch", read with git: the shallow checkout is deepened then).
       - name: Route
         id: route
         env:

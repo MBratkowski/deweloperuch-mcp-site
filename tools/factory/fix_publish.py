@@ -79,6 +79,10 @@ PR_LABEL = "factory"
 WORKFLOW = "factory-fix.yml"
 HEAD_REF = "refs/factory/fix-head"
 PR_HEAD_REF = "refs/factory/pr-head"
+UPDATED_HEAD_REF = "refs/factory/updated-head"
+MAIN_REF = "refs/remotes/origin/main"
+# Successive updates of a branch with main that branch_updated follows back to the marked head.
+MAX_UPDATES = 20
 IDENTITY = ("deweloperuch-factory", "factory@users.noreply.github.com")
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_IMAGE_BYTES = 5_000_000
@@ -136,9 +140,40 @@ def attempt_in(body: str) -> int | None:
 
 def head_in(body: str) -> str | None:
     """The commit publish pushed when it rendered this body (R44): the reviewer trusts the other
-    markers only while the pull request's head is still that commit."""
+    markers only while the pull request's head is still that commit, or GitHub's update of it with
+    main (`branch_updated`)."""
     match = _HEAD.search(_marker_block(body))
     return match.group(1) if match else None
+
+
+def branch_updated(repo: Path, pr: int, head: str, marked: str | None) -> bool:
+    """Whether `head` is GitHub's update of the pull request's branch at the marked commit `marked`
+    with main ("Update branch", `PUT update-branch`), once or several times in a row (R49(1)): from
+    `head`, every commit along the first parents is a merge with exactly two parents whose second
+    parent is already on main, until the first parent is `marked`. R44 then still trusts the body's
+    markers, which describe `marked`; the fence and the evidence diff the merge base of main and
+    `head`.
+
+    Read with git only, from main's checkout `repo`: the pull request's head is fetched as objects
+    into UPDATED_HEAD_REF and main into origin/main (a shallow checkout is deepened first, so that
+    ancestry can be read), and nothing is checked out or run. False when the fetched head is no
+    longer `head` (a later event decides). Raises FixError when git fails."""
+    if not marked or not _SHA.fullmatch(marked) or not _SHA.fullmatch(head) or marked == head:
+        return False
+    deepen = ("--unshallow",) if git(repo, "rev-parse", "--is-shallow-repository") == "true" else ()
+    git(repo, "fetch", "--no-tags", *deepen, "origin", f"+refs/pull/{pr}/head:{UPDATED_HEAD_REF}",
+        f"+refs/heads/main:{MAIN_REF}")
+    if git(repo, "rev-parse", "--verify", f"{UPDATED_HEAD_REF}^{{commit}}") != head:
+        return False
+    commit = head
+    for _ in range(MAX_UPDATES):
+        parents = git(repo, "rev-list", "--parents", "-n", "1", commit).split()[1:]
+        if len(parents) != 2 or not is_ancestor(repo, parents[1], MAIN_REF):
+            return False
+        if parents[0] == marked:
+            return True
+        commit = parents[0]
+    return False
 
 
 # --- text ------------------------------------------------------------------------------------

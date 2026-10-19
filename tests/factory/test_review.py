@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from tests.factory.fakes import FakeGitHub
-from tools.factory import review, review_evidence
+from tools.factory import fix_publish, review, review_evidence
 from tools.factory.config import load_config
 from tools.factory.fence import FenceReport
 from tools.factory.findings import Cell, Finding, Group
@@ -257,6 +257,85 @@ def test_route_ignores_a_head_the_reviewer_already_reviewed() -> None:
 
 def test_route_never_trusts_a_body_without_the_app_slug() -> None:
     assert route(run_event(), github(), CONFIG, frozenset({OWNER})).action == "ignore"
+
+
+def updated_branch(tmp_path: Path, kind: str) -> tuple[Path, str, str, str]:
+    """An origin whose pull request #12 has a merge commit as its head, and a shallow clone of main
+    (the route job's checkout). `kind`: "update" (GitHub's update of the marked head with main),
+    "twice" (two updates in a row), "reversed" (main with the marked head merged in: the first parent
+    is main's), "side" (the marked head merged with a commit that is not on main). Returns (clone,
+    marked head, head, merge base of main and the head)."""
+    origin = tmp_path / "origin"
+    git("init", "-q", "-b", "main", str(origin), cwd=tmp_path)
+    commit(origin, "Base", {"css/site.css": "a {}\n", "README.md": "one\n"})
+    git("checkout", "-q", "-b", BRANCH, cwd=origin)
+    marked = commit(origin, "Fix", {"css/site.css": "a { color: red; }\n"})
+    git("checkout", "-q", "main", cwd=origin)
+    commit(origin, "Main moves", {"README.md": "two\n"})
+    if kind == "reversed":
+        git("checkout", "-q", "-b", "other", cwd=origin)
+        git("merge", "-q", "--no-ff", "-m", "Merge the fix into main", marked, cwd=origin)
+    elif kind == "side":
+        git("checkout", "-q", "-b", "side", "main~1", cwd=origin)
+        side = commit(origin, "Not on main", {"js/site.js": "side\n"})
+        git("checkout", "-q", BRANCH, cwd=origin)
+        git("merge", "-q", "--no-ff", "-m", "Merge a side branch", side, cwd=origin)
+    else:
+        git("checkout", "-q", BRANCH, cwd=origin)
+        git("merge", "-q", "--no-ff", "-m", "Merge branch 'main'", "main", cwd=origin)
+        if kind == "twice":
+            git("checkout", "-q", "main", cwd=origin)
+            commit(origin, "Main moves again", {"README.md": "three\n"})
+            git("checkout", "-q", BRANCH, cwd=origin)
+            git("merge", "-q", "--no-ff", "-m", "Merge branch 'main' again", "main", cwd=origin)
+    head = git("rev-parse", "HEAD", cwd=origin)
+    git("update-ref", "refs/pull/12/head", head, cwd=origin)
+    git("checkout", "-q", "main", cwd=origin)
+    base = git("merge-base", "main", head, cwd=origin)
+    clone = tmp_path / "main"
+    git("clone", "-q", "--depth", "1", f"file://{origin}", str(clone), cwd=tmp_path)
+    return clone, marked, head, base
+
+
+def updated_github(marked: str, head: str, base: str) -> FakeGitHub:
+    gh = github(pull_data(head=head, body=pr_body(head=marked)))
+    gh.responses[("GET", f"{API}/compare/main...{head}")] = {"merge_base_commit": {"sha": base}}
+    return gh
+
+
+@pytest.mark.parametrize("kind", ["update", "twice"])
+def test_route_accepts_githubs_update_of_the_marked_head(tmp_path: Path, kind: str) -> None:
+    """R49(1): "Update branch" makes a merge commit the head; the body still names the head before it."""
+    clone, marked, head, base = updated_branch(tmp_path, kind)
+    assert git("rev-parse", "--is-shallow-repository", cwd=clone) == "true"
+    gh = updated_github(marked, head, base)
+    result = route(run_event(head=head), gh, CONFIG, TRUSTED, repo=clone)
+    assert (result.action, result.head, result.base, result.attempt) == ("review", head, base, 1), result.reason
+    # Read with git only: the head sits in a private ref, main is still checked out and the clone was deepened.
+    assert git("rev-parse", "refs/factory/updated-head", cwd=clone) == head
+    assert git("rev-parse", "--abbrev-ref", "HEAD", cwd=clone) == "main"
+    assert git("rev-parse", "--is-shallow-repository", cwd=clone) == "false"
+    assert writes(gh) == []
+
+
+@pytest.mark.parametrize("kind", ["reversed", "side"])
+def test_route_rejects_a_merge_that_does_not_update_the_marked_head(tmp_path: Path, kind: str) -> None:
+    clone, marked, head, base = updated_branch(tmp_path, kind)
+    result = route(run_event(head=head), updated_github(marked, head, base), CONFIG, TRUSTED, repo=clone)
+    assert result.action == "ignore" and "R44" in result.reason
+
+
+def test_route_without_a_checkout_accepts_only_the_marked_head(tmp_path: Path) -> None:
+    clone, marked, head, base = updated_branch(tmp_path, "update")
+    assert route(run_event(head=head), updated_github(marked, head, base), CONFIG, TRUSTED).action == "ignore"
+
+
+def test_branch_updated_refuses_a_head_that_moved(tmp_path: Path) -> None:
+    clone, marked, head, _ = updated_branch(tmp_path, "update")
+    assert fix_publish.branch_updated(clone, 12, head, marked) is True
+    assert fix_publish.branch_updated(clone, 12, "f" * 40, marked) is False  # refs/pull/12/head is another commit
+    assert fix_publish.branch_updated(clone, 12, head, None) is False
+    assert fix_publish.branch_updated(clone, 12, marked, marked) is False  # the marked head itself is no update
 
 
 @pytest.mark.parametrize(
