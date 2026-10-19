@@ -34,20 +34,24 @@ Exit 2 on errors (GitHub, git, configuration).
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import threading
 import urllib.parse
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from tools.factory.config import Config, ConfigError, load_config
 from tools.factory.evidence import redact
-from tools.factory.fence import GitError
+from tools.factory.fence import HARNESS_NAMES, GitError, harness_path
 from tools.factory.fix import FIXING, FLAKY, NEEDS_HUMAN, READY, REVIEWER, FixError, _git_bytes, check_text
 from tools.factory.fix_publish import (
     _TESTS,
@@ -68,7 +72,6 @@ from tools.factory.review_evidence import (
     PROOF_FILE,
     SCRIPT_FILE,
     Evidence,
-    _tree_entries,
     flaky_selectors,
     gather_decisive,
     gather_proof,
@@ -386,6 +389,9 @@ def _decide(
         "issue_body": str(data.get("body") or "") if _login(data) in trusted else "",
     }
     if conclusion == "success":
+        # Checked before any evidence job exists: a head the reviewer already reviewed is not reviewed again.
+        if already_reviewed(gh, api, number, head):
+            return _ignore(f"{REVIEWER} already reviewed {_short(head)} of #{number}", **known)
         base = _merge_base(gh, api, head)
         return Route("review", base=base, reason=f"Check passed on {_short(head)}", **common)
     if conclusion in FAILED:
@@ -758,6 +764,8 @@ REVIEW_DIFF = "diff.patch"
 REVIEW_LOG = "log.txt"
 REVIEW_CHANGED = "changed.json"
 REVIEW_FILES = "files"
+REVIEW_BASE = "base"
+REVIEW_VISUAL_SKIPPED = "visual-skipped.json"
 MAX_REVIEW_BYTES = 5_000_000
 # No external diff driver and no textconv filter runs; renames show as a deletion and an addition,
 # as the fence sees them.
@@ -775,12 +783,76 @@ def _unsafe(path: str) -> bool:
     return not path or "\\" in path or bool({"", ".", "..", ".git"} & set(parts))
 
 
+NOT_HARNESS = "not written: harness-loaded name"
+
+
+def _stream_blobs(repo: Path, shas: Sequence[str]) -> Iterator[tuple[int, bytes | None]]:
+    """(size, content) of each object in order, through one `git cat-file --batch` fed over stdin
+    (argv cannot overflow however many files the change has). The content is None for a missing
+    object or one over MAX_REVIEW_BYTES (read and dropped). Nothing is checked out, no filter runs."""
+    proc = subprocess.Popen(
+        ["git", "-c", "core.hooksPath=/dev/null", "cat-file", "--batch"],
+        cwd=repo, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+
+    def feed() -> None:
+        try:
+            proc.stdin.write("".join(f"{sha}\n" for sha in shas).encode())  # type: ignore[union-attr]
+            proc.stdin.close()  # type: ignore[union-attr]
+        except OSError:
+            pass
+
+    writer = threading.Thread(target=feed, daemon=True)
+    writer.start()
+    try:
+        for _ in shas:
+            header = proc.stdout.readline().split()
+            if len(header) != 3 or header[1] != b"blob":
+                yield -1, None
+                continue
+            size = int(header[2])
+            if size > MAX_REVIEW_BYTES:
+                left = size
+                while left:
+                    chunk = proc.stdout.read(min(left, 1 << 20))
+                    left -= len(chunk) if chunk else left  # EOF ends the loop
+                yield size, None
+            else:
+                yield size, proc.stdout.read(size)
+            proc.stdout.read(1)
+    finally:
+        proc.kill()
+        writer.join(timeout=5)
+        proc.wait()
+
+
+def _tree(repo: Path, commit: str) -> dict[str, tuple[str, str, str]]:
+    """path -> (mode, type, object) of every file of `commit` (the whole tree: no path on argv)."""
+    output = _git_bytes(repo, "ls-tree", "-r", "-z", commit).decode(errors="surrogateescape")
+    tree: dict[str, tuple[str, str, str]] = {}
+    for entry in output.split("\0"):
+        if entry:
+            meta, path = entry.split("\t", 1)
+            mode, kind, sha = meta.split()
+            tree[path] = (mode, kind, sha)
+    return tree
+
+
+def _errno_name(error: Exception) -> str:
+    code = getattr(error, "errno", None)
+    return errno.errorcode.get(code, type(error).__name__) if isinstance(code, int) else type(error).__name__
+
+
 def write_change(repo: Path, base: str, head: str, out: Path) -> list[dict[str, Any]]:
     """The change as data for the reviewer agent, which runs no command (R45): `diff.patch` (the
-    diff base..head), `log.txt` (its commits with their file stats), and the head's version of every
-    file the change adds or modifies under `files/<path>`, read as git objects (nothing is checked
-    out, no filter or hook runs). Symbolic links, submodules, unsafe paths and files over
-    MAX_REVIEW_BYTES are listed in `changed.json` with a note, never written. Returns that list."""
+    diff base..head), `log.txt` (its commits with their file stats), the head's version of every
+    file the change adds or modifies under `files/<path>` and the base's version of every file it
+    modifies or deletes under `base/<path>`, read as git objects (nothing is checked out, no filter
+    or hook runs). Symbolic links, submodules, unsafe paths, names the harness loads (CLAUDE.md,
+    CLAUDE.local.md, AGENTS.md, .claude: R47) and files over MAX_REVIEW_BYTES are listed in
+    `changed.json` with a note, never written; so is a file that could not be written (the errno
+    name). Returns that list."""
     for value, what in ((base, "the base"), (head, "the head")):
         if not _SHA.fullmatch(value or ""):
             raise ValueError(f"{what} is not a commit SHA: {value!r}")
@@ -789,36 +861,67 @@ def write_change(repo: Path, base: str, head: str, out: Path) -> list[dict[str, 
     _write_capped(out / REVIEW_LOG, _git_bytes(repo, "log", "--no-decorate", "--stat", *_READ_OPTIONS, f"{base}..{head}"))
     fields = _git_bytes(repo, "diff", "--name-status", "--no-renames", "-z", base, head)
     names = fields.decode(errors="surrogateescape").split("\0")
-    pairs = list(zip(names[0::2], names[1::2]))
-    present = [path for status, path in pairs if status != "D" and not _unsafe(path)]
-    entries = {path: (mode, kind, sha) for mode, kind, sha, path in _tree_entries(repo, head, present)} if present else {}
-    files = out / REVIEW_FILES
+    pairs = [(status, path) for status, path in zip(names[0::2], names[1::2])]
+    trees = {REVIEW_FILES: _tree(repo, head), REVIEW_BASE: _tree(repo, base)}
     changed: list[dict[str, Any]] = []
+    jobs: list[tuple[dict[str, Any], str, str, str, str]] = []  # (item, side, field, path, sha)
     for status, path in pairs:
-        item: dict[str, Any] = {"status": status, "path": path, "file": None, "note": ""}
-        entry = entries.get(path)
-        if status == "D":
-            item["note"] = "deleted: not on the head"
-        elif _unsafe(path):
-            item["note"] = "not written: an unsafe path"
-        elif entry is None:
-            item["note"] = "not written: not a file on the head"
-        elif entry[1] == "commit":
-            item["note"] = "not written: a submodule"
-        elif entry[0] == "120000":
-            item["note"] = "not written: a symbolic link"
-        else:
-            data = _git_bytes(repo, "cat-file", "blob", entry[2])
-            if len(data) > MAX_REVIEW_BYTES:
-                item["note"] = f"not written: {len(data)} bytes"
-            else:
-                target = files.joinpath(*path.split("/"))
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(data)
-                item["file"] = f"{REVIEW_FILES}/{path}"
+        item: dict[str, Any] = {"status": status, "path": path, "file": None, "note": "", "base_file": None, "base_note": ""}
         changed.append(item)
+        for side, key, note_key, absent in (
+            (REVIEW_FILES, "file", "note", status == "D"),
+            (REVIEW_BASE, "base_file", "base_note", status == "A"),
+        ):
+            entry = trees[side].get(path)
+            if harness_path(path):
+                item[note_key] = NOT_HARNESS
+            elif absent:
+                item[note_key] = "deleted: not on the head" if side == REVIEW_FILES else "added: not on the base"
+            elif _unsafe(path):
+                item[note_key] = "not written: an unsafe path"
+            elif entry is None:
+                item[note_key] = "not written: not a file there"
+            elif entry[1] == "commit":
+                item[note_key] = "not written: a submodule"
+            elif entry[0] == "120000":
+                item[note_key] = "not written: a symbolic link"
+            else:
+                jobs.append((item, side, key, path, entry[2]))
+    notes = {REVIEW_FILES: "note", REVIEW_BASE: "base_note"}
+    for (item, side, key, path, _), (size, data) in zip(jobs, _stream_blobs(repo, [job[4] for job in jobs])):
+        if data is None:
+            item[notes[side]] = f"not written: {size} bytes" if size > MAX_REVIEW_BYTES else "not written: unreadable object"
+            continue
+        target = out.joinpath(side, *path.split("/"))
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        except (OSError, ValueError) as error:
+            item[notes[side]] = f"not written: {_errno_name(error)}"
+            continue
+        item[key] = f"{side}/{path}"
     (out / REVIEW_CHANGED).write_text(json.dumps(changed, indent=2) + "\n", encoding="utf-8")
     return changed
+
+
+def prune_harness_names(root: Path) -> list[str]:
+    """Delete every file, link and directory under `root` named like a file the harness loads and
+    return their paths relative to `root` (R47): a download of Check's visual-results must not place
+    a CLAUDE.md or a .claude directory in the reviewer's workspace."""
+    removed: list[str] = []
+    if not root.is_dir():
+        return removed
+    for current, directories, files in os.walk(root):
+        for name in [*directories, *files]:
+            if name.lower() in HARNESS_NAMES:
+                victim = Path(current) / name
+                removed.append(victim.relative_to(root).as_posix())
+                if victim.is_dir() and not victim.is_symlink():
+                    shutil.rmtree(victim, ignore_errors=True)
+                else:
+                    victim.unlink(missing_ok=True)
+        directories[:] = [d for d in directories if d.lower() not in HARNESS_NAMES]
+    return sorted(removed)
 
 
 # --- the agent's context ------------------------------------------------------------------------------
@@ -872,6 +975,7 @@ def _parser() -> argparse.ArgumentParser:
     command = commands.add_parser("prepare", help="write the change out as data for the reviewer agent")
     command.add_argument("--route", type=Path, required=True, help="route.json of the route job")
     command.add_argument("--out", type=Path, required=True)
+    command.add_argument("--visual", type=Path, help="Check's downloaded visual-results: harness-loaded names are removed")
     command = commands.add_parser("post", help="post the verdict and start what comes next")
     command.add_argument("--event", type=Path, required=True)
     command.add_argument("--verdict", type=Path, required=True)
@@ -996,6 +1100,10 @@ def _prepare_command(args: argparse.Namespace) -> int:
     saved = _saved_route(args.route)
     changed = write_change(Path.cwd(), saved.base, saved.head, args.out)
     print(f"the change of #{saved.pr}: {len(changed)} paths, {sum(1 for c in changed if c['file'])} files written")
+    if args.visual is not None:
+        skipped = prune_harness_names(args.visual)
+        (args.out / REVIEW_VISUAL_SKIPPED).write_text(json.dumps(skipped, indent=2) + "\n", encoding="utf-8")
+        print(f"visual-results: {len(skipped)} harness-loaded names skipped")
     return 0
 
 

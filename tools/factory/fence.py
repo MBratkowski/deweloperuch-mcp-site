@@ -65,6 +65,8 @@ SETTER_NAMES = frozenset({"setattr", "delattr", "__setattr__", "__delattr__"})
 DYNAMIC_CALLS = frozenset("eval exec compile __import__ globals locals vars setattr delattr".split())
 INFRASTRUCTURE_NAMES = ("pytest.ini", "tox.ini", "setup.cfg", ".gitattributes")
 SYMLINK, GITLINK = "120000", "160000"
+# Names the Claude Code harness loads as instructions or settings wherever they sit in a tree (R47).
+HARNESS_NAMES = frozenset({"claude.md", "claude.local.md", "agents.md", ".claude"})
 SUSPICIOUS_ADDED = re.compile(
     r"mark\.(skip|skipif|xfail|network|visual|multi_engine)"
     r"|\b(skip|xfail|importorskip)\s*\("
@@ -74,6 +76,11 @@ SUSPICIOUS_ADDED = re.compile(
 _CSS_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _CSS_CONTENT = re.compile(r"content\s*:\s*(\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*')")
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v", "0": "\0"}
+
+
+def harness_path(path: str) -> bool:
+    """Whether any component of `path` is a name the harness loads (case-insensitive)."""
+    return any(part.lower() in HARNESS_NAMES for part in path.split("/"))
 
 
 class GitError(RuntimeError):
@@ -792,6 +799,8 @@ def _structure(change: Change) -> list[str]:
             reasons.append("invalid path")
         if "__pycache__/" in path or path.endswith(".pyc"):
             reasons.append(f"test infrastructure: {path}")
+        if harness_path(path):
+            reasons.append(f"harness file: {path}")
         if name == "conftest.py" or name in INFRASTRUCTURE_NAMES:
             reasons.append(f"test infrastructure: {path}")
     if change.path.endswith("/__init__.py") or change.path == "__init__.py":

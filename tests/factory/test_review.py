@@ -7,6 +7,7 @@ files and tiny pytest projects for the test sessions, and a fake lab for the bro
 from __future__ import annotations
 
 import base64
+import errno
 import json
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -235,6 +236,23 @@ def test_route_table(name: str, event: dict[str, Any], pull: dict[str, Any], exp
 def test_route_trusts_markers_only_for_the_head_they_name(body: str) -> None:
     result = route(run_event(), github(pull_data(body=body)), CONFIG, TRUSTED)
     assert result.action == "ignore"
+
+
+def test_route_ignores_a_head_the_reviewer_already_reviewed() -> None:
+    # Before any evidence job exists, in any review state; a review of an older head or by a person does not count.
+    for state in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+        gh = github()
+        gh.responses[("GET", f"{API}/pulls/12/reviews")] = [reviewed(HEAD, state=state)]
+        result = route(run_event(), gh, CONFIG, TRUSTED)
+        assert result.action == "ignore" and "already reviewed" in result.reason
+        assert writes(gh) == []
+    gh = github()
+    gh.responses[("GET", f"{API}/pulls/12/reviews")] = [reviewed("f" * 40), reviewed(HEAD, login=OWNER)]
+    assert route(run_event(), gh, CONFIG, TRUSTED).action == "review"
+    # A failed Check is not a review: the fixer's next attempt is still routed.
+    gh = github()
+    gh.responses[("GET", f"{API}/pulls/12/reviews")] = [reviewed(HEAD)]
+    assert route(run_event("failure"), gh, CONFIG, TRUSTED).action == "fix"
 
 
 def test_route_never_trusts_a_body_without_the_app_slug() -> None:
@@ -1392,6 +1410,107 @@ def test_write_change_writes_the_diff_the_log_and_the_heads_files_as_data(tmp_pa
     assert json.loads((out / "changed.json").read_text()) == changed
 
 
+def test_write_change_writes_the_base_versions_too(tmp_path: Path) -> None:
+    repo, base, head = site_repo(tmp_path, {"css/site.css": "h1 { color: blue; }\n", "css/new.css": "a {}\n", "js/site.js": None})
+    out = tmp_path / "review"
+    by_path = {item["path"]: item for item in review.write_change(repo, base, head, out)}
+    assert by_path["css/site.css"]["base_file"] == "base/css/site.css"
+    assert "red" in (out / "base" / "css" / "site.css").read_text()
+    assert (out / "files" / "css" / "site.css").read_text() == "h1 { color: blue; }\n"
+    assert by_path["js/site.js"]["base_file"] == "base/js/site.js" and (out / "base" / "js" / "site.js").is_file()
+    assert by_path["css/new.css"]["base_file"] is None and "added" in by_path["css/new.css"]["base_note"]
+    assert not (out / "base" / "css" / "new.css").exists() and not (out / "files" / "js").exists()
+
+
+HARNESS_PATHS = ["CLAUDE.md", "css/claude.local.md", "js/Agents.MD", ".claude/settings.json", "css/.Claude/x.css", "docs/AGENTS.md/a.txt"]
+
+
+def test_write_change_never_writes_a_harness_loaded_name(tmp_path: Path) -> None:
+    files: dict[str, str | bytes | None] = {path: "x\n" for path in HARNESS_PATHS}
+    repo, base, head = site_repo(tmp_path, {**files, "css/site.css": "h1 { color: blue; }\n"})
+    out = tmp_path / "review"
+    changed = review.write_change(repo, base, head, out)
+    by_path = {item["path"]: item for item in changed}
+    for path in HARNESS_PATHS:
+        item = by_path[path]
+        assert item["file"] is None and item["note"] == "not written: harness-loaded name", path
+        assert item["base_note"] == "added: not on the base" or "harness" in item["base_note"]
+    written = {p.relative_to(out).as_posix() for p in out.rglob("*") if p.is_file()}
+    assert not any(part.lower() in ("claude.md", "claude.local.md", "agents.md", ".claude") for w in written for part in w.split("/"))
+    assert by_path["css/site.css"]["file"] == "files/css/site.css"
+
+
+def test_write_change_lists_a_deleted_harness_file_without_writing_its_base(tmp_path: Path) -> None:
+    repo = tmp_path / "project"
+    git("init", "-q", "-b", "main", str(repo), cwd=tmp_path)
+    base = commit(repo, "Base", {"CLAUDE.md": "old\n", "css/a.css": "a\n"})
+    head = commit(repo, "Fix", {"CLAUDE.md": None})
+    out = tmp_path / "review"
+    (item,) = review.write_change(repo, base, head, out)
+    assert item["status"] == "D" and item["base_file"] is None and item["base_note"] == "not written: harness-loaded name"
+    assert not (out / "base" / "CLAUDE.md").exists()
+
+
+def test_write_change_records_an_os_error_per_file_and_goes_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo, base, head = site_repo(tmp_path, {"css/toolong.css": "a {}\n", "css/site.css": "h1 { color: blue; }\n"})
+    real = Path.write_bytes
+
+    def write_bytes(self: Path, data: bytes) -> int:
+        if self.name == "toolong.css":
+            raise OSError(errno.ENAMETOOLONG, "File name too long")
+        return real(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", write_bytes)
+    out = tmp_path / "review"
+    by_path = {item["path"]: item for item in review.write_change(repo, base, head, out)}
+    assert by_path["css/toolong.css"]["file"] is None
+    assert by_path["css/toolong.css"]["note"] == "not written: ENAMETOOLONG"
+    assert by_path["css/site.css"]["file"] == "files/css/site.css"
+    assert json.loads((out / "changed.json").read_text())
+
+
+def test_write_change_feeds_git_over_stdin_so_many_paths_cannot_overflow_argv(tmp_path: Path) -> None:
+    files: dict[str, str | bytes | None] = {f"css/dir{n % 50}/file-{n:05d}-{'x' * 60}.css": f"a{n} {{}}\n" for n in range(4000)}
+    repo, base, head = site_repo(tmp_path, files)
+    seen: list[tuple[str, ...]] = []
+    real = review._git_bytes
+
+    def spy(repo_: Path, *args: str, **kwargs: Any) -> bytes:
+        seen.append(args)
+        return real(repo_, *args, **kwargs)
+
+    review._git_bytes, original = spy, review._git_bytes  # type: ignore[assignment]
+    try:
+        changed = review.write_change(repo, base, head, tmp_path / "review")
+    finally:
+        review._git_bytes = original  # type: ignore[assignment]
+    assert len(changed) == 4000 and all(item["file"] for item in changed)
+    assert max(sum(len(a) for a in args) for args in seen) < 1000  # no git call lists the paths
+    assert (tmp_path / "review" / "files" / "css" / "dir7" / f"file-00007-{'x' * 60}.css").read_text() == "a7 {}\n"
+
+
+def test_write_change_does_not_write_a_blob_over_the_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(review, "MAX_REVIEW_BYTES", 20)
+    repo, base, head = site_repo(tmp_path, {"css/big.css": "a" * 200, "css/small.css": "a {}\n"})
+    by_path = {item["path"]: item for item in review.write_change(repo, base, head, tmp_path / "review")}
+    assert by_path["css/big.css"]["file"] is None and by_path["css/big.css"]["note"] == "not written: 200 bytes"
+    assert by_path["css/small.css"]["file"] == "files/css/small.css"
+
+
+def test_prune_harness_names_removes_and_lists_what_the_harness_loads(tmp_path: Path) -> None:
+    root = tmp_path / "visual-results"
+    for name in ("visual/a/actual.png", "CLAUDE.md", "visual/Agents.md", "visual/.claude/settings.json", "visual/b/claude.local.md"):
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x", encoding="utf-8")
+    (root / "visual" / "AGENTS.MD-link").symlink_to("a")
+    skipped = review.prune_harness_names(root)
+    assert skipped == ["CLAUDE.md", "visual/.claude", "visual/Agents.md", "visual/b/claude.local.md"]
+    assert (root / "visual/a/actual.png").is_file() and (root / "visual" / "AGENTS.MD-link").is_symlink()
+    assert not (root / "CLAUDE.md").exists() and not (root / "visual" / ".claude").exists()
+    assert review.prune_harness_names(tmp_path / "absent") == []
+
+
 def test_write_change_skips_unsafe_paths_and_refuses_bad_commits(tmp_path: Path) -> None:
     assert review._unsafe("../x") and review._unsafe("a/.git/config") and review._unsafe("a//b") and review._unsafe("a\\b")
     assert not review._unsafe("css/site.css")
@@ -1404,8 +1523,15 @@ def test_cli_prepare_writes_the_change_of_the_routed_head(tmp_path: Path, monkey
     route_file = tmp_path / "route.json"
     route_file.write_text(json.dumps(routed(base=base, head=head).to_json()), encoding="utf-8")
     monkeypatch.chdir(repo)
-    assert review.main(["prepare", "--route", str(route_file), "--out", str(tmp_path / "review")]) == 0
+    visual = tmp_path / "visual-results"
+    (visual / ".claude").mkdir(parents=True)
+    (visual / ".claude" / "x").write_text("x", encoding="utf-8")
+    (visual / "ok.png").write_bytes(b"png")
+    assert review.main(["prepare", "--route", str(route_file), "--out", str(tmp_path / "review"), "--visual", str(visual)]) == 0
     assert (tmp_path / "review" / "files" / "css" / "site.css").read_text() == "h1 { color: blue; }\n"
+    assert (tmp_path / "review" / "base" / "css" / "site.css").read_text() == "h1 { color: red; }\n"
+    assert json.loads((tmp_path / "review" / "visual-skipped.json").read_text()) == [".claude"]
+    assert not (visual / ".claude").exists() and (visual / "ok.png").is_file()
     route_file.write_text(json.dumps(routed("ignore", base=base, head=head).to_json()), encoding="utf-8")
     assert review.main(["prepare", "--route", str(route_file), "--out", str(tmp_path / "other")]) == 2
 

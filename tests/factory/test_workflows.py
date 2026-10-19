@@ -129,7 +129,7 @@ _INTERPRETER_RULE = re.compile(r"(?:uv run )?python3?(?: -[A-Za-z]+)*:\*")
 AGENT_WRITE_ALLOWED: dict[tuple[str, str], frozenset[str]] = {}
 REVIEW_WRITE_SCOPES = {"actions": "write", "contents": "read", "issues": "write", "pull-requests": "write"}
 # The hand-over job only comments (and routes again first).
-HAND_OVER_SCOPES = {"actions": "read", "contents": "read", "issues": "write", "pull-requests": "write"}
+HAND_OVER_SCOPES = {"actions": "read", "contents": "read", "issues": "read", "pull-requests": "write"}
 # What the evidence job's timeout must leave for everything but the test sessions: setup 10, the
 # browser checks 30, the script 5, the proof 40, the scans and uploads 5 (minutes).
 EVIDENCE_OTHER_MINUTES = 90
@@ -347,9 +347,15 @@ def test_review_workflow_triggers_jobs_and_concurrency() -> None:
     assert "needs.route.outputs.action == 'needs-human'" in jobs["act"]["if"]
     for name in ("evidence", "review", "post", "hand-over"):
         assert "needs.route.outputs.action == 'review'" in jobs[name]["if"], name
-    # The hand-over runs only after a failure (or a cancellation: a timeout) of a needed job; nothing
-    # else runs then.
-    assert "(failure() || cancelled())" in jobs["hand-over"]["if"]
+    # The hand-over is the one job with always(): it runs only when the evidence, the review or post
+    # failed or was cancelled (a timeout), and only for a review that started.
+    failed = "contains(fromJSON('[\"failure\",\"cancelled\"]'), needs.{}.result)"
+    expected = (
+        "always() && vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review' && ("
+        + " || ".join(failed.format(name) for name in ("evidence", "review", "post"))
+        + ")"
+    )
+    assert " ".join(jobs["hand-over"]["if"].split()).replace("( ", "(") == expected
     for name, job in jobs.items():
         if name != "hand-over":
             assert not re.search(r"failure\(\)|cancelled\(\)|always\(\)", str(job.get("if"))), name
@@ -444,9 +450,10 @@ def test_reviewer_agent_arguments_are_pinned() -> None:
     for needed in ("cat .github/factory/prompts/reviewer.md", "factory-in/route/context.md", "factory-in/decisive",
                    "factory-in/script/script.json", "factory-in/proof", "factory-in/visual-results",
                    "factory-in/review/diff.patch", "factory-in/review/log.txt", "factory-in/review/changed.json",
-                   "factory-in/review/files/<path>"):
+                   "factory-in/review/files/<path>", "factory-in/review/base/<path>"):
         assert needed in prompt["run"], needed
     assert "git diff" not in prompt["run"] and "git show" not in prompt["run"]
+    assert "main moved on" not in prompt["run"] and "unless" not in prompt["run"].split("## This run")[1]
 
 
 def test_review_job_reads_the_pull_request_and_runs_none_of_it() -> None:
@@ -480,8 +487,11 @@ def test_review_job_reads_the_pull_request_and_runs_none_of_it() -> None:
     (dropped,) = [i for i, r in enumerate(commands) if r.strip() == "rm -rf .git"]
     assert max(fetch, route) < prepare < dropped < agent
     assert commands[prepare] == (
-        "uv run python -m tools.factory.review prepare --route factory-in/route/route.json --out factory-in/review"
+        "uv run python -m tools.factory.review prepare --route factory-in/route/route.json"
+        " --out factory-in/review --visual factory-in/visual-results"
     )
+    # R47: Check's artifact is pruned of harness-loaded names by prepare, so it is downloaded before.
+    assert steps.index(check) < prepare
     assert not [r for r in commands[:agent] if re.search(r"\bgit\b", r) and r not in (commands[fetch], commands[dropped])]
     # Before the agent only the downloads touch a token (the read-only one, for Check's artifact).
     for step in steps[:agent]:
@@ -518,6 +528,9 @@ def test_review_write_token_reaches_only_post_act_and_hand_over() -> None:
     for argument in ("--verdict factory-in/verdict/verdict.json", "--decisive factory-in/decisive",
                      "--script factory-in/script", "--proof factory-in/proof"):
         assert argument in command
+    # The hand-over writes comments only: pull-requests: write, and no issues write scope.
+    assert jobs["hand-over"]["permissions"]["issues"] == "read"
+    assert "write" not in {v for k, v in jobs["hand-over"]["permissions"].items() if k != "pull-requests"}
     # The hand-over reads no artifact: the job results and the routed head, from the run itself.
     hand_over = jobs["hand-over"]["steps"]
     assert not [s for s in hand_over if _uses(s, "actions/download-artifact")]

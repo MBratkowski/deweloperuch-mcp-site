@@ -89,6 +89,21 @@ def test_forbidden_path(tmp_path: Path) -> None:
     assert any(r.startswith("forbidden path") for r in report.reasons)
 
 
+@pytest.mark.parametrize(
+    "path",
+    ["css/CLAUDE.md", "css/claude.local.md", "js/Agents.md", "css/.claude/settings.json", ".CLAUDE/x.css", "css/agents.md/a.css"],
+)
+def test_harness_file_anywhere_in_the_tree_is_hard(tmp_path: Path, path: str) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {path: "a{}\n"})
+    assert not report.ok
+    assert f"harness file: {path}" in report.reasons
+
+
+def test_harness_name_as_a_substring_is_no_harness_file(tmp_path: Path) -> None:
+    report = check(tmp_path, {"css/a.css": "a\n"}, {"css/my-claude.md.css": "a{}\n"})
+    assert not any(r.startswith("harness file") for r in report.reasons)
+
+
 def test_outside_both_lists(tmp_path: Path) -> None:
     report = check(tmp_path, {"css/a.css": "a\n"}, {"README.md": "hello\n"})
     assert not report.ok

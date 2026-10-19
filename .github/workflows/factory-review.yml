@@ -313,8 +313,12 @@ jobs:
           path: factory-in/visual-results
       # The agent runs no command, git included (R45): main's code writes the change out as data,
       # with no hook, external diff or textconv filter running, and nothing of the head checked out.
+      # It also removes from Check's downloaded visual-results every name the harness loads
+      # (CLAUDE.md, CLAUDE.local.md, AGENTS.md, .claude) and lists them in visual-skipped.json.
       - name: Write the change for the reviewer
-        run: uv run python -m tools.factory.review prepare --route factory-in/route/route.json --out factory-in/review
+        run: >-
+          uv run python -m tools.factory.review prepare --route factory-in/route/route.json
+          --out factory-in/review --visual factory-in/visual-results
       # The agent needs no git. Without a repository the action cannot store its token in the remote
       # URL in .git/config.
       - name: Drop the git metadata
@@ -337,7 +341,7 @@ jobs:
 
           - Pull request #$PR for issue #$ISSUE. A revert (\`factory:revert\`): $REVERT.
           - The head commit, the \`sha\` of your verdict: \`$HEAD_SHA\`. The base commit: \`$BASE_SHA\`.
-          - The change from the base to the head: the diff \`factory-in/review/diff.patch\`, its commits \`factory-in/review/log.txt\`, every changed path with its status \`factory-in/review/changed.json\`, and the head's version of each added or modified file under \`factory-in/review/files/<path>\` (the base's version is the file at \`<path>\` in the workspace, unless main moved on since).
+          - The change from the base to the head: the diff \`factory-in/review/diff.patch\`, its commits \`factory-in/review/log.txt\`, every changed path with its status \`factory-in/review/changed.json\`, the head's version of each added or modified file under \`factory-in/review/files/<path>\` and the base's version of each modified or deleted file under \`factory-in/review/base/<path>\` (the workspace itself is main, not either side). A path the harness loads (CLAUDE.md, CLAUDE.local.md, AGENTS.md, .claude), a symbolic link, a submodule or an oversized file is listed in changed.json and written on neither side.
           - The issue and the pull request (title and body): \`factory-in/route/context.md\`
           - The decisive evidence: \`factory-in/decisive/decisive.json\`; the test sessions' reports and output: \`factory-in/decisive/sessions/\`; each changed baseline on the base and on the head: \`factory-in/decisive/baselines/\`; the neighbourhood probe on the head and on the base: \`factory-in/decisive/probe-head/\` and \`factory-in/decisive/probe-base/\`
           - The reproduction script's result on the head: \`factory-in/script/script.json\`
@@ -449,10 +453,14 @@ jobs:
   hand-over:
     name: Say on the pull request that the review stopped
     needs: [route, evidence, review, post]
-    # failure(): one of the needed jobs failed; cancelled() as well, because a job that runs out of its
-    # timeout-minutes may be reported as cancelled. A review that never started (route) names no pull
-    # request.
-    if: vars.FACTORY_MODE != 'off' && (failure() || cancelled()) && needs.route.outputs.action == 'review'
+    # always() so the job runs after a failed or cancelled need (a job that runs out of its
+    # timeout-minutes may be reported as cancelled), and then only when evidence, review or post ended
+    # that way. A review that never started (route) names no pull request.
+    if: >-
+      always() && vars.FACTORY_MODE != 'off' && needs.route.outputs.action == 'review' &&
+      (contains(fromJSON('["failure","cancelled"]'), needs.evidence.result) ||
+      contains(fromJSON('["failure","cancelled"]'), needs.review.result) ||
+      contains(fromJSON('["failure","cancelled"]'), needs.post.result))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # GITHUB_TOKEN only comments on the pull request (and routes again before it does); the job runs
@@ -460,7 +468,7 @@ jobs:
     permissions:
       actions: read
       contents: read
-      issues: write
+      issues: read
       pull-requests: write
     steps:
       - uses: actions/checkout@v7
