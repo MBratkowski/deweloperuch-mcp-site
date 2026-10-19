@@ -40,6 +40,12 @@ def test_axe_finds_low_contrast(browser: Browser, fixtures_url: str, probe_cell:
     assert len(found) <= 5
 
 
+def test_axe_runs_with_scripts_disabled(browser: Browser, fixtures_url: str, probe_cell: Callable[..., Cell]) -> None:
+    # The no-js mode turns the page's scripts off: a <script> tag of axe never runs, nor do its timers.
+    found = _check(browser, fixtures_url, probe_cell("axe", 375, mode="no-js"), "canary/axe.html", "axe")
+    assert any("color-contrast" in f.measurement and f.selector.endswith("#planted") for f in found)
+
+
 def test_target_size_finds_small_button(browser, fixtures_url, probe_cell) -> None:
     found = _check(browser, fixtures_url, probe_cell("target-size", 375), "canary/target-size.html", "target-size")
     assert any(f.selector.endswith("button#planted") for f in found)
