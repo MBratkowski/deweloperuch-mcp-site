@@ -13,7 +13,7 @@ Made with the owner during brainstorming:
 | Runtime | GitHub Actions; the agents run Claude Code through `anthropics/claude-code-action`. |
 | Merge autonomy | Shadow mode first (the merger says what it would do, the owner merges), then automatic merging once the data allows it. |
 | What QA may report | Measurable defects, plus findings from an AI review of screenshots only when the agent proves them with a failing reproduction; unproven ones are suggestions that are never fixed automatically. |
-| Pace and limits | Nightly and after every Pages deployment. At most 3 new issues per run, 2 fix pull requests open at once, 2 fix attempts per issue, 5 factory merges per 24 hours. |
+| Pace and limits | Nightly and after every Pages deployment. At most 3 new issues per run, 2 fix pull requests open at once, 2 fix attempts per issue, 5 factory merges per 24 hours, 2 QA agent runs per day (`qa_agent_runs_per_day`). |
 | Architecture | An event-driven state machine: four workflows, labels as state. The merger is policy as code with no language model. |
 
 ## Facts this design rests on
@@ -59,7 +59,7 @@ On issues:
 | `factory:merged` | The fix is on `main`; waiting for verification on the live site. |
 | `factory:regressed` | Live verification failed after a merge; a revert pull request is open. |
 | `factory:flaky` | A test failed and passed on the same SHA. Set together with `factory:found`; fixed like any other defect, with statistical proof (see the fixer). |
-| `factory:needs-human` | Outside the fence, attempts exhausted, copy change, or not reproducible. The factory stops touching it. |
+| `factory:needs-human` | Outside the fence, attempts exhausted, copy change, not reproducible, or no reproduction the factory can run. The factory stops touching it. |
 
 Severity labels `S1` (broken function), `S2` (accessibility barrier), `S3` (visual defect), `S4` (polish) sit beside the existing `bug` and `accessibility` labels.
 
@@ -87,7 +87,7 @@ Check (unchanged) on the pull request
             ├─ REQUEST_CHANGES → dispatch the fixer (attempt 2) or factory:needs-human
             └─ APPROVE (for the head SHA) → workflow_dispatch factory-merge.yml
 
-Merger (workflow_dispatch; hourly sweep), FACTORY_MODE = off | shadow | auto
+Merger (workflow_dispatch; hourly sweep), FACTORY_MODE = off | dry | shadow | auto
  ├─ shadow: comment with the condition table and verdict, label factory:merge-ready when it would merge
  └─ auto:   squash-merge with the App token → Pages → QA verify
 ```
@@ -105,7 +105,7 @@ The reviewer starts the merger with `workflow_dispatch` because an approval made
 | `factory-review.yml` | `workflow_run` of Check (pull request events only), `workflow_dispatch` (`pr`) | evidence job without secrets, then the reviewer agent |
 | `factory-merge.yml` | `workflow_dispatch` (`pr`), `schedule` (hourly) | merge policy |
 
-Every factory job first checks the repository variable `FACTORY_MODE`; `off` ends the job at once. Each workflow has a `concurrency` group (per issue for the fixer, per pull request for review and merge, one for QA).
+Every factory job first checks the repository variable `FACTORY_MODE`; an explicit allow-list decides whether it runs. `off` runs nothing; `dry` runs QA as a dry run only (no GitHub writes; the fixer, the reviewer and the merger do not run); the fixer, the reviewer, the merger and QA's writing jobs run only in `shadow` and `auto`. An unset or unknown value runs nothing, like `off`. Each workflow has a `concurrency` group (per issue for the fixer, per pull request for review and merge, one for QA).
 
 `check.yml` gains `branches-ignore: [factory-evidence]` under `push`.
 
@@ -207,6 +207,8 @@ QA keeps one pinned issue, "Factory status", up to date (edited, never re-posted
 
 Runs on `factory:ready` (set by the owner or the App; any other sender is ignored) and on `workflow_dispatch` for a second attempt. The job runs in the pinned Playwright image of the visual job, so it can render visual baselines itself.
 
+An issue written by the owner enters the factory only with an attached reproduction: `python -m tools.factory.issues attach --issue N --findings <findings.json> --fp <fp>` appends the marker block QA writes. Without one the fixer declines the issue and labels it `factory:needs-human`.
+
 1. Create `fix/<N>-<slug>` from `origin/main`; label the issue `factory:fixing`.
 2. **Red.** Turn the issue's reproduction into a permanent test: a pytest test under `tests/e2e/`, or a new crop in `tests/visual/` for a purely visual defect. Run it on the base commit; it must fail. If it passes, the defect is not reproducible: comment with the output, label `factory:needs-human`, stop.
    For a `factory:flaky` issue the proof is statistical: the existing failing test runs 50 times on the base commit with Chromium's CPU throttled 4× and must fail at least once; after the fix it must pass all 50 runs under the same throttling. If the base never fails, the issue goes to `factory:needs-human` with the run counts.
@@ -264,7 +266,7 @@ When Check fails, the reviewer does not review: it dispatches the fixer's next a
 
 All must hold:
 
-1. `FACTORY_MODE` is `shadow` or `auto`.
+1. `FACTORY_MODE` is `shadow` or `auto` (`dry` and `off` run no merger).
 2. The pull request is authored by the App, labelled `factory`, from a branch of this repository, not a draft, and either comes from `fix/*` and links an issue labelled `factory:fixing`, or comes from `revert/*`, is labelled `factory:revert` and links an issue labelled `factory:regressed`.
 3. The latest review by `github-actions[bot]` is `APPROVE` with `commit_id` equal to the current head SHA, and no review requests changes.
 4. Every required check succeeded on the head SHA. The merger never reruns a failed job.
@@ -290,7 +292,7 @@ The repository is public: anyone can open issues and pull requests and comment.
 
 - The fixer acts only on issues whose `factory:ready` label was set by the owner or the App; the dispatcher checks the label event's sender. Comments and pull requests from anyone else are ignored. Pull requests from forks never start factory workflows.
 - Issue text is data. The agents have no network tools, so text that tries to instruct them has nowhere to send anything.
-- Secrets (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`; the App's private key) live in the Actions environment `factory`, which allows only `main`. A workflow edited on a `fix/*` branch cannot read them.
+- Secrets (`CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or `ANTHROPIC_API_KEY`; the App's private key) live in two Actions environments, both limited to `main`: `factory-agent` holds only `CLAUDE_CODE_OAUTH_TOKEN` and is used only by the agent jobs (triage, fix, review); `factory` holds only the App's private key and is used only by the jobs that mint the App token. An agent job can never read the App's key, and a workflow edited on a `fix/*` branch cannot read either.
 - GitHub enforces the hard limits: the App cannot change workflows (no `workflows` permission) and cannot push to `main` (ruleset). The merger checks the fence again before merging.
 - The reviewer and the merger never run the pull request's code in a job that holds a secret.
 - The probe stubs Umami and requests nothing but the site; deweloperuch.pl is never contacted.
@@ -320,8 +322,8 @@ The repository is public: anyone can open issues and pull requests and comment.
 
 ## Rollout
 
-- **Phase 0 (owner, in the browser):** create and install the App from a manifest prepared in the repository; run `claude setup-token`; create the `factory` environment with the secrets; approve the ruleset on `main`, which is then created with `gh api`.
-- **Phase 1:** probe, detectors, canaries, fingerprints; QA in `dry_run`.
+- **Phase 0 (owner, in the browser):** create and install the App from a manifest prepared in the repository; run `claude setup-token`; create the `factory` and `factory-agent` environments, one secret each; approve the ruleset on `main`, which is then created with `gh api`.
+- **Phase 1:** probe, detectors, canaries, fingerprints; QA in `dry_run` (mode `dry`).
 - **Phase 2:** QA filing issues, the evidence branch, dedup, flakes, the status issue.
 - **Phase 3:** fixer, reviewer, merger in shadow mode; acceptance steps 3–5.
 - **Phase 4:** `FACTORY_MODE=auto` when the agreement rule is met.
