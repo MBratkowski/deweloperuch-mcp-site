@@ -463,3 +463,97 @@ def test_load_drafts_rejects_malformed_dropped_fingerprint(fingerprint: str) -> 
     with pytest.raises(DraftError) as caught:
         load_drafts(data)
     assert caught.value.path == "dropped[0].fingerprint"
+
+
+# --- attaching a reproduction to an issue a person wrote (R53b) ------------------------------------
+
+ATTACH_REPO = "MBratkowski/deweloperuch-mcp-site"
+ATTACH_API = f"/repos/{ATTACH_REPO}"
+
+
+def owner_issue(**changes: Any) -> dict[str, Any]:
+    data = {
+        "number": 45,
+        "state": "open",
+        "user": {"login": "MBratkowski"},
+        "body": "The prompt overflows at 375 px in WebKit.\n",
+        "labels": [{"name": "factory:needs-human"}],
+    }
+    data.update(changes)
+    return data
+
+
+def findings_file(tmp_path: Path, *groups: Group) -> Path:
+    path = tmp_path / "findings.json"
+    path.write_text(json.dumps({"target": "main", "groups": [g.to_json() for g in groups]}))
+    return path
+
+
+def test_attach_appends_the_renderers_marker_block(tmp_path: Path) -> None:
+    from tests.factory.fakes import FakeGitHub
+    from tools.factory.fix import has_reproduction
+
+    group = make_group()
+    groups = issues.groups_by_fingerprint(findings_file(tmp_path, group), [group.fingerprint])
+    gh = FakeGitHub({("GET", f"{ATTACH_API}/issues/45"): owner_issue()})
+    body = issues.attach(gh, ATTACH_REPO, 45, groups, TRUSTED)
+    assert body.startswith("The prompt overflows at 375 px in WebKit.\n\n<!-- factory:markers -->\n")
+    assert gh.calls[-1] == ("PATCH", f"{ATTACH_API}/issues/45", {"body": body})
+    # Every reader of the markers sees the reproduction: dedup, the fixer, the reviewer, verify.
+    assert fingerprints_in(body) == {group.fingerprint}
+    assert groups_in(body) == [group]
+    assert has_reproduction({**owner_issue(), "body": body}, TRUSTED)
+    # The same block render_issue writes for QA's own issues.
+    _, rendered = render(fingerprints=[group.fingerprint])
+    assert issues._marker_block(body) == issues._marker_block(rendered)
+
+
+@pytest.mark.parametrize(
+    "data, reason",
+    [
+        (owner_issue(user={"login": "stranger"}), "not the owner or the App"),
+        (owner_issue(state="closed"), "not open"),
+        (owner_issue(pull_request={}), "pull request"),
+        (owner_issue(body="Text.\n\n<!-- factory:markers -->\n<!-- factory:fp=aaaaaaaaaaaa -->\n"), "already carries"),
+    ],
+)
+def test_attach_refuses(data: dict[str, Any], reason: str, tmp_path: Path) -> None:
+    from tests.factory.fakes import FakeGitHub
+
+    group = make_group()
+    gh = FakeGitHub({("GET", f"{ATTACH_API}/issues/45"): data})
+    with pytest.raises(DraftError, match=reason):
+        issues.attach(gh, ATTACH_REPO, 45, [group.to_json()], TRUSTED)
+    assert [c for c in gh.calls if c[0] != "GET"] == []
+
+
+def test_attach_refuses_unknown_or_forged_groups(tmp_path: Path) -> None:
+    group = make_group()
+    with pytest.raises(DraftError, match="not in"):
+        issues.groups_by_fingerprint(findings_file(tmp_path, group), ["b" * 12])
+    with pytest.raises(DraftError, match="not the fingerprint"):
+        issues.marker_block([{**group.to_json(), "fingerprint": "b" * 12}])
+    with pytest.raises(DraftError, match="secret"):
+        issues.marker_block([{**group.to_json(), "note": "ghp_" + "x" * 36}])
+    with pytest.raises(DraftError):
+        issues.marker_block([])
+
+
+def test_cli_attach(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from tests.factory.fakes import FakeGitHub
+    from tools.factory import github
+
+    group = make_group()
+    path = findings_file(tmp_path, group)
+    gh = FakeGitHub({("GET", f"{ATTACH_API}/issues/45"): owner_issue()})
+    monkeypatch.setattr(github, "GitHub", lambda repo, *a, **k: gh)
+    monkeypatch.delenv("FACTORY_APP_SLUG", raising=False)
+    args = ["attach", "--issue", "45", "--findings", str(path), "--fp", group.fingerprint]
+    assert issues.main(args) == 0
+    assert group.fingerprint in capsys.readouterr().out
+    assert gh.calls[-1][0] == "PATCH"
+    stranger = FakeGitHub({("GET", f"{ATTACH_API}/issues/45"): owner_issue(user={"login": "x"})})
+    monkeypatch.setattr(github, "GitHub", lambda repo, *a, **k: stranger)
+    assert issues.main(args) == 1
+    assert "attach refused" in capsys.readouterr().err
+    assert issues.main(["attach", "--issue", "45", "--findings", str(path), "--fp", "c" * 12]) == 1

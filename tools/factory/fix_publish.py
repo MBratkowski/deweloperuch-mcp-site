@@ -22,9 +22,10 @@ Outcomes, each with a comment carrying `<!-- factory:attempt=K -->` on the issue
 - the fix job failed, no valid report or change, a hard fence reason or a proof that is not green:
   the next attempt is dispatched, or after the last attempt the same as above;
 - otherwise the commit is pushed and the pull request opened or updated, labelled `factory` (and
-  `factory:needs-human` when the fence found review reasons, listed under "Needs a human"); the
-  issue moves from `factory:ready` to `factory:fixing`. If a step after the push fails, the attempt
-  is still recorded on the issue before the error surfaces.
+  `factory:needs-human` when the fence found review reasons, listed under "Needs a human"; the issue
+  then gets `factory:needs-human` too, which frees its fixer slot); the issue moves from
+  `factory:ready` and `factory:found` to `factory:fixing`. If a step after the push fails, the
+  attempt is still recorded on the issue before the error surfaces.
 """
 
 from __future__ import annotations
@@ -54,6 +55,7 @@ from tools.factory.fix import (
     FIXING,
     FLAKY,
     FLAKY_RUNS,
+    FOUND,
     FLAKY_THROTTLE,
     ISSUE_URL,
     NEEDS_HUMAN,
@@ -851,10 +853,16 @@ def publish_fix(
         gh.request("PATCH", f"{api}/pulls/{number}", {"title": title, "body": body(evidence, note)})
         text = f"Fix attempt {attempt} of {run.limit}: pull request #{number} for `{commit[:7]}`."
         if review:
-            text += "\n\nThe pull request needs a human review:\n\n" + _bullets(review)
+            text += (
+                f"\n\nThe pull request needs a human review, so it and this issue are labelled {NEEDS_HUMAN} "
+                "until a person returns them:\n\n" + _bullets(review)
+            )
         run.comment(text)
-        gh.request("POST", f"{api}/issues/{issue}/labels", {"labels": [FIXING]})
+        # M6: a pull request a person must review parks its issue too, which frees the fixer's slot.
+        gh.request("POST", f"{api}/issues/{issue}/labels", {"labels": [FIXING, *([NEEDS_HUMAN] if review else [])]})
         run.remove_label(issue, READY)
+        # C1: the issue is past factory:found for good; promotion never hands it to the fixer again.
+        run.remove_label(issue, FOUND)
     except Exception as error:
         # The branch moved already: the attempt is recorded before the error surfaces.
         try:

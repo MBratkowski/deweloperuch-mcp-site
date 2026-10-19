@@ -255,8 +255,9 @@ def test_fix_workflow_triggers_jobs_and_concurrency() -> None:
     assert "format('factory-fix-{0}', github.event.issue.number || inputs.issue)" in group
     assert workflow["concurrency"]["cancel-in-progress"] is False
     jobs = workflow["jobs"]
-    assert set(jobs) == {"guard", "fix", "publish"}
+    assert set(jobs) == {"guard", "fix", "publish", "decline"}
     assert (jobs["fix"]["needs"], jobs["publish"]["needs"]) == ("guard", ["guard", "fix"])
+    assert jobs["decline"]["needs"] == "guard"
     guard = jobs["guard"]
     assert "github.event.label.name == 'factory:ready'" in guard["if"]
     assert guard["permissions"] == {"contents": "read", "issues": "read"}
@@ -293,6 +294,30 @@ def test_fix_job_holds_no_write_token_and_no_token_after_the_agent() -> None:
     assert "git log --text --patch" in later
     (scan,) = [s for s in steps if SCANNER in str(s.get("run", ""))]
     assert scan["id"] == "scan" and job["outputs"]["scan"] == "${{ steps.scan.outcome }}"
+
+
+def test_decline_job_releases_a_declined_issue_with_an_issues_token_only() -> None:
+    """R53c: when the guard declines (exit 3), a deterministic job holding only GITHUB_TOKEN with
+    issues: write, running main's code and nothing from a pull request or an agent, releases the
+    issue; it is the only job of the fixer that writes with GITHUB_TOKEN besides publish's dispatch."""
+    jobs = load_yaml(WORKFLOWS / "factory-fix.yml")["jobs"]
+    attempt = next(s["run"] for s in jobs["guard"]["steps"] if s.get("id") == "attempt")
+    assert '"$status" -eq 3' in attempt and 'echo "decline=true" >> "$GITHUB_OUTPUT"' in attempt
+    assert jobs["guard"]["outputs"]["decline"] == "${{ steps.attempt.outputs.decline }}"
+    job = jobs["decline"]
+    assert "needs.guard.outputs.decline == 'true'" in job["if"]
+    assert job["permissions"] == {"contents": "read", "issues": "write"}
+    assert "environment" not in job and "container" not in job
+    steps = job["steps"]
+    assert not any(_uses_agent(s) or _uses(s, APP_TOKEN_ACTION) or _uses(s, "actions/download-artifact") for s in steps)
+    (checkout,) = [s for s in steps if _uses(s, "actions/checkout")]
+    assert checkout["with"] == {"ref": "${{ github.sha }}", "persist-credentials": False}
+    commands = _runs(steps)
+    assert commands[0] == "uv sync --locked" and len(commands) == 2
+    assert "uv run python -m tools.factory.fix decline" in commands[1]
+    holders = [s for s in steps if any(reference in json.dumps(s) for reference in TOKEN_REFERENCES)]
+    assert len(holders) == 1 and holders[0]["env"]["GITHUB_TOKEN"] == "${{ github.token }}"
+    assert not any(runner in commands[1] for runner in ("pytest", *AGENT_CODE_RUNNERS))
 
 
 def test_publish_job_holds_the_app_token_and_runs_no_fix_code() -> None:

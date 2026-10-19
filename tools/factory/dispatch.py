@@ -17,7 +17,15 @@ READY = "factory:ready"
 FOUND = "factory:found"
 FIXING = "factory:fixing"
 FLAKY = "factory:flaky"
-_BLOCKING = frozenset({READY, FIXING, "factory:needs-human", "factory:suggestion"})
+MERGED = "factory:merged"
+REGRESSED = "factory:regressed"
+NEEDS_HUMAN = "factory:needs-human"
+# Never handed to the fixer again: in its hands already, a person's, a suggestion, or past the fix
+# (merged, waiting for live verification; regressed, reverted and handed over). C1, R53a.
+_BLOCKING = frozenset({READY, FIXING, NEEDS_HUMAN, "factory:suggestion", MERGED, REGRESSED})
+# Labels that release a fixer slot even while factory:ready or factory:fixing remains (R53c): the
+# factory stopped on the issue, or its fix is merged.
+_RELEASED = frozenset({NEEDS_HUMAN, MERGED, REGRESSED})
 _SEVERITIES = ("S1", "S2", "S3", "S4")
 
 
@@ -56,13 +64,20 @@ def _rank(issue: dict, main_red: bool) -> tuple:
     return (flaky_first, severity, issue.get("created_at") or "", issue["number"])
 
 
+def in_progress(issue: dict) -> bool:
+    """Whether the issue holds one of the fixer's slots: ready or fixing, and not released by the
+    factory stopping on it or by its merge (R53c)."""
+    labels = _labels(issue)
+    return bool(labels & {READY, FIXING}) and not labels & _RELEASED
+
+
 def promote(issues: Sequence[dict], limits: Limits, main_red: bool) -> list[int]:
     """Numbers of the issues to hand to the fixer, filling the free slots."""
     open_issues = [
         i for i in issues if i.get("state", "open") == "open" and "pull_request" not in i
     ]
-    in_progress = sum(1 for i in open_issues if _labels(i) & {READY, FIXING})
-    slots = max(0, limits.fixes_in_progress - in_progress)
+    busy = sum(1 for i in open_issues if in_progress(i))
+    slots = max(0, limits.fixes_in_progress - busy)
     candidates = [
         i
         for i in open_issues

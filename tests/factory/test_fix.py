@@ -200,6 +200,15 @@ def issue(
     }
 
 
+# A reproduction the guard accepts (R53b): one probe group in the marker block.
+REPRO = (
+    Group(
+        "overflow", "landing", "default", "div.term", ("chromium",), (375,),
+        (Finding("overflow", Cell("landing", "chromium", 375, 900, "default"), "div.term", "m", (0, 0, 1, 1)),),
+    ),
+)
+
+
 def marker(attempt: int, author: str = APP) -> dict[str, Any]:
     return {
         "user": {"login": author},
@@ -367,17 +376,20 @@ def test_attempts_ignore_untrusted_markers() -> None:
 @pytest.mark.parametrize(
     ("data", "comments", "requested", "expected"),
     [
-        (issue(), [], None, 1),
-        (issue(), [marker(1)], None, 2),
-        (issue(("factory:fixing",)), [marker(1)], 2, 2),
-        (issue(), [marker(1), marker(2)], None, "limit"),
-        (issue(("factory:fixing",)), [marker(1)], 3, "limit"),
-        (issue(("factory:fixing",)), [marker(1)], 1, "already"),
-        (issue(("factory:found",)), [], None, "factory:ready"),
-        (issue(("factory:ready", "factory:needs-human")), [], None, "needs-human"),
-        (issue(("factory:found",)), [marker(1)], 2, "no longer"),
-        (issue(state="closed"), [], None, "closed"),
-        ({**issue(), "pull_request": {}}, [], None, "pull request"),
+        (issue(groups=REPRO), [], None, 1),
+        (issue(groups=REPRO), [marker(1)], None, 2),
+        (issue(("factory:fixing",), groups=REPRO), [marker(1)], 2, 2),
+        (issue(groups=REPRO), [marker(1), marker(2)], None, "limit"),
+        (issue(("factory:fixing",), groups=REPRO), [marker(1)], 3, "limit"),
+        (issue(("factory:fixing",), groups=REPRO), [marker(1)], 1, "already"),
+        (issue(("factory:found",), groups=REPRO), [], None, "factory:ready"),
+        (issue(("factory:ready", "factory:needs-human"), groups=REPRO), [], None, "needs-human"),
+        (issue(("factory:found",), groups=REPRO), [marker(1)], 2, "no longer"),
+        (issue(state="closed", groups=REPRO), [], None, "closed"),
+        ({**issue(groups=REPRO), "pull_request": {}}, [], None, "pull request"),
+        (issue(("factory:ready", "factory:merged"), groups=REPRO), [], None, "merged"),
+        (issue(("factory:fixing", "factory:regressed"), groups=REPRO), [marker(1)], 2, "regressed"),
+        (issue(), [], None, "no reproduction"),
     ],
 )
 def test_guard_runs_only_attempts_within_the_limit(
@@ -390,6 +402,94 @@ def test_guard_runs_only_attempts_within_the_limit(
         with pytest.raises(Skip, match=expected):
             guard(gh, 7, requested, CONFIG, TRUSTED)
     assert writes(gh) == []
+
+
+@pytest.mark.parametrize(
+    ("data", "comments", "requested", "declined"),
+    [
+        (issue(("factory:ready", "factory:needs-human"), groups=REPRO), [], None, "needs-human"),
+        (issue(("factory:ready", "factory:found", "factory:merged"), groups=REPRO), [], None, "merged"),
+        (issue(("factory:ready", "factory:regressed"), groups=REPRO), [], None, "regressed"),
+        (issue(groups=REPRO), [marker(1), marker(2)], None, "exhausted"),
+        (issue(("factory:fixing",), groups=REPRO), [marker(1), marker(2)], 3, "exhausted"),
+        (issue(), [], None, "no-reproduction"),
+        ({**issue(groups=REPRO), "user": {"login": "stranger"}}, [], None, "no-reproduction"),
+        ({**issue(), "body": issue_body() + "<!-- factory:groups=!!! -->\n"}, [], None, "no-reproduction"),
+        # Skips that leave the issue alone: nothing to release.
+        (issue(("factory:fixing",), groups=REPRO), [marker(1)], 1, None),
+        (issue(("factory:found",), groups=REPRO), [], None, None),
+        (issue(state="closed", groups=REPRO), [], None, None),
+    ],
+)
+def test_the_guard_says_why_it_declines(
+    data: dict[str, Any], comments: list[dict[str, Any]], requested: int | None, declined: str | None
+) -> None:
+    gh = FakeGitHub({("GET", f"{API}/issues/7"): data, ("GET", f"{API}/issues/7/comments"): comments})
+    with pytest.raises(Skip) as skip:
+        guard(gh, 7, requested, CONFIG, TRUSTED)
+    assert skip.value.decline == declined
+
+
+def test_an_owner_issue_with_a_script_marker_has_a_reproduction() -> None:
+    body = f"Owner text.\n\n{SENTINEL}\n<!-- factory:script=https://raw.githubusercontent.com/{REPO}/{'c' * 40}/repros/x.py -->\n"
+    data = {**issue(), "user": {"login": "MBratkowski"}, "body": body}
+    assert fix.has_reproduction(data, TRUSTED)
+    assert not fix.has_reproduction({**data, "body": "Owner text, no markers."}, TRUSTED)
+
+
+def decline_github(data: dict[str, Any], comments: list[dict[str, Any]] = ()) -> FakeGitHub:
+    return FakeGitHub({("GET", f"{API}/issues/7"): data, ("GET", f"{API}/issues/7/comments"): list(comments)})
+
+
+@pytest.mark.parametrize(
+    ("data", "comments", "requested", "label", "comment"),
+    [
+        (issue(("factory:ready", "factory:merged"), groups=REPRO), [], None, None, None),
+        (issue(("factory:ready", "factory:regressed"), groups=REPRO), [], None, None, None),
+        (issue(("factory:ready", "factory:needs-human"), groups=REPRO), [], None, None, None),
+        (issue(groups=REPRO), [marker(1), marker(2)], None, "factory:needs-human", fix.HANDED_OVER["exhausted"]),
+        (issue(), [], None, "factory:needs-human", fix.HANDED_OVER["no-reproduction"]),
+    ],
+)
+def test_decline_releases_the_slot_and_hands_over_once(
+    data: dict[str, Any], comments: list[dict[str, Any]], requested: int | None, label: str | None, comment: str | None
+) -> None:
+    """R53c: the decline job removes factory:ready (the slot frees); for exhausted attempts or no
+    reproduction it also adds factory:needs-human with one fixed comment."""
+    gh = decline_github(data, comments)
+    assert fix.decline(gh, 7, requested, CONFIG, TRUSTED) is not None
+    calls = writes(gh)
+    assert calls[-1] == ("DELETE", f"{API}/issues/7/labels/factory%3Aready", None)
+    assert labels_added(gh, 7) == ([label] if label else [])
+    assert comments_on(gh, 7) == ([comment] if comment else [])
+    if comment:
+        # Said once: a second run finds its own comment and repeats only the labels.
+        again = decline_github(data, [*comments, {"user": {"login": REVIEWER}, "body": comment}])
+        fix.decline(again, 7, requested, CONFIG, TRUSTED)
+        assert comments_on(again, 7) == [] and labels_added(again, 7) == [label]
+
+
+def test_decline_does_nothing_when_an_attempt_would_run() -> None:
+    gh = decline_github(issue(groups=REPRO))
+    assert fix.decline(gh, 7, None, CONFIG, TRUSTED) is None
+    assert writes(gh) == []
+    stranger = decline_github(issue(("factory:fixing",), groups=REPRO), [marker(1)])
+    assert fix.decline(stranger, 7, 1, CONFIG, TRUSTED) is None and writes(stranger) == []
+
+
+def test_cli_guard_exit_codes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    for data, comments, code in (
+        (issue(groups=REPRO), [], 0),
+        (issue(("factory:found",), groups=REPRO), [], 1),
+        (issue(("factory:ready", "factory:merged"), groups=REPRO), [], 3),
+        (issue(), [], 3),
+    ):
+        gh = decline_github(data, comments)
+        monkeypatch.setattr(fix, "GitHub", lambda repo, *a, **k: gh)
+        monkeypatch.setenv("FACTORY_APP_SLUG", "factory-app")
+        assert fix.main(["guard", "--issue", "7"]) == code
+        assert writes(gh) == []
+    assert capsys.readouterr().out.splitlines() == ["attempt=1"]
 
 
 # --- the report -------------------------------------------------------------------------------
@@ -851,6 +951,8 @@ def test_publish_pushes_and_opens_the_pull_request(tmp_path: Path) -> None:
     assert "#31" in comment and pushed[:7] in comment and comment.endswith(f"{SENTINEL}\n<!-- factory:attempt=1 -->\n")
     assert labels_added(gh, 7) == ["factory:fixing"]
     assert ("DELETE", f"{API}/issues/7/labels/factory%3Aready", None) in gh.calls
+    # C1: the issue leaves factory:found for good, so promotion never hands it back to the fixer.
+    assert ("DELETE", f"{API}/issues/7/labels/factory%3Afound", None) in gh.calls
     assert recorder.dispatched == []
     # The checkout of main is never moved to the fix.
     assert git("rev-parse", "HEAD", cwd=world.main) == world.base
@@ -894,7 +996,9 @@ def test_publish_pushes_soft_review_reasons_and_asks_for_a_human(tmp_path: Path)
     body = [b for m, p, b in gh.calls if (m, p) == ("PATCH", f"{API}/pulls/31")][-1]["body"]
     section = body.split("## Needs a human\n", 1)[1].split("\n## ", 1)[0]
     assert "existing tests changed: tests/e2e/test_existing.py" in section
-    assert "factory:needs-human" not in labels_added(gh, 7)
+    # M6: the issue is parked as well, which frees its fixer slot (R53c).
+    assert labels_added(gh, 7) == ["factory:fixing", "factory:needs-human"]
+    assert "factory:needs-human" in comments_on(gh, 7)[0]
 
 
 def test_publish_flags_a_baseline_changed_without_a_reason(tmp_path: Path) -> None:

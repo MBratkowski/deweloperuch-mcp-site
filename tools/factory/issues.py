@@ -1,10 +1,24 @@
-"""Issue drafts from the QA agent: validation, GitHub issue bodies with hidden markers, dedup."""
+"""Issue drafts from the QA agent: validation, GitHub issue bodies with hidden markers, dedup.
+
+Command line (the owner, locally, with a token in GH_TOKEN or GITHUB_TOKEN):
+
+  python -m tools.factory.issues attach --issue N --findings FINDINGS.json --fp FP [--fp FP ...]
+
+appends the marker block this module renders (the sentinel, a `factory:fp` marker per group and the
+`factory:groups` marker) to an issue the owner or the App wrote, with the probe groups of the named
+fingerprints from a findings.json (for example of `python -m tools.factory.probe --target main`), so
+the fixer, the reviewer and verify can reproduce an issue a person wrote (R53b). Exit 0 when the
+block was attached, 1 when it was refused (the reason on stderr), 2 on GitHub or file errors.
+"""
 
 from __future__ import annotations
 
+import argparse
 import base64
 import json
+import os
 import re
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -425,3 +439,97 @@ def dedup(
     if completed:
         return Dedup("regression", max(completed))
     return Dedup("new", None)
+
+
+# --- attaching a reproduction to an issue a person wrote (R53b) ------------------------------------
+
+
+def marker_block(groups: Sequence[dict[str, Any]]) -> str:
+    """The renderer's marker block for `groups` (probe group dicts): the sentinel, a fingerprint
+    marker per group and the groups marker, exactly as render_issue writes them."""
+    if not groups:
+        raise DraftError("groups", "needs at least 1 item(s)")
+    for i, data in enumerate(groups):
+        fingerprint = _fingerprint(data.get("fingerprint"), f"groups[{i}].fingerprint")
+        if Group.from_json(data).fingerprint != fingerprint:  # a group the probe can reproduce
+            raise DraftError(f"groups[{i}].fingerprint", "is not the fingerprint of the group")
+    text = json.dumps(list(groups), sort_keys=True)
+    _check_secrets(text, "groups")
+    lines = [SENTINEL, *(f"<!-- factory:fp={fp} -->" for fp in dict.fromkeys(g["fingerprint"] for g in groups))]
+    lines.append(f"<!-- factory:groups={base64.b64encode(text.encode()).decode()} -->")
+    return "\n".join(lines) + "\n"
+
+
+def attached_body(body: str, groups: Sequence[dict[str, Any]]) -> str:
+    """`body` with the marker block for `groups` appended. A body that already carries a block (QA's,
+    or an earlier attach) is refused: the last block is the one every reader trusts, so replacing it
+    is a person's edit, made by hand."""
+    if SENTINEL in (body or "").splitlines():
+        raise DraftError("body", "already carries a marker block; remove it by hand to attach another")
+    return (body or "").rstrip("\n") + "\n\n" + marker_block(groups)
+
+
+def attach(gh: Any, repo: str, issue: int, groups: Sequence[dict[str, Any]], trusted: frozenset[str]) -> str:
+    """Append the marker block for `groups` to open issue `issue`, written by the owner or the App.
+    Returns the new body; raises DraftError when the issue may not carry it."""
+    data = gh.request("GET", f"/repos/{repo}/issues/{issue}") or {}
+    if "pull_request" in data:
+        raise DraftError("issue", f"#{issue} is a pull request")
+    if data.get("state") != "open":
+        raise DraftError("issue", f"#{issue} is not open")
+    author = str((data.get("user") or {}).get("login") or "")
+    if author.lower() not in {login.lower() for login in trusted}:
+        raise DraftError("issue", f"#{issue} was written by {author or 'nobody'}, not the owner or the App")
+    body = attached_body(str(data.get("body") or ""), groups)
+    gh.request("PATCH", f"/repos/{repo}/issues/{issue}", {"body": body})
+    return body
+
+
+def groups_by_fingerprint(findings: Path, fingerprints: Sequence[str]) -> list[dict[str, Any]]:
+    """The groups of `findings` (a findings.json) with the given fingerprints, in that order."""
+    canonical = canonical_groups(findings)
+    missing = [fp for fp in fingerprints if fp not in canonical]
+    if missing:
+        raise DraftError("--fp", f"not in {findings}: {', '.join(missing)}")
+    return [canonical[fp] for fp in dict.fromkeys(fingerprints)]
+
+
+def _fingerprint_arg(value: str) -> str:
+    if not FINGERPRINT_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError("must be 12 lowercase hex characters")
+    return value
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="python -m tools.factory.issues", description=__doc__.split("\n\n")[0])
+    commands = parser.add_subparsers(dest="command", required=True)
+    command = commands.add_parser("attach", help="attach a reproduction (probe groups) to an issue a person wrote")
+    command.add_argument("--issue", type=int, required=True)
+    command.add_argument("--findings", type=Path, required=True, help="a findings.json of the probe")
+    command.add_argument("--fp", dest="fingerprints", type=_fingerprint_arg, action="append", required=True)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    from tools.factory.config import load_config
+    from tools.factory.github import GitHub, GitHubError
+
+    args = _parser().parse_args(argv)
+    config = load_config()
+    repo = config.site.repo
+    trusted = config.trusted(os.environ.get("FACTORY_APP_SLUG"))
+    try:
+        groups = groups_by_fingerprint(args.findings, args.fingerprints)
+        attach(GitHub(repo), repo, args.issue, groups, trusted)
+    except (DraftError, KeyError, TypeError) as error:
+        print(f"attach refused: {error}", file=sys.stderr)
+        return 1
+    except (GitHubError, OSError, ValueError) as error:
+        print(f"attach failed: {error}", file=sys.stderr)
+        return 2
+    print(f"#{args.issue}: attached {len(groups)} group(s): {', '.join(g['fingerprint'] for g in groups)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -9,7 +9,10 @@ commits again, and the reviewer proves red and green once more in a job of its o
 
 Command line, `python -m tools.factory.fix`:
 
-  guard --issue N [--attempt K]            print `attempt=K`; exit 1 when there is no attempt to run
+  guard --issue N [--attempt K]            print `attempt=K`; exit 1 when there is no attempt to run,
+                                           3 when the fixer declines the issue (see decline)
+  decline --issue N [--attempt K]          release a declined issue: remove factory:ready and, when no
+                                           attempt can ever run, add factory:needs-human (GITHUB_TOKEN)
   prepare --issue N --attempt K --out DIR  check out the branch, write DIR/context.md and DIR/groups.json
   prove --report FILE --base SHA [--flaky] --out FILE
   before-after --groups FILE --report FILE --base SHA --head REV --out DIR
@@ -29,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import unicodedata
+import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator, Mapping, Sequence
@@ -42,16 +46,36 @@ from tools.factory.evidence import redact
 from tools.factory.findings import Cell, Group
 from tools.factory.github import GitHub, GitHubError
 from tools.factory.identity import bot_email
-from tools.factory.issues import DraftError, _check_plain, _marker_block, _object, groups_in
+from tools.factory.issues import DraftError, _check_plain, _marker_block, _object, groups_in, script_in
 from tools.factory.stress import StressError, stress
 
 if TYPE_CHECKING:
     from playwright.sync_api import Playwright
 
 READY = "factory:ready"
+FOUND = "factory:found"
 FIXING = "factory:fixing"
 FLAKY = "factory:flaky"
 NEEDS_HUMAN = "factory:needs-human"
+MERGED = "factory:merged"
+REGRESSED = "factory:regressed"
+# Why the guard declines an issue (R53a, R53b, R53c); the decline job releases it.
+DECLINE_NEEDS_HUMAN = "needs-human"
+DECLINE_MERGED = "merged"
+DECLINE_REGRESSED = "regressed"
+DECLINE_EXHAUSTED = "exhausted"
+DECLINE_NO_REPRODUCTION = "no-reproduction"
+# Declines after which no attempt can ever run: the issue goes to a person, with one comment.
+HANDED_OVER = {
+    DECLINE_EXHAUSTED: (
+        "The factory has used every fix attempt it has for this issue (`limits.attempts_per_issue`); "
+        "it needs a person."
+    ),
+    DECLINE_NO_REPRODUCTION: (
+        "This issue has no reproduction the factory can run; attach one with "
+        "`python -m tools.factory.issues attach …` or let QA file it."
+    ),
+}
 REVIEWER = "github-actions[bot]"
 FIXER_NAME = "factory-fixer"
 # The rules below mirror .github/factory/schemas/fix-report.json; a test keeps them equal.
@@ -97,7 +121,13 @@ class FixError(RuntimeError):
 
 
 class Skip(Exception):
-    """There is no attempt to run for this issue; the message says why."""
+    """There is no attempt to run for this issue; the message says why. `decline` names why the
+    fixer declines the issue for good (DECLINE_*), so that the decline job releases its slot; None
+    for a skip that leaves the issue as it is (a stranger's label, a repeated dispatch)."""
+
+    def __init__(self, message: str, decline: str | None = None) -> None:
+        super().__init__(message)
+        self.decline = decline
 
 
 # --- the report ------------------------------------------------------------------------------
@@ -276,20 +306,77 @@ def guard(
         raise Skip(f"#{issue} is closed")
     labels = _labels(data)
     if NEEDS_HUMAN in labels:
-        raise Skip(f"#{issue} is labelled {NEEDS_HUMAN}")
+        raise Skip(f"#{issue} is labelled {NEEDS_HUMAN}", DECLINE_NEEDS_HUMAN)
+    # Past the fix: merged (waiting for live verification) or regressed (reverted, a person's).
+    if MERGED in labels:
+        raise Skip(f"#{issue} is labelled {MERGED}", DECLINE_MERGED)
+    if REGRESSED in labels:
+        raise Skip(f"#{issue} is labelled {REGRESSED}", DECLINE_REGRESSED)
     if requested is None and READY not in labels:
         raise Skip(f"#{issue} is not labelled {READY}")
     # Removing both labels is how the owner stops the factory; a later dispatch then does nothing.
     if requested is not None and not labels & {READY, FIXING}:
         raise Skip(f"#{issue} is no longer labelled {READY} or {FIXING}")
+    if not has_reproduction(data, trusted):
+        raise Skip(f"#{issue} carries no reproduction the factory can run", DECLINE_NO_REPRODUCTION)
     used = attempts_used(gh.paginate(f"{api}/issues/{issue}/comments", {"per_page": 100}), trusted)
     if requested is not None and requested <= used:
         raise Skip(f"attempt {requested} was already used ({used} so far)")
     attempt = used + 1 if requested is None else requested
     limit = config.limits.attempts_per_issue
     if attempt > limit:
-        raise Skip(f"attempt {attempt} is over the limit of {limit} attempts per issue")
+        raise Skip(f"attempt {attempt} is over the limit of {limit} attempts per issue", DECLINE_EXHAUSTED)
     return attempt
+
+
+def has_reproduction(data: Mapping[str, Any], trusted: frozenset[str]) -> bool:
+    """Whether the issue carries a reproduction the factory can run (R53b): written by the owner or
+    the App, with probe groups or a reproduction script in the marker block our code renders (QA's
+    filing, or `python -m tools.factory.issues attach`). The reviewer and verify read nothing else."""
+    if (data.get("user") or {}).get("login") not in trusted:
+        return False
+    body = str(data.get("body") or "")
+    try:
+        groups = groups_in(body)
+    except (ValueError, KeyError, TypeError):
+        groups = []
+    return bool(groups) or script_in(body) is not None
+
+
+def decline(
+    gh: Any, issue: int, requested: int | None, config: Config, trusted: frozenset[str] | None = None
+) -> str | None:
+    """Release an issue the guard declines (R53c), deciding again from GitHub's current state: remove
+    factory:ready, so it holds no fixer slot, and for exhausted attempts or a missing reproduction add
+    factory:needs-human with one fixed comment. Returns the reason, or None when nothing is declined
+    now (an attempt would run, or the skip leaves the issue as it is)."""
+    trusted = _trusted(trusted, config)
+    try:
+        guard(gh, issue, requested, config, trusted)
+    except Skip as skip:
+        reason = skip.decline
+    else:
+        return None
+    if reason is None:
+        return None
+    api = f"/repos/{config.site.repo}"
+    text = HANDED_OVER.get(reason)
+    if text is not None:
+        # The comment first, said once: a run that fails before the label repeats nothing.
+        authors = trusted | {REVIEWER}
+        said = any(
+            (c.get("user") or {}).get("login") in authors and str(c.get("body") or "").strip() == text
+            for c in gh.paginate(f"{api}/issues/{issue}/comments", {"per_page": 100})
+        )
+        if not said:
+            gh.request("POST", f"{api}/issues/{issue}/comments", {"body": text})
+        gh.request("POST", f"{api}/issues/{issue}/labels", {"labels": [NEEDS_HUMAN]})
+    try:
+        gh.request("DELETE", f"{api}/issues/{issue}/labels/{urllib.parse.quote(READY, safe='')}")
+    except GitHubError as error:
+        if error.status != 404:
+            raise
+    return reason
 
 
 def find_pull(
@@ -935,7 +1022,12 @@ def _positive(text: str) -> int:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m tools.factory.fix", description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
-    command = commands.add_parser("guard", help="print the attempt to run, exit 1 when there is none")
+    command = commands.add_parser(
+        "guard", help="print the attempt to run; exit 1 when there is none, 3 when the fixer declines the issue"
+    )
+    command.add_argument("--issue", type=_positive, required=True)
+    command.add_argument("--attempt", type=_positive, help="the dispatched attempt (absent for a label event)")
+    command = commands.add_parser("decline", help="release an issue the guard declines (GITHUB_TOKEN, issues: write)")
     command.add_argument("--issue", type=_positive, required=True)
     command.add_argument("--attempt", type=_positive, help="the dispatched attempt (absent for a label event)")
     command = commands.add_parser("prepare", help="check out the branch and write the agent's context")
@@ -963,13 +1055,30 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+DECLINED = 3
+
+
 def _guard_command(args: argparse.Namespace, config: Config) -> int:
     try:
         attempt = guard(GitHub(config.site.repo), args.issue, args.attempt, config)
     except Skip as reason:
+        if reason.decline is not None:
+            print(f"the fixer declines #{args.issue} ({reason.decline}): {reason}", file=sys.stderr)
+            return DECLINED
         print(f"no attempt to run: {reason}", file=sys.stderr)
         return 1
     print(f"attempt={attempt}")
+    return 0
+
+
+def _decline_command(args: argparse.Namespace, config: Config) -> int:
+    reason = decline(GitHub(config.site.repo), args.issue, args.attempt, config)
+    if reason is None:
+        print(f"#{args.issue}: nothing to decline now")
+    elif reason in HANDED_OVER:
+        print(f"#{args.issue}: declined ({reason}); {READY} removed, labelled {NEEDS_HUMAN}")
+    else:
+        print(f"#{args.issue}: declined ({reason}); {READY} removed")
     return 0
 
 
@@ -1029,6 +1138,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         config = load_config()
         if args.command == "guard":
             return _guard_command(args, config)
+        if args.command == "decline":
+            return _decline_command(args, config)
         if args.command == "prepare":
             return _prepare_command(args, config)
         if args.command == "prove":

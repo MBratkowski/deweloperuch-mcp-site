@@ -112,7 +112,15 @@ def test_deploy_stale_never_promoted() -> None:
 
 
 @pytest.mark.parametrize(
-    "label", ["factory:needs-human", "factory:suggestion", "factory:ready", "factory:fixing"]
+    "label",
+    [
+        "factory:needs-human",
+        "factory:suggestion",
+        "factory:ready",
+        "factory:fixing",
+        "factory:merged",
+        "factory:regressed",
+    ],
 )
 def test_blocked_labels_and_pull_requests_are_skipped(label: str) -> None:
     issues = [
@@ -122,6 +130,26 @@ def test_blocked_labels_and_pull_requests_are_skipped(label: str) -> None:
     ]
     limits = type(LIMITS)(**{**vars(LIMITS), "fixes_in_progress": 9})
     assert promote(issues, limits, False) == []
+
+
+def test_a_merged_found_issue_is_never_handed_back() -> None:
+    """C1: the reported shape, an issue merged while it still carried factory:found."""
+    issues = [issue(1, "factory:found", "S2", "factory:merged"), issue(2, "factory:found", "S3")]
+    assert promote(issues, LIMITS, False) == [2]
+
+
+@pytest.mark.parametrize("parked", ["factory:needs-human", "factory:merged", "factory:regressed"])
+@pytest.mark.parametrize("held", ["factory:ready", "factory:fixing"])
+def test_a_parked_issue_frees_its_slot(held: str, parked: str) -> None:
+    """R53c: an issue the factory stopped on, or whose fix is merged, holds no fixer slot even when
+    factory:ready or factory:fixing remains."""
+    issues = [
+        issue(1, held, parked),
+        issue(2, "factory:fixing"),
+        issue(3, "factory:found", "S3"),
+    ]
+    assert promote(issues, LIMITS, False) == [3]
+    assert not dispatch.in_progress(issues[0]) and dispatch.in_progress(issues[1])
 
 
 def test_check_sender_exit_codes() -> None:

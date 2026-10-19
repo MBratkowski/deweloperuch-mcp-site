@@ -9,9 +9,13 @@ name: Factory fix
 # fences and scans that commit with main's code, pushes it and opens or updates the pull request.
 #
 #   guard -> fix -> publish
+#        \-> decline       (the guard declines the issue: needs-human, merged, regressed, attempts
+#                           exhausted, no reproduction)
 #
 # A failed attempt dispatches the next one (workflow_dispatch with GITHUB_TOKEN); after the last
-# attempt, or when the fixer cannot reproduce the defect, the issue goes to factory:needs-human.
+# attempt, or when the fixer cannot reproduce the defect, the issue goes to factory:needs-human. An
+# issue the guard declines is released by `decline`: factory:ready comes off, so it holds no fixer
+# slot, and an issue no attempt can ever fix gets factory:needs-human with one fixed comment.
 on:
   issues:
     types: [labeled]
@@ -50,6 +54,7 @@ jobs:
       issues: read
     outputs:
       go: ${{ steps.attempt.outputs.go }}
+      decline: ${{ steps.attempt.outputs.decline }}
       issue: ${{ steps.attempt.outputs.issue }}
       attempt: ${{ steps.attempt.outputs.attempt }}
       fixer_model: ${{ steps.config.outputs.fixer_model }}
@@ -115,7 +120,11 @@ jobs:
           fi
           status=0
           line=$(uv run python -m tools.factory.fix guard "${args[@]}") || status=$?
-          if [ "$status" -eq 1 ]; then
+          if [ "$status" -eq 3 ]; then
+            # The decline job releases the issue (R53c); it decides again from GitHub's state.
+            echo "decline=true" >> "$GITHUB_OUTPUT"
+            skip "the fixer declines the issue (see the log); the decline job releases it"
+          elif [ "$status" -eq 1 ]; then
             skip "no attempt to run (see the log)"
           elif [ "$status" -ne 0 ]; then
             exit "$status"
@@ -341,3 +350,40 @@ jobs:
           uv run python -m tools.factory.fix publish
           --issue "$ISSUE" --attempt "$ATTEMPT" --branch "$BRANCH"
           --in factory-in/fix --fix-result "$FIX_RESULT" --scan-result "$SCAN_RESULT"
+
+  decline:
+    name: Release an issue the fixer declines
+    needs: guard
+    if: vars.FACTORY_MODE != 'off' && needs.guard.outputs.decline == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # GITHUB_TOKEN with issues: write only, in a job that runs no agent and nothing from a pull
+    # request: main's code removes factory:ready (the fixer slot frees) and, when no attempt can ever
+    # run, labels the issue factory:needs-human with one fixed comment.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          # No uv cache: a job that runs agent code must not seed what a write-token job restores.
+          enable-cache: false
+      - run: uv sync --locked
+      - name: Release the issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FACTORY_APP_SLUG: ${{ vars.FACTORY_APP_SLUG }}
+          ISSUE: ${{ needs.guard.outputs.issue }}
+          ATTEMPT: ${{ inputs.attempt }}
+        run: |
+          [[ $ISSUE =~ ^[1-9][0-9]*$ ]] || { echo "::error::not an issue number: $ISSUE"; exit 1; }
+          args=(--issue "$ISSUE")
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            [[ $ATTEMPT =~ ^[1-9][0-9]*$ ]] || { echo "::error::not an attempt number: $ATTEMPT"; exit 1; }
+            args+=(--attempt "$ATTEMPT")
+          fi
+          uv run python -m tools.factory.fix decline "${args[@]}"
