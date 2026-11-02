@@ -36,7 +36,7 @@
       "usage": "deweloperuch offers get [OPTIONS] {OFFER_ID}"
     },
     {
-      "description": "Szukaj ofert mieszkań w mieście; najwyżej 20 stron wyników.",
+      "description": "Szukaj ofert mieszkań w mieście albo w jego dzielnicy; najwyżej 20 stron wyników.",
       "name": "offers search",
       "usage": "deweloperuch offers search [OPTIONS] {CITY}"
     },
@@ -56,7 +56,7 @@
       "usage": "deweloperuch skill show [OPTIONS]"
     },
     {
-      "description": "Pokaż ranking miejscowości albo powiatów według transakcji RCN.",
+      "description": "Pokaż ranking miejscowości albo powiatów według transakcji RCN albo miast według wskaźnika GUS lub NBP.",
       "name": "stats cities",
       "usage": "deweloperuch stats cities [OPTIONS]"
     },
@@ -91,5 +91,5 @@
       "usage": "deweloperuch valuation estimate [OPTIONS]"
     }
   ],
-  "version": "0.1.3"
+  "version": "0.2.0"
 }
