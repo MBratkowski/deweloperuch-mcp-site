@@ -1,6 +1,10 @@
 """Test doubles for the factory; GitHub is never contacted from tests."""
 
+from datetime import datetime, tzinfo
+from types import ModuleType
 from typing import Any
+
+import pytest
 
 # The App's bot account as GitHub's public user record shows it (GET /users/<slug>[bot]); its
 # noreply address is the commit identity of everything the factory commits (D46).
@@ -10,6 +14,18 @@ APP_USER_ID = 41898282
 APP_EMAIL = f"{APP_USER_ID}+{APP_LOGIN}@users.noreply.github.com"
 APP_USER = ("GET", "/users/factory-app%5Bbot%5D")
 APP_USER_RECORD = {"login": APP_LOGIN, "id": APP_USER_ID, "type": "Bot"}
+
+
+def freeze_now(monkeypatch: pytest.MonkeyPatch, module: ModuleType, when: datetime) -> None:
+    """`module` reads `when` as the current time. For a test through a `main()`, which has no `now`
+    argument: its windows count back from the clock, so canned dates would age out of them."""
+
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return when
+
+    monkeypatch.setattr(module, "datetime", Frozen)
 
 
 class FakeGitHub:

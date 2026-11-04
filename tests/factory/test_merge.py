@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from tests.factory.fakes import FakeGitHub
+from tests.factory.fakes import FakeGitHub, freeze_now
 from tools.factory import dispatch, merge, status, verify
 from tools.factory.config import load_config
 from tools.factory.fence import FenceReport
@@ -1583,6 +1583,7 @@ def test_main_pr_runs_one_pull_request_end_to_end(tmp_path: Path, monkeypatch: p
 
 
 def test_main_sweep_reconciles_and_pr_does_not(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    freeze_now(monkeypatch, merge, NOW)
     monkeypatch.setenv("FACTORY_MODE", "shadow")
     monkeypatch.setenv("FACTORY_APP_SLUG", SLUG)
     gh = reconcile_hub({12: closed_pull(12, RECENT)})
