@@ -17,7 +17,7 @@ from tools.factory.ci_facts import (
 from tools.factory.findings import Group
 from tools.factory.github import GitHubError
 
-from .fakes import FakeGitHub
+from .fakes import FakeGitHub, freeze_now
 
 FIXTURES = Path(__file__).parent / "fixtures" / "ci"
 REPO = "MBratkowski/deweloperuch-mcp-site"
@@ -136,6 +136,7 @@ def test_failed_tests_ignores_failed_inside_other_words_and_deduplicates() -> No
 
 
 def test_cli_writes_findings_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    freeze_now(monkeypatch, ci_facts, NOW)
     monkeypatch.setattr(ci_facts, "GitHub", lambda repo, *a, **k: FakeGitHub(responses()))
     assert ci_facts.main(["--out", str(tmp_path)]) == 0
     data = json.loads((tmp_path / "findings.json").read_text(encoding="utf-8"))
